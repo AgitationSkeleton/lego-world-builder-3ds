@@ -93,7 +93,23 @@ make MAKEROM=/path/to/makerom BANNERTOOL=/path/to/bannertool
 
 `gfx/*.t3s` and the PNGs beside them are compiled into texture atlases by
 tex3ds during the build and land in `romfs/gfx`, so that directory is generated
-rather than committed.
+rather than committed. They rebuild byte for byte from the sources.
+
+### Reproducing a particular build
+
+The build is deterministic: the same sources and the same toolchain give the
+same bytes. Built with devkitARM r67.1, libctru 2.7.0, citro3d 1.7.1 and
+citro2d 1.7.0, this tree reproduces the 3dsx and the SMDH of the original
+release exactly.
+
+CI pins `devkitpro/devkitarm:20260221`, which matches on everything except
+citro2d, where it carries 1.6.0. That is worth about eight hundred bytes in the
+3dsx. The game is the same either way; only the bytes differ.
+
+The CIA is a separate matter. It carries debug information recording the
+absolute path it was built from, so two builds of the same sources in two
+different directories produce two different CIAs. Stripping the debug sections
+from both leaves the ELFs identical.
 
 ### Releasing
 
