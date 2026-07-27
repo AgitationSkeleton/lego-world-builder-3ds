@@ -123,11 +123,10 @@ git push origin v1.0.0
 
 ## State of the port
 
-Playable and complete enough to finish missions, with known gaps. `PARITY_CHECK.md`
-records where the port still diverges from the original Director behaviour, and
-`AUDIO_STATUS.md` covers the sound work. `PORTING_NOTES.md` describes the rule
-the port is built on: when the port and the original disagree, the original
-wins unless the hardware forces a documented deviation.
+Playable and complete enough to finish missions, with known gaps.
+`PORTING_NOTES.md` describes the rule the port is built on: when the port and
+the original disagree, the original wins unless the hardware forces a
+documented deviation.
 
 ## Licence
 
