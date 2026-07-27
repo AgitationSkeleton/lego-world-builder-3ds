@@ -62,6 +62,9 @@ jobs:
           case "$have" in
             1.7.0*) echo "already the right version"; exit 0 ;;
           esac
+          # citro2d's makefile expects the toolchain on PATH; this project's
+          # gets it from 3ds_rules instead, so it is not there by default.
+          export PATH="$DEVKITARM/bin:$PATH"
           git clone --quiet --depth 1 --branch v1.7.0             https://github.com/devkitPro/citro2d.git "$RUNNER_TEMP/citro2d"
           make -C "$RUNNER_TEMP/citro2d" -j"$(nproc)"
           make -C "$RUNNER_TEMP/citro2d" install
