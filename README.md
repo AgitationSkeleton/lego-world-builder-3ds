@@ -24,7 +24,7 @@ LEGO® is a trademark of The LEGO Group, which does not sponsor, authorise or
 endorse this project. This is an unofficial, non-commercial fan port.
 
 The original game files were recovered from the
-[BioMedia Project](https://www.biomediaproject.com/bmp/files/LEGO/gms/), which
+[BioMedia Project](https://www.biomediaproject.com/), which
 has preserved LEGO's Shockwave catalogue for years.
 
 ## Getting it
