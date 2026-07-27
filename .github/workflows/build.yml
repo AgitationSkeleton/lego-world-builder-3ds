@@ -51,6 +51,22 @@ jobs:
             echo "libctru, citro3d, citro2d and the 3DS tools are all present"
           fi
 
+      # The image is right on every other count but ships citro2d 1.6.0, and the
+      # released binaries were linked against 1.7.0. devkitPro's package is a
+      # plain make of this source, and their package server refuses CI address
+      # ranges, so build the one library rather than try to download it.
+      - name: Match citro2d to the released build
+        run: |
+          have=$(dkp-pacman -Q citro2d 2>/dev/null | awk '{print $2}')
+          echo "image has citro2d ${have:-none}, want 1.7.0"
+          case "$have" in
+            1.7.0*) echo "already the right version"; exit 0 ;;
+          esac
+          git clone --quiet --depth 1 --branch v1.7.0             https://github.com/devkitPro/citro2d.git "$RUNNER_TEMP/citro2d"
+          make -C "$RUNNER_TEMP/citro2d" -j"$(nproc)"
+          make -C "$RUNNER_TEMP/citro2d" install
+          echo "built and installed citro2d 1.7.0"
+
       - name: Fetch packaging tools
         run: |
           mkdir -p "$RUNNER_TEMP/tools"
