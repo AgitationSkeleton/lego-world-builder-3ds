@@ -1,0 +1,48 @@
+[map]
+name=WHAT'S A DOZER?
+
+ map=g_..._f.TTTT 
+ map=__._..._Tp.n
+ map=...__d_wb.2.
+ map=._d___wwTo..
+ map=.___....T.1m
+ map=e.c____.TTTT
+ map=bb...d___..h
+ map=..bwwwwwwwww
+ map=l.wwi..k..j.
+
+
+--   H = HQ 
+--   B = BUGGY
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   C = crab
+
+
+ 
+[mapitems]
+b=unit,monster,boulder
+c=unit,vehicle,buggy
+d=pile,yellow,3
+e=pile,yellow,1,energy,1
+f=plan,dirtbuggy,10
+g=plan,steamshovel,10
+h=pile,yellow,15
+i=plan,dozer,10
+j=pile,wheel,2
+k=pile,energy,1
+l=plan,duck,10
+m=pile,blue,15,energy,1
+n=pile,green,15
+o=pile,blue,10,green,10
+p=plan,treebot,10
+
+1=goal,dozer
+2=bonusgoal,duck
+
+[inventory]
+buggy=10

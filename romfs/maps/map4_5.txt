@@ -1,0 +1,48 @@
+[map]
+name=SHARK!
+
+ map=@@awawwwwc@@@@@@@@@@
+ map=@awcwwawawd@@@@2w@@@
+ map=wwawwwwawawa@@@@www@
+ map=wwww.wwwwwwww@@@@@w@
+ map=ww....wwwww.....@@w@
+ map=..e..www....wwwwwwww
+ map=ww..wwwww.e..wwwwwww
+ map=wwwwwwwww.....wwbwww
+ map=@gw1wwwwwwbww.wwwww@
+ map=@@fwwwwwwwwww..www@@
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+
+ 
+[mapitems]
+a=waterunit,vehicle,fish
+b=waterunit,monster,shark
+c=waterunit,vehicle,frog
+d=waterunit,vehicle,freighter
+e=unit,vehicle,steamshovel
+f=waterplan,speedboat,10
+g=waterpile,yellow,100,red,25
+
+1=goal,marina,water
+2=bonusgoal,frog,water
+
+[inventory]
+fish=10
+frog=10
+steamshovel=10
+tugboat=10
+marina=10

@@ -1,0 +1,82 @@
+﻿[map]
+name=SACRIFICES
+ map=......2......
+ map=.k.xxxxxxx.k.
+ map=m..m.....m..m
+ map=!e!!'!.!'!!'!
+ map=?f!'!...''!!?
+ map=!.!!..h..!!?!
+ map=......!..!..e
+ map=.!!?.!1??*.?'
+ map=.??!.?j%!%.%%
+ map=..g..*w%%%.?%
+ map=.$!%%!w'$!.*?
+ map=.!%$$%w$!$.%%
+ map=.l.f.bwe...%*
+ map=.!!!.ww!%!e'?
+ map=.!'!.ww&!&g!!
+ map=.e...rw!'!.'?
+ map=.!!?.ww*?&f.!
+ map=.e...wr!!!.a'
+ map=i!!'.cwwwwwww
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers 
+
+-- ` = cement
+-- > = road block
+-- ( = street 1
+-- [ = street 2
+-- { = street 3
+-- \ = street 4
+-- / = street 5
+-- ) = street 6
+-- ] = street 7
+-- } = street 8
+-- + = street 9
+-- = = street 10
+-- - = street undiggable
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+center=7,15
+ 
+[mapitems]
+a=pile,yellow,5
+b=waterunit,monster,shark
+c=waterpile,green,5
+d=unit,vehicle,defender
+e=unit,monster,boulder
+f=pile,energy,1
+g=plan,defender,1
+h=pile,yellow,25,blue,25,green,5
+i=pile,blue,40,yellow,25,energy,1
+j=waterplan,robot_lab,10
+k=unit,monster,lion
+l=plan,frog,1
+m=unit,monster,crab
+
+1=goal,frog,water
+2=bonusgoal,defender
+
+[inventory]
+
+duck=1

@@ -1,0 +1,91 @@
+﻿[map]
+name=WE NEED MORE ENERGY
+
+ map=`.l._!.!_.n.`
+ map=`i..a!!!...j`
+ map=````_!!!_````
+ map=a`a`_!m!_`a`a
+ map=_a_a_!!!_a_a_
+ map=./..?www?[\\\
+ map=!/.dwweww/.c!
+ map=[}..!!!!./.``
+ map=/!.!?.k?!/.!.
+ map=/..?..1.?/.``
+ map=/!.!?..?!/.!.
+ map={]..!!!!./.``
+ map=./.dwwfww/.b!
+ map=!/..?wsw?{\\\
+ map=_a___!!!___a_
+ map=``..__2__..``
+ map=``.o_!!!_..``
+ map=.h``.___.``g.
+ map=..``_!.!_``..
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+--   @ = hole
+
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers 
+
+-- ` = cement
+-- > = road block
+-- ( = street 1
+-- [ = street 2
+-- { = street 3
+-- \ = street 4
+-- / = street 5
+-- ) = street 6
+-- ] = street 7
+-- } = street 8
+-- + = street 9
+-- = = street 10
+-- - = street undiggable
+ 
+
+[mapitems]
+a=unit,monster,boulder
+b=unit,vehicle,buggy
+c=plan,duck,5
+d=pile,yellow,5,energy,1
+e=waterplan,dirtbuggy,5
+f=waterplan,freezebot,10
+m=plan,dozer,10
+h=pile,yellow,5,wheel,2
+i=plan,dumptruck,10
+
+j=pile,green,20,blue,25
+k=unit,monster,lion
+l=unit,building,factory
+g=plan,treebot,10
+n=unit,building,windmill
+o=plan,house,1
+s=waterpile,white,25
+
+
+1=goal,buggy
+2=bonusgoal,house
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+
+buggy=10
+
+
+

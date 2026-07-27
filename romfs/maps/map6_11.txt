@@ -1,0 +1,72 @@
+﻿[map]
+name=JUNGLE SURVIVAL
+
+ map=###d.d%......%.d.d...
+ map=..##d....ddd.......m.
+ map=c...##ddd.2.ddd......
+ map=.j##..%.ddddd.%.*.k..
+ map=.#####d...a...d......
+ map=.#...dd.%%*%%.dd*....
+ map=ddd.d...........d%d%%
+ map=....d..ddd.ddd..d..__
+ map=%#%....%.....%....%#_
+ map=*#%%%&%&.%%%.&%&%%%#.
+ map=%#%.###%.$b$.%###.%#_
+ map=%....%.%.%c%.%.%..%%_
+ map=*%*#*%.%.%.%.%.%*#%*_
+ map=...###.$.....$.###.%.
+ map=%%%%*%#%%%*%%%#%*%%%_
+ map=.wf%.*##%e%e%##*.%_h.
+ map=%ww$.%%g%#%#%i%%.$__%
+ map=%ww%..%.%#%#%.%..%__%
+ map=..%$%.*#&#&#&#*.%$%.#
+ map=.......##.1.##...##.#
+ map=@@@@@@@..###..@@@@@@@
+ map=@@@@@@@@.....@@@@@@@@
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+--   @ = hole
+
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers 
+
+ 
+[mapitems]
+a=pile,yellow,25,white,10,blue,5,red,5,energy,1
+b=plan,repairbot,10
+c=unit,monster,lion
+d=unit,monster,boulder
+e=pile,blue,20,green,10,yellow,5,energy,1
+f=waterplan,dirtbuggy,5
+g=unit,vehicle,duck
+h=plan,freezebot,5
+i=pile,yellow,5,wheel,4,energy,1
+j=plan,forklift,5
+k=pile,red,15,wheel,4,energy,1
+m=plan,dozer,5
+
+1=goal,freezebot
+2=bonusgoal,dozer
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+
+
+

@@ -1,0 +1,61 @@
+[map]
+name=MONSTERLAND
+
+ map=gwxxwwww6ww.h__Mywxxxxwwww
+ map=6xxxww###wwd3._MMwwwwwwbwz
+ map=xxxwww#..3.#....Mwwwwwbabw
+ map=wcwww.3hnm...._.MMwwwTT...
+ map=ww6wgww.##..31M..MTTTT...M
+ map=yw.Mww8w.h3..__.3....TTTMM
+ map=MM....wf..##.....__.3TTkll
+ map=.4.4...ww.3ho###.h...Tijjj
+ map=MMM.54.weww#.gwwww6wTTTMMM
+ map=5.ww...ww8wwww6xxCwwwgTTMz
+ map=2..M4...gw6wwxxxxxxxwwwwww
+
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   r = water rocks
+
+
+center=13,3
+
+ 
+[mapitems]
+a=waterunit,building,marina
+b=waterunit,vehicle,speedboat
+c=waterplan,speedboat,3
+d=waterplan,treebot,10
+e=waterplan,freighter,10
+f=waterplan,snail,10
+g=waterpile,red,1
+h=unit,monster,gator
+i=plan,defender,10
+j=pile,blue,40,yellow,25,energy,1
+k=plan,repairbot,10
+l=pile,blue,20,green,10,red,10,yellow,5
+m=plan,steamshovel,10
+n=pile,yellow,25,wheel,4,energy,1
+o=plan,duck,10
+
+3=unit,monster,crab
+4=unit,monster,scorpion
+5=unit,monster,trex
+6=waterunit,monster,water_crab
+8=waterunit,monster,shark
+y=whirlpool,1
+z=whirlpool,2
+
+
+1=goal,snail
+2=bonusgoal,duck
+
+
+[inventory]
+speedboat=3
+

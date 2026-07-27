@@ -1,0 +1,15 @@
+BasicInfo:
+    Title:          "LEGO World Builder 3DS"
+    CompanyCode:    "00"
+    ProductCode:    "CTR-H-LEGW"
+    ContentType:    "Application"
+    Logo:           "Nintendo"
+
+RomFs:
+    RootPath:       "$(DIR_ROMFS)"
+
+Option:
+    UseOnSD:          true
+    FreeProductCode:  true
+    EnableCrypt:      false
+    EnableCompress:   false

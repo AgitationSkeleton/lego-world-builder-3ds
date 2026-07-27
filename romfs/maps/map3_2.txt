@@ -1,0 +1,53 @@
+[map]
+name=RIVERMAZE
+
+ map=___________________
+ map=_age___________ega_
+ map=_g_gcwwwwewwwwcg_g_
+ map=_ggg__w_____w__ggg_
+ map=___g__w_____w__g___
+ map=___g_ggggggggg_g___
+ map=__gggg___h___gggg__
+ map=__g____ww1ww____g__
+ map=__gggggwdddwggggg__
+ map=__g____wwwww____g__
+ map=__g______w______g__
+ map=__gggggggfggggggg__
+ map=____g_________g____
+ map=_gggg_wwiwiww_gggg_
+ map=_g__gcw__2__wcg__g_
+ map=_agge_wwiwiww_egga_
+ map=___________________
+
+ 
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   @ = hole
+
+ 
+ 
+[mapitems]
+a=waterpile,energy,1
+b=waterunit,building,marina
+c=waterunit,monster,gator
+d=waterpile,blue,15,energy,1
+e=waterpile,yellow,1
+f=waterplan,duck,10
+g=waterpile,red,1
+h=plan,buggy,10
+i=waterpile,wheel,1
+
+
+1=goal,duck,water
+2=bonusgoal,buggy
+
+
+[inventory]
+tugboat=10

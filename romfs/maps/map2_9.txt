@@ -1,0 +1,60 @@
+[map]
+name=CANALS
+
+ map=...w.dw...w..w..ww
+ map=.w.wwwww..a.www.wa
+ map=.a.....ww...wew.b.
+ map=.w.gww..a.w.www...
+ map=bw..waw...w..w..ww
+ map=.w....w.w1wwgwwaww
+ map=...awww.www....w..
+ map=wwww.w...w..wwawkw
+ map=w.f..w...wc...wjim
+ map=TTT_T____n___TTT_T
+ map=.T.T.._.....__..T.
+ map=_.._.h.l.h.l..._.T
+ map=..T..._........T..
+ map=....T...2..._....T
+
+
+center=9,5
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   C = crab
+
+center=5,5
+ 
+[mapitems]
+
+a=waterunit,vehicle,fish
+b=unit,vehicle,snail
+c=pile,wheel,4
+d=pile,green,10
+e=plan,marina,10
+f=plan,buggy,10
+g=unit,vehicle,steamshovel
+h=unit,monster,crab
+i=plan,defender,10
+j=plan,fish,10
+k=plan,dirtbuggy,10
+l=unit,monster,gator
+m=plan,dozer,10
+n=unit,monster,boulder
+
+
+1=goal,marina,water
+2=bonusgoal,fish
+
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+steamshovel=10
+
+
+

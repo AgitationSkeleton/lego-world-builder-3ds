@@ -1,0 +1,43 @@
+[map]
+name=BUILD A DIRTBUGGY
+
+ map=_T____.2 
+ map=__1__.h.
+ map=.____...
+ map=.b.._T..
+ map=.....___
+ map=......g.
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+
+ 
+[mapitems]
+a=waterpile,yellow,9,energy,1,wheel,4
+b=unit,vehicle,buggy
+c=pile,energy,1
+d=pile,yellow,10
+e=pile,wheel,4
+f=pile,energy,1
+g=plan,dirtbuggy,10
+h=pile,yellow,10,wheel,4,energy,1
+
+
+1=goal,anything
+2=bonusgoal,buggy
+
+[inventory]
+buggy=10

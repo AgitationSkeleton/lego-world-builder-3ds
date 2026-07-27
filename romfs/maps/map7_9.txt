@@ -1,0 +1,48 @@
+﻿[map]
+name=GREENING THE BARRENS
+
+ map=.bwwl._n.._._.#####
+ map=.b2bw.____b...##.db
+ map=_.b._......._._#_#_
+ map=.._..._.jbj.....##h
+ map=.b.._...bab..._..#b
+ map=jwjw_._.jbj.._..._k
+ map=...j..........._._b
+ map=.b.w___b_wrrrrww.__
+ map=bibj...._jbm1__j._.
+ map=.b.r.g.._wb..__w..c
+ 
+--   H = HQ 
+--   B = BUGGY
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   C = crab
+
+
+ 
+[mapitems]
+a=unit,building,nursery
+b=unit,monster,boulder
+c=unit,building,factory
+d=unit,building,garage
+--e=unit,vehicle,buggy
+f=plan,duck,10
+g=unit,building,windmill
+h=plan,dirtbuggy,10
+i=unit,vehicle,treebot
+j=waterunit,vehicle,duck
+k=plan,dozer,10
+l=waterplan,steamshovel,10
+m=plan,dumptruck,10
+n=waterplan,treebot,5
+
+1=goal,house
+2=bonusgoal,treebot,water
+
+[inventory]
+
+house=5

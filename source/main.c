@@ -1,0 +1,10442 @@
+#include <3ds.h>
+#include <citro2d.h>
+
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+
+#include "wb_map.h"
+
+#define TOP_W 400.0f
+#define TOP_H 240.0f
+#define BOTTOM_W 320.0f
+#define BOTTOM_H 240.0f
+
+#define VIEW_TILE_W 12
+#define VIEW_TILE_H 9
+#define DRAW_PAD 2
+
+#define DIRECTOR_TILE_SIZE_X 50.0f
+#define DIRECTOR_TILE_SIZE_Y 50.0f
+#define DIRECTOR_PIXEL_TOPLEFT_X -58.0f
+#define DIRECTOR_PIXEL_TOPLEFT_Y -13.0f
+#define DIRECTOR_PIXEL_SKEW_X 25.0f
+#define DIRECTOR_SCALE 0.5f
+#define WB_SAVE_PATH "sdmc:/legowb3ds/save.txt"
+
+/* Konami code sequence: Up Up Down Down Left Right Left Right B A Start (11 keys) */
+static const u32 g_konamiSeq[] = {
+    KEY_UP, KEY_UP, KEY_DOWN, KEY_DOWN,
+    KEY_LEFT, KEY_RIGHT, KEY_LEFT, KEY_RIGHT,
+    KEY_B, KEY_A, KEY_START
+};
+#define WB_KONAMI_LEN 11
+#define WORLD_OFFSET_X 18.0f
+#define WORLD_OFFSET_Y 24.0f
+#define PICKUP_SCALE 0.32f
+#define RESOURCE_WORLD_SCALE DIRECTOR_SCALE
+#define PLAN_WORLD_SCALE DIRECTOR_SCALE
+#define MUSIC_CHANNEL 0
+#define SFX_CHANNEL   1
+#define SFX2_CHANNEL  1  /* use same channel as SFX; channel 2 unreliable in emulators */
+#define WB_MAX_WORLD_EFFECTS 32
+#define WB_MAX_PENDING_UNIT_BREAKS 16
+#define WB_DAMAGE_EFFECT_DURATION_MS 320
+#define WB_CLOUD_EFFECT_FRAME_MS 70
+#define WB_SWAMP_DAMAGE_PERIOD_MS 700
+#define WB_SWAMP_DAMAGE_AMOUNT 500
+#define WB_MUSIC_INTRO_VARIANTS 2
+#define WB_MUSIC_GAME6_VARIANTS 4
+#define WB_MUSIC_GAME8_VARIANTS 3
+#define WB_MUSIC_GAMEA_VARIANTS 3
+#define WB_MUSIC_GAMEI_VARIANTS 3
+
+typedef enum WBAssetId {
+    ASSET_TERRAIN_NORMAL = 0,
+    ASSET_TERRAIN_TREE,
+    ASSET_TERRAIN_WATER,
+    ASSET_TERRAIN_WATER_REEFS,
+    ASSET_TERRAIN_WATER_UNDIGGABLE,
+    ASSET_TERRAIN_NORMAL_UNDIGGABLE,
+    ASSET_TERRAIN_MOUNTAIN,
+    ASSET_TERRAIN_SWAMP,
+    ASSET_TERRAIN_BILLBOARD,
+    ASSET_VEHICLE_BUGGY,
+    ASSET_VEHICLE_DUCK,
+    ASSET_PLAN_BUGGY,
+    ASSET_RESOURCE_RED,
+    ASSET_RESOURCE_BLUE,
+    ASSET_RESOURCE_YELLOW,
+    ASSET_RESOURCE_WHEEL,
+    ASSET_RESOURCE_ENERGY,
+    ASSET_GOAL_MAIN,
+    ASSET_GOAL_BONUS,
+    ASSET_MINI_NORMAL,
+    ASSET_MINI_TREE,
+    ASSET_MINI_NORMAL_UNDIGGABLE,
+    ASSET_MINI_MOUNTAIN,
+    ASSET_MINI_WATER,
+    ASSET_MINI_WATER_UNDIGGABLE,
+    ASSET_MINI_WATER_REEFS,
+    ASSET_MINI_RESOURCE,
+    ASSET_MINI_PLAN,
+    ASSET_MINI_VEHICLE,
+    ASSET_MINI_HOLE,
+    ASSET_MINI_SWAMP,
+    ASSET_MINI_HIGHLIGHT,
+    ASSET_SKY1,
+    ASSET_UI_ENERGY_ICON,
+    ASSET_UI_ENERGY_STRIPE_BG,
+    ASSET_UI_UNIT_INFO_SEPARATOR,
+    ASSET_UI_NO_ENERGY,
+    ASSET_VEHICLE_BUGGY_HERO,
+    ASSET_VEHICLE_DUCK_HERO,
+    ASSET_PLAN_GENERIC,
+    ASSET_PLAN_UNKNOWN,
+    ASSET_RESOURCE_RED_1,
+    ASSET_RESOURCE_RED_2,
+    ASSET_RESOURCE_RED_3,
+    ASSET_RESOURCE_RED_4,
+    ASSET_RESOURCE_BLUE_1,
+    ASSET_RESOURCE_BLUE_2,
+    ASSET_RESOURCE_BLUE_3,
+    ASSET_RESOURCE_BLUE_4,
+    ASSET_RESOURCE_GREEN_1,
+    ASSET_RESOURCE_GREEN_2,
+    ASSET_RESOURCE_GREEN_3,
+    ASSET_RESOURCE_GREEN_4,
+    ASSET_RESOURCE_YELLOW_1,
+    ASSET_RESOURCE_YELLOW_2,
+    ASSET_RESOURCE_YELLOW_3,
+    ASSET_RESOURCE_YELLOW_4,
+    ASSET_RESOURCE_WHEEL_FULL,
+    ASSET_RESOURCE_ENERGY_FULL,
+    ASSET_RESOURCE_ENERGY_LOW,
+    ASSET_RESOURCE_ENERGY_DEAD,
+    ASSET_VEHICLE_BUGGY_UP,
+    ASSET_VEHICLE_BUGGY_DOWN,
+    ASSET_VEHICLE_BUGGY_LEFT,
+    ASSET_VEHICLE_BUGGY_RIGHT,
+    ASSET_VEHICLE_DUCK_UP,
+    ASSET_VEHICLE_DUCK_DOWN,
+    ASSET_VEHICLE_DUCK_LEFT,
+    ASSET_VEHICLE_DUCK_RIGHT,
+    ASSET_VEHICLE_DUCK_WATER_UP,
+    ASSET_VEHICLE_DUCK_WATER_DOWN,
+    ASSET_VEHICLE_DUCK_WATER_LEFT,
+    ASSET_VEHICLE_DUCK_WATER_RIGHT,
+    ASSET_OBJECT_HIGHLIGHT,
+    ASSET_PLAN_HIGHLIGHT,
+    ASSET_BUILD_YES,
+    ASSET_BUILD_NO,
+    ASSET_CHECK_MARK,
+    ASSET_X_MARK,
+    ASSET_MENU_PANEL,
+    ASSET_BUILD_OUTLINE,
+    ASSET_BUILD_OUTLINE_FRONT,
+    ASSET_BUILD_OUTLINE_REAR,
+    ASSET_BUILD_OUTLINE_L1,
+    ASSET_BUILD_OUTLINE_L2,
+    ASSET_BUILD_OUTLINE_R1,
+    ASSET_BUILD_OUTLINE_R2,
+    ASSET_GOAL_BUBBLE,
+    ASSET_GOAL_COMPLETE_BUBBLE,
+    ASSET_BONUS_GOAL_COMPLETE_BUBBLE,
+    ASSET_DAMAGE_SMALL_1,
+    ASSET_DAMAGE_SMALL_2,
+    ASSET_DAMAGE_SMALL_3,
+    ASSET_DAMAGE_SMALL_4,
+    ASSET_DAMAGE_SMALL_5,
+    ASSET_TAKE_APART_CLOUD_1,
+    ASSET_TAKE_APART_CLOUD_2,
+    ASSET_TAKE_APART_CLOUD_3,
+    ASSET_BUILD_CLOUD_1,
+    ASSET_BUILD_CLOUD_2,
+    ASSET_TITLE_LOGO,
+    ASSET_TITLE_FINAL_IMAGE,
+    ASSET_TITLE_WB2_IMAGE,
+    ASSET_TITLE_SKY1,
+    ASSET_TITLE_SKY2,
+    ASSET_TITLE_SKY3,
+    ASSET_TITLE_SKY4,
+    ASSET_TITLE_SKY5,
+    ASSET_WORLDMAP1,
+    ASSET_WORLDMAP2,
+    ASSET_WORLDMAP3,
+    ASSET_WORLDMAP4,
+    ASSET_WORLDMAP5,
+    ASSET_WORLD_QUESTION_MARK,
+    ASSET_WORLD_QUESTION_MARK_SHADOW,
+    ASSET_OCEAN_QUESTION_MARK_SHADOW,
+    ASSET_WORLD_FLAG1,
+    ASSET_WORLD_FLAG2,
+    ASSET_WORLD_FLAG3,
+    ASSET_WORLD_FLAG4,
+    ASSET_WORLD_FLAG5,
+    ASSET_WORLD_FLAG6,
+    ASSET_WORLD_BONUS_FLAG1,
+    ASSET_WORLD_BONUS_FLAG2,
+    ASSET_WORLD_BONUS_FLAG3,
+    ASSET_WORLD_BONUS_FLAG4,
+    ASSET_WORLD_BONUS_FLAG5,
+    ASSET_WORLD_BONUS_FLAG6,
+    ASSET_OCEAN_FLAG1,
+    ASSET_OCEAN_FLAG2,
+    ASSET_OCEAN_FLAG3,
+    ASSET_OCEAN_FLAG4,
+    ASSET_OCEAN_FLAG5,
+    ASSET_OCEAN_FLAG6,
+    ASSET_OCEAN_BONUS_FLAG1,
+    ASSET_OCEAN_BONUS_FLAG2,
+    ASSET_OCEAN_BONUS_FLAG3,
+    ASSET_OCEAN_BONUS_FLAG4,
+    ASSET_OCEAN_BONUS_FLAG5,
+    ASSET_OCEAN_BONUS_FLAG6,
+    ASSET_PREV_WORLD_ARROW,
+    ASSET_NEXT_WORLD_ARROW,
+    ASSET_NEXT_WORLD_ARROW_FRAME,
+    ASSET_NEXT_WORLD_ARROW_FRAME2,
+    ASSET_BUGGY_MINI,
+    ASSET_DUCK_MINI,
+    ASSET_DUCK_WATER_MINI,
+    ASSET_FISH_MINI,
+    ASSET_SNAIL_MINI,
+    ASSET_MAP_MOUNTAIN,
+    ASSET_MAP_ROCKS,
+    ASSET_MAP_TREE,
+
+    /* ── vehicles_land.t3x ── index 0 from this sheet ── */
+    ASSET_VEHICLES_LAND_BASE,
+    ASSET_VEHICLE_DIRTBUGGY_UP = ASSET_VEHICLES_LAND_BASE,
+    ASSET_VEHICLE_DIRTBUGGY_DOWN,
+    ASSET_VEHICLE_DIRTBUGGY_LEFT,
+    ASSET_VEHICLE_DIRTBUGGY_RIGHT,
+    ASSET_VEHICLE_STEAMSHOVEL_UP,
+    ASSET_VEHICLE_STEAMSHOVEL_DOWN,
+    ASSET_VEHICLE_STEAMSHOVEL_LEFT,
+    ASSET_VEHICLE_STEAMSHOVEL_RIGHT,
+    ASSET_VEHICLE_STEAMSHOVEL_UP_DIG,
+    ASSET_VEHICLE_STEAMSHOVEL_DOWN_DIG,
+    ASSET_VEHICLE_STEAMSHOVEL_LEFT_DIG,
+    ASSET_VEHICLE_STEAMSHOVEL_RIGHT_DIG,
+    ASSET_VEHICLE_STEAMSHOVEL_UP_FULL,
+    ASSET_VEHICLE_STEAMSHOVEL_DOWN_FULL,
+    ASSET_VEHICLE_STEAMSHOVEL_LEFT_FULL,
+    ASSET_VEHICLE_STEAMSHOVEL_RIGHT_FULL,
+    ASSET_VEHICLE_DUMPTRUCK_UP,
+    ASSET_VEHICLE_DUMPTRUCK_DOWN,
+    ASSET_VEHICLE_DUMPTRUCK_LEFT,
+    ASSET_VEHICLE_DUMPTRUCK_RIGHT,
+    ASSET_VEHICLE_FORKLIFT_UP,
+    ASSET_VEHICLE_FORKLIFT_DOWN,
+    ASSET_VEHICLE_FORKLIFT_LEFT,
+    ASSET_VEHICLE_FORKLIFT_RIGHT,
+    ASSET_VEHICLE_DOZER_UP,
+    ASSET_VEHICLE_DOZER_DOWN,
+    ASSET_VEHICLE_DOZER_LEFT,
+    ASSET_VEHICLE_DOZER_RIGHT,
+    ASSET_VEHICLE_SPEEDBOAT_UP,
+    ASSET_VEHICLE_SPEEDBOAT_DOWN,
+    ASSET_VEHICLE_SPEEDBOAT_LEFT,
+    ASSET_VEHICLE_SPEEDBOAT_RIGHT,
+    ASSET_VEHICLE_SPEEDBOAT_HERO,
+    ASSET_VEHICLE_DIRTBUGGY_HERO,
+    ASSET_VEHICLE_STEAMSHOVEL_HERO,
+    ASSET_VEHICLE_DUMPTRUCK_HERO,
+    ASSET_VEHICLE_FORKLIFT_HERO,
+    ASSET_VEHICLE_DOZER_HERO,
+    ASSET_PLAN_DIRTBUGGY,
+    ASSET_PLAN_STEAMSHOVEL,
+    ASSET_PLAN_DUMPTRUCK,
+    ASSET_PLAN_FORKLIFT,
+    ASSET_PLAN_DOZER,
+    ASSET_PLAN_SPEEDBOAT,
+
+    /* ── vehicles_water.t3x ── index 0 from this sheet ── */
+    ASSET_VEHICLES_WATER_BASE,
+    ASSET_VEHICLE_TUGBOAT_UP = ASSET_VEHICLES_WATER_BASE,
+    ASSET_VEHICLE_TUGBOAT_DOWN,
+    ASSET_VEHICLE_TUGBOAT_LEFT,
+    ASSET_VEHICLE_TUGBOAT_RIGHT,
+    ASSET_VEHICLE_FREIGHTER_UP,
+    ASSET_VEHICLE_FREIGHTER_DOWN,
+    ASSET_VEHICLE_FREIGHTER_LEFT,
+    ASSET_VEHICLE_FREIGHTER_RIGHT,
+    ASSET_VEHICLE_TUGBOAT_HERO,
+    ASSET_VEHICLE_FREIGHTER_HERO,
+    ASSET_PLAN_TUGBOAT,
+    ASSET_PLAN_FREIGHTER,
+
+    /* ── vehicles_animal.t3x ── index 0 from this sheet ── */
+    ASSET_VEHICLES_ANIMAL_BASE,
+    ASSET_VEHICLE_FROG_UP = ASSET_VEHICLES_ANIMAL_BASE,
+    ASSET_VEHICLE_FROG_DOWN,
+    ASSET_VEHICLE_FROG_LEFT,
+    ASSET_VEHICLE_FROG_RIGHT,
+    ASSET_VEHICLE_FROG_UP_JUMP,
+    ASSET_VEHICLE_FROG_DOWN_JUMP,
+    ASSET_VEHICLE_FROG_LEFT_JUMP,
+    ASSET_VEHICLE_FROG_RIGHT_JUMP,
+    ASSET_VEHICLE_FROG_WATER_UP,
+    ASSET_VEHICLE_FROG_WATER_DOWN,
+    ASSET_VEHICLE_FROG_WATER_LEFT,
+    ASSET_VEHICLE_FROG_WATER_RIGHT,
+    ASSET_VEHICLE_FROG_WATER_UP_JUMP,
+    ASSET_VEHICLE_FROG_WATER_DOWN_JUMP,
+    ASSET_VEHICLE_FROG_WATER_LEFT_JUMP,
+    ASSET_VEHICLE_FROG_WATER_RIGHT_JUMP,
+    ASSET_VEHICLE_FISH_WATER_UP,
+    ASSET_VEHICLE_FISH_WATER_DOWN,
+    ASSET_VEHICLE_FISH_WATER_LEFT,
+    ASSET_VEHICLE_FISH_WATER_RIGHT,
+    ASSET_VEHICLE_SNAIL_UP,
+    ASSET_VEHICLE_SNAIL_DOWN,
+    ASSET_VEHICLE_SNAIL_LEFT,
+    ASSET_VEHICLE_SNAIL_RIGHT,
+    ASSET_VEHICLE_FROG_HERO,
+    ASSET_VEHICLE_FISH_HERO,
+    ASSET_VEHICLE_SNAIL_HERO,
+    ASSET_PLAN_FROG,
+    ASSET_PLAN_FISH,
+    ASSET_PLAN_SNAIL,
+
+    /* ── vehicles_robot.t3x ── index 0 from this sheet ── */
+    ASSET_VEHICLES_ROBOT_BASE,
+    ASSET_VEHICLE_TREEBOT_UP = ASSET_VEHICLES_ROBOT_BASE,
+    ASSET_VEHICLE_TREEBOT_DOWN,
+    ASSET_VEHICLE_TREEBOT_LEFT,
+    ASSET_VEHICLE_TREEBOT_RIGHT,
+    ASSET_VEHICLE_TREEBOT_UP_WALK1,
+    ASSET_VEHICLE_TREEBOT_UP_WALK2,
+    ASSET_VEHICLE_TREEBOT_UP_WALK3,
+    ASSET_VEHICLE_TREEBOT_UP_WALK4,
+    ASSET_VEHICLE_TREEBOT_UP_WALK5,
+    ASSET_VEHICLE_TREEBOT_UP_WALK6,
+    ASSET_VEHICLE_TREEBOT_DOWN_WALK1,
+    ASSET_VEHICLE_TREEBOT_DOWN_WALK2,
+    ASSET_VEHICLE_TREEBOT_DOWN_WALK3,
+    ASSET_VEHICLE_TREEBOT_DOWN_WALK4,
+    ASSET_VEHICLE_TREEBOT_DOWN_WALK5,
+    ASSET_VEHICLE_TREEBOT_DOWN_WALK6,
+    ASSET_VEHICLE_TREEBOT_LEFT_WALK1,
+    ASSET_VEHICLE_TREEBOT_LEFT_WALK2,
+    ASSET_VEHICLE_TREEBOT_LEFT_WALK3,
+    ASSET_VEHICLE_TREEBOT_LEFT_WALK4,
+    ASSET_VEHICLE_TREEBOT_LEFT_WALK5,
+    ASSET_VEHICLE_TREEBOT_LEFT_WALK6,
+    ASSET_VEHICLE_TREEBOT_RIGHT_WALK1,
+    ASSET_VEHICLE_TREEBOT_RIGHT_WALK2,
+    ASSET_VEHICLE_TREEBOT_RIGHT_WALK3,
+    ASSET_VEHICLE_TREEBOT_RIGHT_WALK4,
+    ASSET_VEHICLE_TREEBOT_RIGHT_WALK5,
+    ASSET_VEHICLE_TREEBOT_RIGHT_WALK6,
+    ASSET_VEHICLE_TREEBOT_UP_LIFT1,
+    ASSET_VEHICLE_TREEBOT_UP_LIFT2,
+    ASSET_VEHICLE_TREEBOT_DOWN_LIFT1,
+    ASSET_VEHICLE_TREEBOT_DOWN_LIFT2,
+    ASSET_VEHICLE_TREEBOT_LEFT_LIFT1,
+    ASSET_VEHICLE_TREEBOT_LEFT_LIFT2,
+    ASSET_VEHICLE_TREEBOT_RIGHT_LIFT1,
+    ASSET_VEHICLE_TREEBOT_RIGHT_LIFT2,
+    ASSET_VEHICLE_TREEBOT_UP_FULL,
+    ASSET_VEHICLE_TREEBOT_DOWN_FULL,
+    ASSET_VEHICLE_TREEBOT_LEFT_FULL,
+    ASSET_VEHICLE_TREEBOT_RIGHT_FULL,
+    ASSET_VEHICLE_TREEBOT_UP_FULL_WALK1,
+    ASSET_VEHICLE_TREEBOT_UP_FULL_WALK2,
+    ASSET_VEHICLE_TREEBOT_UP_FULL_WALK3,
+    ASSET_VEHICLE_TREEBOT_UP_FULL_WALK4,
+    ASSET_VEHICLE_TREEBOT_DOWN_FULL_WALK1,
+    ASSET_VEHICLE_TREEBOT_DOWN_FULL_WALK2,
+    ASSET_VEHICLE_TREEBOT_DOWN_FULL_WALK3,
+    ASSET_VEHICLE_TREEBOT_DOWN_FULL_WALK4,
+    ASSET_VEHICLE_TREEBOT_LEFT_FULL_WALK1,
+    ASSET_VEHICLE_TREEBOT_LEFT_FULL_WALK2,
+    ASSET_VEHICLE_TREEBOT_LEFT_FULL_WALK3,
+    ASSET_VEHICLE_TREEBOT_LEFT_FULL_WALK4,
+    ASSET_VEHICLE_TREEBOT_RIGHT_FULL_WALK1,
+    ASSET_VEHICLE_TREEBOT_RIGHT_FULL_WALK2,
+    ASSET_VEHICLE_TREEBOT_RIGHT_FULL_WALK3,
+    ASSET_VEHICLE_TREEBOT_RIGHT_FULL_WALK4,
+    ASSET_VEHICLE_TREEBOT_UP_FULL_LIFT1,
+    ASSET_VEHICLE_TREEBOT_UP_FULL_LIFT2,
+    ASSET_VEHICLE_TREEBOT_DOWN_FULL_LIFT1,
+    ASSET_VEHICLE_TREEBOT_DOWN_FULL_LIFT2,
+    ASSET_VEHICLE_TREEBOT_LEFT_FULL_LIFT1,
+    ASSET_VEHICLE_TREEBOT_LEFT_FULL_LIFT2,
+    ASSET_VEHICLE_TREEBOT_RIGHT_FULL_LIFT1,
+    ASSET_VEHICLE_TREEBOT_RIGHT_FULL_LIFT2,
+    ASSET_VEHICLE_TREEBOT_HERO,
+    ASSET_VEHICLE_DEFENDER_UP,
+    ASSET_VEHICLE_DEFENDER_DOWN,
+    ASSET_VEHICLE_DEFENDER_LEFT,
+    ASSET_VEHICLE_DEFENDER_RIGHT,
+    ASSET_VEHICLE_DEFENDER_UP_WALK1,
+    ASSET_VEHICLE_DEFENDER_UP_WALK2,
+    ASSET_VEHICLE_DEFENDER_UP_WALK3,
+    ASSET_VEHICLE_DEFENDER_UP_WALK4,
+    ASSET_VEHICLE_DEFENDER_DOWN_WALK1,
+    ASSET_VEHICLE_DEFENDER_DOWN_WALK2,
+    ASSET_VEHICLE_DEFENDER_DOWN_WALK3,
+    ASSET_VEHICLE_DEFENDER_DOWN_WALK4,
+    ASSET_VEHICLE_DEFENDER_LEFT_WALK1,
+    ASSET_VEHICLE_DEFENDER_LEFT_WALK2,
+    ASSET_VEHICLE_DEFENDER_LEFT_WALK3,
+    ASSET_VEHICLE_DEFENDER_LEFT_WALK4,
+    ASSET_VEHICLE_DEFENDER_RIGHT_WALK1,
+    ASSET_VEHICLE_DEFENDER_RIGHT_WALK2,
+    ASSET_VEHICLE_DEFENDER_RIGHT_WALK3,
+    ASSET_VEHICLE_DEFENDER_RIGHT_WALK4,
+    ASSET_VEHICLE_DEFENDER_HERO,
+    ASSET_VEHICLE_REPAIRBOT_UP,
+    ASSET_VEHICLE_REPAIRBOT_DOWN,
+    ASSET_VEHICLE_REPAIRBOT_LEFT,
+    ASSET_VEHICLE_REPAIRBOT_RIGHT,
+    ASSET_VEHICLE_REPAIRBOT_UP_WALK1,
+    ASSET_VEHICLE_REPAIRBOT_UP_WALK2,
+    ASSET_VEHICLE_REPAIRBOT_DOWN_WALK1,
+    ASSET_VEHICLE_REPAIRBOT_DOWN_WALK2,
+    ASSET_VEHICLE_REPAIRBOT_LEFT_WALK1,
+    ASSET_VEHICLE_REPAIRBOT_LEFT_WALK2,
+    ASSET_VEHICLE_REPAIRBOT_RIGHT_WALK1,
+    ASSET_VEHICLE_REPAIRBOT_RIGHT_WALK2,
+    ASSET_VEHICLE_REPAIRBOT_UP_REPAIR1,
+    ASSET_VEHICLE_REPAIRBOT_UP_REPAIR2,
+    ASSET_VEHICLE_REPAIRBOT_DOWN_REPAIR1,
+    ASSET_VEHICLE_REPAIRBOT_DOWN_REPAIR2,
+    ASSET_VEHICLE_REPAIRBOT_LEFT_REPAIR1,
+    ASSET_VEHICLE_REPAIRBOT_LEFT_REPAIR2,
+    ASSET_VEHICLE_REPAIRBOT_RIGHT_REPAIR1,
+    ASSET_VEHICLE_REPAIRBOT_RIGHT_REPAIR2,
+    ASSET_VEHICLE_REPAIRBOT_HERO,
+    ASSET_PLAN_TREEBOT,
+    ASSET_PLAN_DEFENDER,
+    ASSET_PLAN_REPAIRBOT,
+
+    /* ── monsters_a.t3x (crab=28, water_crab=28, scorpion=24, shark=24, boulder=5 = 109) ── */
+    ASSET_MONSTERS_A_BASE,
+    /* assets accessed via ASSET_MONSTERS_A_BASE + offset; see WB_MON_A_* macros */
+    ASSET_MONSTERS_A_SENTINEL = ASSET_MONSTERS_A_BASE + 108,
+
+    /* ── monsters_b.t3x (trex=52, gator_land=20, gator_water=20 = 92) ── */
+    ASSET_MONSTERS_B_BASE = ASSET_MONSTERS_A_BASE + 109,
+    /* assets accessed via ASSET_MONSTERS_B_BASE + offset; see WB_MON_B_* macros */
+    ASSET_MONSTERS_B_SENTINEL = ASSET_MONSTERS_B_BASE + 91,
+
+    /* ── buildings.t3x ── */
+    ASSET_BUILDINGS_BASE = ASSET_MONSTERS_B_BASE + 92,
+    ASSET_BUILDING_GAS_STATION = ASSET_BUILDINGS_BASE,
+    ASSET_BUILDING_GUARD_TOWER,
+    ASSET_BUILDING_GUARD_TOWER_UP,
+    ASSET_BUILDING_GUARD_TOWER_DOWN,
+    ASSET_BUILDING_GUARD_TOWER_LEFT,
+    ASSET_BUILDING_GUARD_TOWER_RIGHT,
+    ASSET_BUILDING_MARINA,
+    ASSET_BUILDING_ROBOT_LAB,
+    ASSET_BUILDING_GAS_STATION_HERO,
+    ASSET_BUILDING_MARINA_HERO,
+    ASSET_BUILDING_ROBOT_LAB_HERO,
+    ASSET_BUILDING_GUARD_TOWER_HERO,
+    ASSET_PLAN_GAS_STATION,
+    ASSET_PLAN_GUARD_TOWER,
+    ASSET_PLAN_MARINA,
+    ASSET_PLAN_ROBOT_LAB,
+    ASSET_PLAN_DUCK,
+
+    /* ── whirlpool.t3x ── */
+    ASSET_WHIRLPOOL_BASE,
+    ASSET_WHIRLPOOL_STATIC = ASSET_WHIRLPOOL_BASE,
+    ASSET_WHIRLPOOL_WHIRL1,
+    ASSET_WHIRLPOOL_WHIRL2,
+    ASSET_WHIRLPOOL_WHIRL3,
+    ASSET_WHIRLPOOL_WHIRL4,
+
+    /* ── wb2_monsters.t3x (lion=23 + 7 frozen = 30) ── */
+    ASSET_WB2_MONSTERS_BASE,
+    ASSET_MONSTER_LION = ASSET_WB2_MONSTERS_BASE,
+    ASSET_MONSTER_LION_DOWN,
+    ASSET_MONSTER_LION_DOWN_WALK1,
+    ASSET_MONSTER_LION_DOWN_WALK2,
+    ASSET_MONSTER_LION_DOWN_ATK1,
+    ASSET_MONSTER_LION_DOWN_ATK2,
+    ASSET_MONSTER_LION_LEFT,
+    ASSET_MONSTER_LION_LEFT_WALK1,
+    ASSET_MONSTER_LION_LEFT_WALK2,
+    ASSET_MONSTER_LION_LEFT_ATK1,
+    ASSET_MONSTER_LION_LEFT_ATK2,
+    ASSET_MONSTER_LION_RIGHT,
+    ASSET_MONSTER_LION_RIGHT_WALK1,
+    ASSET_MONSTER_LION_RIGHT_WALK2,
+    ASSET_MONSTER_LION_RIGHT_ATK1,
+    ASSET_MONSTER_LION_RIGHT_ATK2,
+    ASSET_MONSTER_LION_UP,
+    ASSET_MONSTER_LION_UP_WALK1,
+    ASSET_MONSTER_LION_UP_WALK2,
+    ASSET_MONSTER_LION_UP_ATK1,
+    ASSET_MONSTER_LION_UP_ATK2,
+    ASSET_MONSTER_LION_HERO,
+    ASSET_PLAN_LION,
+    ASSET_MONSTER_CRAB_FROZEN,
+    ASSET_MONSTER_GATOR_FROZEN,
+    ASSET_MONSTER_LION_FROZEN,
+    ASSET_MONSTER_SCORPION_FROZEN,
+    ASSET_MONSTER_SHARK_FROZEN,
+    ASSET_MONSTER_TREX_FROZEN,
+    ASSET_MONSTER_WATER_CRAB_FROZEN,
+
+    /* ── wb2_vehicles.t3x (freezebot full set = 31) ── */
+    ASSET_WB2_VEHICLES_BASE,
+    ASSET_VEHICLE_FREEZEBOT = ASSET_WB2_VEHICLES_BASE,
+    ASSET_VEHICLE_FREEZEBOT_DOWN,
+    ASSET_VEHICLE_FREEZEBOT_DOWN_WALK1,
+    ASSET_VEHICLE_FREEZEBOT_DOWN_WALK2,
+    ASSET_VEHICLE_FREEZEBOT_DOWN_WALK3,
+    ASSET_VEHICLE_FREEZEBOT_DOWN_WALK4,
+    ASSET_VEHICLE_FREEZEBOT_DOWN_ATK1,
+    ASSET_VEHICLE_FREEZEBOT_DOWN_ATK2,
+    ASSET_VEHICLE_FREEZEBOT_LEFT,
+    ASSET_VEHICLE_FREEZEBOT_LEFT_WALK1,
+    ASSET_VEHICLE_FREEZEBOT_LEFT_WALK2,
+    ASSET_VEHICLE_FREEZEBOT_LEFT_WALK3,
+    ASSET_VEHICLE_FREEZEBOT_LEFT_WALK4,
+    ASSET_VEHICLE_FREEZEBOT_LEFT_ATK1,
+    ASSET_VEHICLE_FREEZEBOT_LEFT_ATK2,
+    ASSET_VEHICLE_FREEZEBOT_RIGHT,
+    ASSET_VEHICLE_FREEZEBOT_RIGHT_WALK1,
+    ASSET_VEHICLE_FREEZEBOT_RIGHT_WALK2,
+    ASSET_VEHICLE_FREEZEBOT_RIGHT_WALK3,
+    ASSET_VEHICLE_FREEZEBOT_RIGHT_WALK4,
+    ASSET_VEHICLE_FREEZEBOT_RIGHT_ATK1,
+    ASSET_VEHICLE_FREEZEBOT_RIGHT_ATK2,
+    ASSET_VEHICLE_FREEZEBOT_UP,
+    ASSET_VEHICLE_FREEZEBOT_UP_WALK1,
+    ASSET_VEHICLE_FREEZEBOT_UP_WALK2,
+    ASSET_VEHICLE_FREEZEBOT_UP_WALK3,
+    ASSET_VEHICLE_FREEZEBOT_UP_WALK4,
+    ASSET_VEHICLE_FREEZEBOT_UP_ATK1,
+    ASSET_VEHICLE_FREEZEBOT_UP_ATK2,
+    ASSET_VEHICLE_FREEZEBOT_HERO,
+    ASSET_PLAN_FREEZEBOT,
+
+    /* ── wb2_buildings.t3x (23 entries) ── */
+    ASSET_WB2_BUILDINGS_BASE,
+    ASSET_BUILDING_FACTORY = ASSET_WB2_BUILDINGS_BASE,
+    ASSET_BUILDING_FACTORY_BLUE,
+    ASSET_BUILDING_FACTORY_GREEN,
+    ASSET_BUILDING_FACTORY_RED,
+    ASSET_BUILDING_FACTORY_WHITE,
+    ASSET_BUILDING_FACTORY_YELLOW,
+    ASSET_BUILDING_FACTORY_HERO,
+    ASSET_PLAN_FACTORY,
+    ASSET_BUILDING_HOUSE,
+    ASSET_BUILDING_HOUSE_HERO,
+    ASSET_PLAN_HOUSE,
+    ASSET_BUILDING_WINDMILL_1,
+    ASSET_BUILDING_WINDMILL_2,
+    ASSET_BUILDING_WINDMILL_3,
+    ASSET_BUILDING_WINDMILL_4,
+    ASSET_BUILDING_WINDMILL_HERO,
+    ASSET_PLAN_WINDMILL,
+    ASSET_BUILDING_GARAGE,
+    ASSET_BUILDING_GARAGE_HERO,
+    ASSET_PLAN_GARAGE,
+    ASSET_BUILDING_NURSERY,
+    ASSET_BUILDING_NURSERY_HERO,
+    ASSET_PLAN_NURSERY,
+
+    /* ── wb2_terrain.t3x (41 entries) ── */
+    ASSET_WB2_TERRAIN_BASE,
+    ASSET_TERRAIN_CEMENT = ASSET_WB2_TERRAIN_BASE,
+    ASSET_TERRAIN_JUNGLE1,
+    ASSET_TERRAIN_JUNGLE2,
+    ASSET_TERRAIN_JUNGLE3,
+    ASSET_TERRAIN_JUNGLE4,
+    ASSET_TERRAIN_ROADBLOCK,
+    ASSET_TERRAIN_STREET1,
+    ASSET_TERRAIN_STREET2,
+    ASSET_TERRAIN_STREET3,
+    ASSET_TERRAIN_STREET4,
+    ASSET_TERRAIN_STREET5,
+    ASSET_TERRAIN_STREET6,
+    ASSET_TERRAIN_STREET7,
+    ASSET_TERRAIN_STREET8,
+    ASSET_TERRAIN_STREET9,
+    ASSET_TERRAIN_STREET10,
+    ASSET_TERRAIN_STREET_UNDIGGABLE,
+    ASSET_TERRAIN_TREE2,
+    ASSET_TERRAIN_TREE3,
+    ASSET_TERRAIN_TREE4,
+    ASSET_MINI_CEMENT,
+    ASSET_MINI_JUNGLE1,
+    ASSET_MINI_JUNGLE2,
+    ASSET_MINI_JUNGLE3,
+    ASSET_MINI_JUNGLE4,
+    ASSET_MINI_ROADBLOCK,
+    ASSET_MINI_STREET1,
+    ASSET_MINI_STREET2,
+    ASSET_MINI_STREET3,
+    ASSET_MINI_STREET4,
+    ASSET_MINI_STREET5,
+    ASSET_MINI_STREET6,
+    ASSET_MINI_STREET7,
+    ASSET_MINI_STREET8,
+    ASSET_MINI_STREET9,
+    ASSET_MINI_STREET10,
+    ASSET_MINI_STREET_UNDIGGABLE,
+    ASSET_MINI_TREE2,
+    ASSET_MINI_TREE3,
+    ASSET_MINI_TREE4,
+    ASSET_TERRAIN_GOALZONE,
+
+    /* ── wb2_resources.t3x (5 entries) ── */
+    ASSET_WB2_RESOURCES_BASE,
+    ASSET_RESOURCE_WHITE_1 = ASSET_WB2_RESOURCES_BASE,
+    ASSET_RESOURCE_WHITE_2,
+    ASSET_RESOURCE_WHITE_3,
+    ASSET_RESOURCE_WHITE_4,
+    ASSET_CARRY_WHITE,
+
+    /* ── worldmap_d.t3x ── */
+    ASSET_WORLDMAP6,
+    ASSET_WORLDMAP7,
+
+    /* ── worldsky_d.t3x ── */
+    ASSET_WB2SKY1,
+    ASSET_WB2SKY2,
+
+    /* ── license.t3x ── */
+    ASSET_LICENSE_BASE,
+    ASSET_LICENSE_CLASS1 = ASSET_LICENSE_BASE,
+    ASSET_LICENSE_CLASS2,
+    ASSET_LICENSE_CLASS3,
+    ASSET_LICENSE_CLASS4,
+    ASSET_LICENSE_STICKER_W4,   /* world 4 (ocean) completion sticker */
+    ASSET_LICENSE_STICKER_W5,   /* world 5 (prehistoric) completion sticker */
+    ASSET_WB2_LICENSE_FRONT,    /* WB2 license card front */
+    ASSET_WB2_REWARD_CLASS1,    /* WB2 "Class A Builder" label */
+    ASSET_WB2_REWARD_CLASS2,    /* WB2 "Class B Builder" label */
+    ASSET_WB2_REWARD_CLASS3     /* WB2 "Class C Builder" label */
+} WBAssetId;
+
+typedef struct WBAnchor {
+    float x;
+    float y;
+} WBAnchor;
+
+typedef enum WBActionMode {
+    WB_ACTION_MOVE = 0,
+    WB_ACTION_PICK,
+    WB_ACTION_DROP,
+    WB_ACTION_DIG,
+    WB_ACTION_FILL,
+    WB_ACTION_UPROOT,
+    WB_ACTION_PLANT,
+    WB_ACTION_PUSH
+} WBActionMode;
+
+typedef enum WBScreenMode {
+    WB_SCREEN_TITLE = 0,
+    WB_SCREEN_WORLD_SELECT,
+    WB_SCREEN_GAME
+} WBScreenMode;
+
+typedef struct WBMoveState {
+    bool active;
+    bool blockedWaiting;
+    bool resumeGoalAfterStop;
+    bool pendingActionValid;
+    int pendingActionX;
+    int pendingActionY;
+    bool queuedMoveValid;
+    int queuedMoveX;
+    int queuedMoveY;
+    WBUnitType unitType;
+    int unitEnergy;
+    int unitEnergyDeci;
+    WBResourcePile unitCargo;
+    int unitCargoEnergyValue;  /* charge level (0-100) of any carried energy brick */
+    WBDirection finalDirection;
+    int goalX;
+    int goalY;
+    int pathLen;
+    int pathIndex;
+    WBDirection direction;
+    int pathX[WB_MAX_MAP_W * WB_MAX_MAP_H];
+    int pathY[WB_MAX_MAP_W * WB_MAX_MAP_H];
+    float progress;
+    u64 stepStartMs;
+    u64 blockedRetryMs;
+    u64 swampDamageTickMs;
+    int blockedTryNum;
+} WBMoveState;
+
+typedef struct WBMonsterState {
+    bool active;
+    int row;
+    int col;
+    WBMonsterType type;
+    WBDirection dir;
+    int hp;            /* 1000 = full health */
+    int wanderTimer;   /* per-monster speed scale percentage (80..120) */
+    bool onWater;      /* gator: use water sprite set */
+    bool dying;
+    u64 breakResolveMs;
+    bool hasTarget;
+    int targetX;
+    int targetY;
+    u64 nextAttackMs;
+    u64 lastAttackMs;
+    u64 swampDamageTickMs;
+    /* smooth movement */
+    bool isMoving;
+    int destRow;
+    int destCol;
+    u64 moveStartMs;
+    u64 moveDurationMs;
+    float moveProgress; /* 0..1 interpolation progress */
+    /* wander timing */
+    u64 nextWanderMs;   /* time when monster next picks a new destination */
+    bool resting;       /* true = waiting before next step */
+    bool targetIsBuilding; /* true = current target is a building, not a unit */
+} WBMonsterState;
+
+#define WB_MAX_MONSTERS 32
+
+typedef struct WBAudioClip {
+    bool loaded;
+    void* data;
+    u32 size;
+    u32 sampleRate;
+    int channels;
+    float volume;   /* 0.0 = default (1.0); otherwise applied as mix scale */
+    ndspWaveBuf waveBuf;
+} WBAudioClip;
+
+typedef struct WBSelectedUnitView {
+    bool valid;
+    WBUnitType unitType;
+    WBTerrainType terrain;
+    int energy;
+    int energyDeci;
+    WBResourcePile cargo;
+    WBDirection direction;
+} WBSelectedUnitView;
+
+typedef enum WBWorldEffectKind {
+    WB_WORLD_EFFECT_DAMAGE_SMALL = 0,
+    WB_WORLD_EFFECT_TAKE_APART_CLOUD,
+    WB_WORLD_EFFECT_BUILD_CLOUD
+} WBWorldEffectKind;
+
+typedef struct WBWorldEffect {
+    bool active;
+    WBWorldEffectKind kind;
+    int tileX;
+    int tileY;
+    u64 startMs;
+    int particleKinds[5];
+} WBWorldEffect;
+
+typedef struct WBPendingUnitBreak {
+    bool active;
+    int tileX;
+    int tileY;
+    u64 resolveMs;
+} WBPendingUnitBreak;
+
+typedef struct WBMiniWalker {
+    bool active;
+    int world;
+    int mission;
+    bool bonus;
+    bool lake;
+    int spriteAssetId;
+    float homeX;
+    float homeY;
+    float x;
+    float y;
+    float dirX;
+    float dirY;
+    bool stopped;
+    u64 nextDecisionMs;
+} WBMiniWalker;
+
+typedef struct WBPlanSwoop {
+    bool active;
+    int assetId;
+    float fromX;
+    float fromY;
+    float toX;
+    float toY;
+    u64 startMs;
+    u64 durationMs;
+} WBPlanSwoop;
+
+typedef struct AppState {
+    WBScreenMode screenMode;
+    int worldSelectWorld;
+    bool worldSelectTouchActive;
+    int hoverMissionWorld;
+    int hoverMissionLevel;
+    int activeWorld;
+    int activeMission;
+    int levelState[8][13];
+    int levelOpenCount[8][13];
+    int levelOpens[8][13][4];
+    char missionNames[8][13][WB_MAX_NAME];
+    WBMap map;
+    int cameraX;
+    int cameraY;
+    int selectedX;
+    int selectedY;
+    bool hasSelection;
+    int selectedMover;
+    bool infoOverlayOpen;
+    bool planMenuOpen;
+    bool startMenuOpen;
+    int  startMenuCursor;
+    WBPlanType armedPlan;
+    int planMenuTouchIndex;
+    int planMenuScrollOffset;
+    int planMenuCursor;
+    bool touchActiveLast;
+    WBActionMode actionMode;
+    bool pendingActionValid;
+    int pendingActionX;
+    int pendingActionY;
+    bool buildPreviewValid;
+    int buildPreviewX;
+    int buildPreviewY;
+    bool buildPreviewAllowed;
+    WBPlanSwoop planSwoop;
+    bool goalPopupVisible;
+    bool goalPopupBonus;
+    bool goalPopupComplete;
+    int goalPopupX;
+    int goalPopupY;
+    char goalPopupText[96];
+    bool muteMusic;
+    bool muteSfx;
+    bool audioReady;
+    bool showDiagnostics;
+    bool debugMenuOpen;
+    int  debugMenuCursor;
+    int  konamiProgress;
+    Result audioInitResult;
+    Result audioFallbackOpenResult;
+    Result audioFallbackInitResult;
+    int loadedClipCount;
+    int sfxPlayCount;   /* increments each time playSfxClip/playSfxClipWorld fires */
+    int linearFreeKB;   /* free linear heap (KB) after all clips loaded */
+    u64 musicRetryAtMs;
+    u64 goalSfxUntilMs;
+    int musicBpm;
+    bool musicUseGamePlaylist;
+    int musicLastGameSongIndex;
+    C2D_SpriteSheet spriteSheet;
+    C2D_SpriteSheet titleMainSheet;
+    C2D_SpriteSheet worldSkySheets[4];
+    C2D_SpriteSheet worldMapSheets[4];
+    C2D_SpriteSheet worldIconSheet;
+    C2D_SpriteSheet vehiclesLandSheet;
+    C2D_SpriteSheet vehiclesWaterSheet;
+    C2D_SpriteSheet vehiclesAnimalSheet;
+    C2D_SpriteSheet vehiclesRobotSheet;
+    C2D_SpriteSheet monstersASheet;
+    C2D_SpriteSheet monstersBSheet;
+    C2D_SpriteSheet buildingsSheet;
+    C2D_SpriteSheet whirlpoolSheet;
+    C2D_TextBuf staticBuf;
+    C2D_TextBuf dynamicBuf;
+    C2D_Text titleText;
+    C2D_Text screenTitleText;
+    WBMoveState moves[32];
+    WBWorldEffect worldEffects[WB_MAX_WORLD_EFFECTS];
+    WBPendingUnitBreak pendingUnitBreaks[WB_MAX_PENDING_UNIT_BREAKS];
+    u64 cellAttackCooldownMs[WB_MAX_MAP_H][WB_MAX_MAP_W];
+    u64 unitSwampDamageTickMs[WB_MAX_MAP_H][WB_MAX_MAP_W];
+    u64 unitRechargeTickMs[WB_MAX_MAP_H][WB_MAX_MAP_W];
+    u64 buildingTickMs[WB_MAX_MAP_H][WB_MAX_MAP_W];
+    u64 unitActionUntilMs[WB_MAX_MAP_H][WB_MAX_MAP_W];
+    u8 unitActionAnim[WB_MAX_MAP_H][WB_MAX_MAP_W];
+    u64 selectedShudderUntilMs;
+    WBMiniWalker miniWalkers[10];
+    WBAudioClip musicIntro;
+    WBAudioClip musicGame;
+    WBAudioClip musicIntroVariants[WB_MUSIC_INTRO_VARIANTS];
+    WBAudioClip musicGame6Variants[WB_MUSIC_GAME6_VARIANTS];
+    WBAudioClip musicGame8Variants[WB_MUSIC_GAME8_VARIANTS];
+    WBAudioClip musicGameAVariants[WB_MUSIC_GAMEA_VARIANTS];
+    WBAudioClip musicGameIVariants[WB_MUSIC_GAMEI_VARIANTS];
+    WBAudioClip sfxButton;
+    WBAudioClip sfxUnitVehicle;
+    WBAudioClip sfxUnitAnimal;
+    WBAudioClip sfxUnitRobot;
+    WBAudioClip sfxPlan;
+    WBAudioClip sfxPickupPlan;
+    WBAudioClip sfxMove;
+    WBAudioClip sfxPickup;
+    WBAudioClip sfxDrop;
+    WBAudioClip sfxDigGround;
+    WBAudioClip sfxFillGround;
+    WBAudioClip sfxDigTree;
+    WBAudioClip sfxPlantTree;
+    WBAudioClip sfxRollover;
+    WBAudioClip sfxWorldComingSoon;
+    WBAudioClip sfxDamage;
+    WBAudioClip sfxMonsterAttack;
+    WBAudioClip sfxDisassemble;
+    WBAudioClip sfxGoal;
+    WBAudioClip sfxBonusGoal;
+    WBAudioClip sfxAssembly;
+    WBAudioClip sfxMoveMisc;
+    WBAudioClip sfxBldgGeneric;
+    WBAudioClip sfxBldgFactory;
+    WBAudioClip sfxBldgGasStationMarina;
+    WBAudioClip sfxBldgGuardTower;
+    WBAudioClip sfxBldgRobotLab;
+    C2D_SpriteSheet wb2MonstersSheet;
+    C2D_SpriteSheet wb2VehiclesSheet;
+    C2D_SpriteSheet wb2BuildingsSheet;
+    C2D_SpriteSheet wb2TerrainSheet;
+    C2D_SpriteSheet wb2ResourcesSheet;
+    C2D_SpriteSheet licenseSheet; /* license card images (4 classes) */
+    bool licenseVisible;          /* SELECT toggle on worldmap */
+    u64 titleCycleStartMs;  /* timestamp when title screen was last entered; 0 = not started */
+    bool titleShowWB2;      /* true when WB2 title is currently the active half of the cycle */
+} AppState;
+
+static AppState g_app;
+static WBMonsterState g_monsters[WB_MAX_MONSTERS];
+static int g_monsterCount = 0;
+static int g_pathScratchX[WB_MAX_MAP_W * WB_MAX_MAP_H];
+static int g_pathScratchY[WB_MAX_MAP_W * WB_MAX_MAP_H];
+static int g_queueX[WB_MAX_MAP_W * WB_MAX_MAP_H * 4]; /* 4× for lazy-deletion A* */
+static int g_queueY[WB_MAX_MAP_W * WB_MAX_MAP_H * 4];
+static float g_queueF[WB_MAX_MAP_W * WB_MAX_MAP_H * 4]; /* f-cost heap (parallel to g_queueX/Y) */
+static bool g_visited[WB_MAX_MAP_H][WB_MAX_MAP_W];
+static int g_parentX[WB_MAX_MAP_H][WB_MAX_MAP_W];
+static int g_parentY[WB_MAX_MAP_H][WB_MAX_MAP_W];
+static float g_gCost[WB_MAX_MAP_H][WB_MAX_MAP_W]; /* A* g-cost from start */
+static u8 g_monVisited[WB_MAX_MAP_H][WB_MAX_MAP_W];
+static s16 g_monFirstX[WB_MAX_MAP_H][WB_MAX_MAP_W];
+static s16 g_monFirstY[WB_MAX_MAP_H][WB_MAX_MAP_W];
+static s16 g_monQx[WB_MAX_MAP_W * WB_MAX_MAP_H];
+static s16 g_monQy[WB_MAX_MAP_W * WB_MAX_MAP_H];
+
+static const WBAnchor g_terrainAnchors[] = {
+    [ASSET_TERRAIN_NORMAL] = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_TREE] = { 24.0f, 19.0f },
+    [ASSET_TERRAIN_WATER] = { 24.0f, -12.0f },
+    [ASSET_TERRAIN_WATER_REEFS] = { 24.0f, -4.0f },
+    [ASSET_TERRAIN_WATER_UNDIGGABLE] = { 24.0f, -25.0f },
+    [ASSET_TERRAIN_NORMAL_UNDIGGABLE] = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_MOUNTAIN] = { 24.0f, 6.0f },
+    [ASSET_TERRAIN_BILLBOARD] = { 74.0f, 46.0f },
+    [ASSET_TERRAIN_SWAMP] = { 24.0f, 0.0f },
+
+    /* WB2 terrain */
+    [ASSET_TERRAIN_CEMENT]            = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_JUNGLE1]           = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_JUNGLE2]           = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_JUNGLE3]           = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_JUNGLE4]           = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_ROADBLOCK]         = { 24.0f, 6.0f },
+    [ASSET_TERRAIN_STREET1]           = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_STREET2]           = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_STREET3]           = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_STREET4]           = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_STREET5]           = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_STREET6]           = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_STREET7]           = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_STREET8]           = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_STREET9]           = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_STREET10]          = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_STREET_UNDIGGABLE] = { 24.0f, 0.0f },
+    [ASSET_TERRAIN_TREE2]             = { 24.0f, 37.0f },
+    [ASSET_TERRAIN_TREE3]             = { 24.0f, 9.0f },
+    [ASSET_TERRAIN_TREE4]             = { 24.0f, 19.0f },
+    [ASSET_TERRAIN_GOALZONE]          = { 24.0f, 0.0f }
+};
+
+static const WBAnchor g_objectAnchors[] = {
+    [ASSET_VEHICLE_BUGGY] = { 19.0f, 19.0f },
+    [ASSET_VEHICLE_DUCK] = { 8.0f, 11.0f },
+    [ASSET_PLAN_BUGGY] = { 14.0f, 10.0f },
+    [ASSET_RESOURCE_RED] = { 19.0f, 13.0f },
+    [ASSET_RESOURCE_BLUE] = { 19.0f, 13.0f },
+    [ASSET_RESOURCE_YELLOW] = { 19.0f, 13.0f },
+    [ASSET_RESOURCE_WHEEL] = { 15.0f, 4.0f },
+    [ASSET_RESOURCE_ENERGY] = { 8.0f, 8.0f },
+    [ASSET_GOAL_MAIN] = { -3.0f, 30.0f },
+    [ASSET_GOAL_BONUS] = { 7.0f, 25.0f },
+    [ASSET_PLAN_GENERIC] = { -7.0f, -10.0f },
+    [ASSET_PLAN_UNKNOWN] = { 11.0f, 14.0f },
+    [ASSET_RESOURCE_RED_1] = { 12.0f, 8.0f },
+    [ASSET_RESOURCE_RED_2] = { 19.0f, 11.0f },
+    [ASSET_RESOURCE_RED_3] = { 19.0f, 13.0f },
+    [ASSET_RESOURCE_RED_4] = { 34.0f, 25.0f },
+    [ASSET_RESOURCE_BLUE_1] = { 12.0f, 8.0f },
+    [ASSET_RESOURCE_BLUE_2] = { 19.0f, 11.0f },
+    [ASSET_RESOURCE_BLUE_3] = { 19.0f, 13.0f },
+    [ASSET_RESOURCE_BLUE_4] = { 34.0f, 25.0f },
+    [ASSET_RESOURCE_GREEN_1] = { 12.0f, 8.0f },
+    [ASSET_RESOURCE_GREEN_2] = { 19.0f, 11.0f },
+    [ASSET_RESOURCE_GREEN_3] = { 19.0f, 13.0f },
+    [ASSET_RESOURCE_GREEN_4] = { 34.0f, 25.0f },
+    [ASSET_RESOURCE_YELLOW_1] = { 12.0f, 8.0f },
+    [ASSET_RESOURCE_YELLOW_2] = { 19.0f, 11.0f },
+    [ASSET_RESOURCE_YELLOW_3] = { 19.0f, 13.0f },
+    [ASSET_RESOURCE_YELLOW_4] = { 34.0f, 25.0f },
+    [ASSET_RESOURCE_WHEEL_FULL] = { 15.0f, 4.0f },
+    [ASSET_RESOURCE_ENERGY_FULL] = { 8.0f, 8.0f },
+    [ASSET_RESOURCE_ENERGY_LOW] = { 8.0f, 8.0f },
+    [ASSET_RESOURCE_ENERGY_DEAD] = { 8.0f, 8.0f },
+    [ASSET_VEHICLE_BUGGY_UP] = { 19.0f, 14.0f },
+    [ASSET_VEHICLE_BUGGY_DOWN] = { 19.0f, 19.0f },
+    [ASSET_VEHICLE_BUGGY_LEFT] = { 22.0f, 16.0f },
+    [ASSET_VEHICLE_BUGGY_RIGHT] = { 23.0f, 16.0f },
+    [ASSET_VEHICLE_DUCK_UP] = { 8.0f, 14.0f },
+    [ASSET_VEHICLE_DUCK_DOWN] = { 8.0f, 11.0f },
+    [ASSET_VEHICLE_DUCK_LEFT] = { 16.0f, 15.0f },
+    [ASSET_VEHICLE_DUCK_RIGHT] = { 16.0f, 13.0f },
+    [ASSET_VEHICLE_DUCK_WATER_UP] = { 7.0f, 3.0f },
+    [ASSET_VEHICLE_DUCK_WATER_DOWN] = { 7.0f, 5.0f },
+    [ASSET_VEHICLE_DUCK_WATER_LEFT] = { 17.0f, 9.0f },
+    [ASSET_VEHICLE_DUCK_WATER_RIGHT] = { 11.0f, 5.0f },
+    [ASSET_OBJECT_HIGHLIGHT] = { 0.0f, 35.0f },
+    [ASSET_PLAN_HIGHLIGHT] = { 17.0f, -8.0f },
+    [ASSET_BUILD_YES] = { 10.0f, 11.0f },
+    [ASSET_BUILD_NO] = { 7.0f, 7.0f },
+    [ASSET_CHECK_MARK] = { 8.0f, 8.0f },
+    [ASSET_X_MARK] = { 8.0f, 8.0f },
+    [ASSET_MENU_PANEL] = { 0.0f, 0.0f },
+    [ASSET_BUILD_OUTLINE] = { 76.0f, 1.0f },
+    [ASSET_BUILD_OUTLINE_FRONT] = { 75.0f, -92.0f },
+    [ASSET_BUILD_OUTLINE_REAR] = { 25.0f, 3.0f },
+    [ASSET_BUILD_OUTLINE_L1] = { 50.0f, -50.0f },
+    [ASSET_BUILD_OUTLINE_L2] = { 74.0f, -94.0f },
+    [ASSET_BUILD_OUTLINE_R1] = { -97.0f, -50.0f },
+    [ASSET_BUILD_OUTLINE_R2] = { -127.0f, 2.0f },
+    [ASSET_GOAL_BUBBLE] = { 68.0f, 69.0f },
+    [ASSET_GOAL_COMPLETE_BUBBLE] = { 68.0f, 109.0f },
+    [ASSET_BONUS_GOAL_COMPLETE_BUBBLE] = { 68.0f, 82.0f },
+    [ASSET_DAMAGE_SMALL_1] = { 10.0f, 15.0f },
+    [ASSET_DAMAGE_SMALL_2] = { 15.0f, 26.0f },
+    [ASSET_DAMAGE_SMALL_3] = { 29.0f, 41.0f },
+    [ASSET_DAMAGE_SMALL_4] = { 40.0f, 53.0f },
+    [ASSET_DAMAGE_SMALL_5] = { 53.0f, 59.0f },
+    [ASSET_TAKE_APART_CLOUD_1] = { -1.0f, -2.0f },
+    [ASSET_TAKE_APART_CLOUD_2] = { 22.0f, 23.0f },
+    [ASSET_TAKE_APART_CLOUD_3] = { 24.0f, 21.0f },
+    [ASSET_BUILD_CLOUD_1] = { 27.0f, 15.0f },
+    [ASSET_BUILD_CLOUD_2] = { 30.0f, 24.0f },
+
+    /* ── vehicles_land ─────────────────────────────────────────────────── */
+    [ASSET_VEHICLE_DIRTBUGGY_UP]    = { 20.0f, 17.0f },
+    [ASSET_VEHICLE_DIRTBUGGY_DOWN]  = { 20.0f, 17.0f },
+    [ASSET_VEHICLE_DIRTBUGGY_LEFT]  = { 24.0f, 15.0f },
+    [ASSET_VEHICLE_DIRTBUGGY_RIGHT] = { 25.0f, 15.0f },
+
+    [ASSET_VEHICLE_STEAMSHOVEL_UP]         = { 16.0f, 20.0f },
+    [ASSET_VEHICLE_STEAMSHOVEL_DOWN]       = { 18.0f, 17.0f },
+    [ASSET_VEHICLE_STEAMSHOVEL_LEFT]       = { 33.0f, 22.0f },
+    [ASSET_VEHICLE_STEAMSHOVEL_RIGHT]      = { 29.0f, 21.0f },
+    [ASSET_VEHICLE_STEAMSHOVEL_UP_DIG]     = { 16.0f, 13.0f },
+    [ASSET_VEHICLE_STEAMSHOVEL_DOWN_DIG]   = { 21.0f, 17.0f },
+    [ASSET_VEHICLE_STEAMSHOVEL_LEFT_DIG]   = { 40.0f, 12.0f },
+    [ASSET_VEHICLE_STEAMSHOVEL_RIGHT_DIG]  = { 29.0f, 12.0f },
+    [ASSET_VEHICLE_STEAMSHOVEL_UP_FULL]    = { 16.0f, 33.0f },
+    [ASSET_VEHICLE_STEAMSHOVEL_DOWN_FULL]  = { 18.0f, 25.0f },
+    [ASSET_VEHICLE_STEAMSHOVEL_LEFT_FULL]  = { 31.0f, 33.0f },
+    [ASSET_VEHICLE_STEAMSHOVEL_RIGHT_FULL] = { 29.0f, 31.0f },
+
+    [ASSET_VEHICLE_DUMPTRUCK_UP]    = { 19.0f, 17.0f },
+    [ASSET_VEHICLE_DUMPTRUCK_DOWN]  = { 19.0f, 18.0f },
+    [ASSET_VEHICLE_DUMPTRUCK_LEFT]  = { 23.0f, 16.0f },
+    [ASSET_VEHICLE_DUMPTRUCK_RIGHT] = { 23.0f, 17.0f },
+
+    [ASSET_VEHICLE_FORKLIFT_UP]    = { 17.0f, 25.0f },
+    [ASSET_VEHICLE_FORKLIFT_DOWN]  = { 17.0f, 21.0f },
+    [ASSET_VEHICLE_FORKLIFT_LEFT]  = { 27.0f, 18.0f },
+    [ASSET_VEHICLE_FORKLIFT_RIGHT] = { 29.0f, 19.0f },
+
+    [ASSET_VEHICLE_DOZER_UP]    = { 24.0f, 21.0f },
+    [ASSET_VEHICLE_DOZER_DOWN]  = { 25.0f, 25.0f },
+    [ASSET_VEHICLE_DOZER_LEFT]  = { 38.0f, 18.0f },
+    [ASSET_VEHICLE_DOZER_RIGHT] = { 38.0f, 19.0f },
+
+    [ASSET_VEHICLE_SPEEDBOAT_UP]    = { 20.0f, 23.0f },
+    [ASSET_VEHICLE_SPEEDBOAT_DOWN]  = { 21.0f, 23.0f },
+    [ASSET_VEHICLE_SPEEDBOAT_LEFT]  = { 38.0f, 14.0f },
+    [ASSET_VEHICLE_SPEEDBOAT_RIGHT] = { 37.0f, 14.0f },
+    [ASSET_VEHICLE_SPEEDBOAT_HERO]  = { 59.0f, 44.0f },
+
+    [ASSET_PLAN_DIRTBUGGY]   = { 16.0f, 10.0f },
+    [ASSET_PLAN_STEAMSHOVEL] = { 23.0f, 16.0f },
+    [ASSET_PLAN_DUMPTRUCK]   = { 22.0f, 13.0f },
+    [ASSET_PLAN_FORKLIFT]    = { 20.0f, 13.0f },
+    [ASSET_PLAN_DOZER]       = { 23.0f,  9.0f },
+    [ASSET_PLAN_SPEEDBOAT]   = { 14.0f, 10.0f },
+
+    /* ── vehicles_water ────────────────────────────────────────────────── */
+    [ASSET_VEHICLE_TUGBOAT_UP]    = { 18.0f, 19.0f },
+    [ASSET_VEHICLE_TUGBOAT_DOWN]  = { 16.0f, 17.0f },
+    [ASSET_VEHICLE_TUGBOAT_LEFT]  = { 35.0f, 12.0f },
+    [ASSET_VEHICLE_TUGBOAT_RIGHT] = { 31.0f, 11.0f },
+
+    [ASSET_VEHICLE_FREIGHTER_UP]    = { 14.0f, 17.0f },
+    [ASSET_VEHICLE_FREIGHTER_DOWN]  = { 10.0f, 22.0f },
+    [ASSET_VEHICLE_FREIGHTER_LEFT]  = { 30.0f,  7.0f },
+    [ASSET_VEHICLE_FREIGHTER_RIGHT] = { 29.0f, 14.0f },
+
+    [ASSET_PLAN_TUGBOAT]   = { 22.0f,  9.0f },
+    [ASSET_PLAN_FREIGHTER] = { 26.0f,  8.0f },
+
+    /* ── vehicles_animal ───────────────────────────────────────────────── */
+    [ASSET_VEHICLE_FROG_UP]    = { 13.0f, 20.0f },
+    [ASSET_VEHICLE_FROG_DOWN]  = { 13.0f, 20.0f },
+    [ASSET_VEHICLE_FROG_LEFT]  = { 12.0f, 19.0f },
+    [ASSET_VEHICLE_FROG_RIGHT] = { 12.0f, 20.0f },
+
+    [ASSET_VEHICLE_FROG_UP_JUMP]    = { 13.0f, 28.0f },
+    [ASSET_VEHICLE_FROG_DOWN_JUMP]  = { 13.0f, 29.0f },
+    [ASSET_VEHICLE_FROG_LEFT_JUMP]  = { 11.0f, 29.0f },
+    [ASSET_VEHICLE_FROG_RIGHT_JUMP] = { 12.0f, 31.0f },
+
+    [ASSET_VEHICLE_FROG_WATER_UP]    = { 15.0f, 11.0f },
+    [ASSET_VEHICLE_FROG_WATER_DOWN]  = { 13.0f, 14.0f },
+    [ASSET_VEHICLE_FROG_WATER_LEFT]  = { 15.0f, 15.0f },
+    [ASSET_VEHICLE_FROG_WATER_RIGHT] = { 13.0f, 17.0f },
+
+    [ASSET_VEHICLE_FROG_WATER_UP_JUMP]    = { 13.0f, 17.0f },
+    [ASSET_VEHICLE_FROG_WATER_DOWN_JUMP]  = { 13.0f, 16.0f },
+    [ASSET_VEHICLE_FROG_WATER_LEFT_JUMP]  = { 13.0f, 16.0f },
+    [ASSET_VEHICLE_FROG_WATER_RIGHT_JUMP] = { 14.0f, 19.0f },
+
+    [ASSET_VEHICLE_FISH_WATER_UP]    = { 13.0f, 16.0f },
+    [ASSET_VEHICLE_FISH_WATER_DOWN]  = {  8.0f, 10.0f },
+    [ASSET_VEHICLE_FISH_WATER_LEFT]  = { 23.0f,  7.0f },
+    [ASSET_VEHICLE_FISH_WATER_RIGHT] = { 20.0f,  7.0f },
+
+    [ASSET_VEHICLE_SNAIL_UP]    = {  7.0f, 12.0f },
+    [ASSET_VEHICLE_SNAIL_DOWN]  = {  7.0f, 10.0f },
+    [ASSET_VEHICLE_SNAIL_LEFT]  = { 11.0f, 10.0f },
+    [ASSET_VEHICLE_SNAIL_RIGHT] = { 11.0f,  9.0f },
+
+    [ASSET_PLAN_FROG]  = { 12.0f, 14.0f },
+    [ASSET_PLAN_FISH]  = { 15.0f,  6.0f },
+    [ASSET_PLAN_SNAIL] = { 11.0f,  9.0f },
+
+    /* ── vehicles_robot ────────────────────────────────────────────────── */
+    [ASSET_VEHICLE_TREEBOT_UP]    = { 25.0f, 48.0f },
+    [ASSET_VEHICLE_TREEBOT_DOWN]  = { 27.0f, 47.0f },
+    [ASSET_VEHICLE_TREEBOT_LEFT]  = {  7.0f, 51.0f },
+    [ASSET_VEHICLE_TREEBOT_RIGHT] = { 15.0f, 52.0f },
+
+    [ASSET_VEHICLE_TREEBOT_UP_WALK1] = { 24.0f, 42.0f },
+    [ASSET_VEHICLE_TREEBOT_UP_WALK2] = { 24.0f, 41.0f },
+    [ASSET_VEHICLE_TREEBOT_UP_WALK3] = { 24.0f, 42.0f },
+    [ASSET_VEHICLE_TREEBOT_UP_WALK4] = { 28.0f, 42.0f },
+    [ASSET_VEHICLE_TREEBOT_UP_WALK5] = { 26.0f, 42.0f },
+    [ASSET_VEHICLE_TREEBOT_UP_WALK6] = { 24.0f, 42.0f },
+
+    [ASSET_VEHICLE_TREEBOT_DOWN_WALK1] = { 26.0f, 40.0f },
+    [ASSET_VEHICLE_TREEBOT_DOWN_WALK2] = { 25.0f, 40.0f },
+    [ASSET_VEHICLE_TREEBOT_DOWN_WALK3] = { 25.0f, 40.0f },
+    [ASSET_VEHICLE_TREEBOT_DOWN_WALK4] = { 28.0f, 38.0f },
+    [ASSET_VEHICLE_TREEBOT_DOWN_WALK5] = { 27.0f, 38.0f },
+    [ASSET_VEHICLE_TREEBOT_DOWN_WALK6] = { 25.0f, 39.0f },
+
+    [ASSET_VEHICLE_TREEBOT_LEFT_WALK1] = { 23.0f, 49.0f },
+    [ASSET_VEHICLE_TREEBOT_LEFT_WALK2] = { 17.0f, 51.0f },
+    [ASSET_VEHICLE_TREEBOT_LEFT_WALK3] = { 23.0f, 50.0f },
+    [ASSET_VEHICLE_TREEBOT_LEFT_WALK4] = { 30.0f, 51.0f },
+    [ASSET_VEHICLE_TREEBOT_LEFT_WALK5] = { 20.0f, 51.0f },
+    [ASSET_VEHICLE_TREEBOT_LEFT_WALK6] = { 15.0f, 49.0f },
+
+    [ASSET_VEHICLE_TREEBOT_RIGHT_WALK1] = { 21.0f, 48.0f },
+    [ASSET_VEHICLE_TREEBOT_RIGHT_WALK2] = { 16.0f, 49.0f },
+    [ASSET_VEHICLE_TREEBOT_RIGHT_WALK3] = { 12.0f, 49.0f },
+    [ASSET_VEHICLE_TREEBOT_RIGHT_WALK4] = { 23.0f, 47.0f },
+    [ASSET_VEHICLE_TREEBOT_RIGHT_WALK5] = { 14.0f, 50.0f },
+    [ASSET_VEHICLE_TREEBOT_RIGHT_WALK6] = { 14.0f, 50.0f },
+
+    [ASSET_VEHICLE_TREEBOT_UP_LIFT1] = { 24.0f, 50.0f },
+    [ASSET_VEHICLE_TREEBOT_UP_LIFT2] = { 25.0f, 48.0f },
+    [ASSET_VEHICLE_TREEBOT_DOWN_LIFT1] = { 25.0f, 47.0f },
+    [ASSET_VEHICLE_TREEBOT_DOWN_LIFT2] = { 27.0f, 47.0f },
+    [ASSET_VEHICLE_TREEBOT_LEFT_LIFT1] = { 12.0f, 51.0f },
+    [ASSET_VEHICLE_TREEBOT_LEFT_LIFT2] = { 7.0f, 51.0f },
+    [ASSET_VEHICLE_TREEBOT_RIGHT_LIFT1] = { 17.0f, 52.0f },
+    [ASSET_VEHICLE_TREEBOT_RIGHT_LIFT2] = { 15.0f, 52.0f },
+
+    [ASSET_VEHICLE_TREEBOT_UP_FULL] = { 25.0f, 48.0f },
+    [ASSET_VEHICLE_TREEBOT_DOWN_FULL] = { 27.0f, 47.0f },
+    [ASSET_VEHICLE_TREEBOT_LEFT_FULL] = { 7.0f, 51.0f },
+    [ASSET_VEHICLE_TREEBOT_RIGHT_FULL] = { 15.0f, 52.0f },
+    [ASSET_VEHICLE_TREEBOT_UP_FULL_WALK1] = { 24.0f, 42.0f },
+    [ASSET_VEHICLE_TREEBOT_UP_FULL_WALK2] = { 24.0f, 41.0f },
+    [ASSET_VEHICLE_TREEBOT_UP_FULL_WALK3] = { 24.0f, 42.0f },
+    [ASSET_VEHICLE_TREEBOT_UP_FULL_WALK4] = { 28.0f, 42.0f },
+    [ASSET_VEHICLE_TREEBOT_DOWN_FULL_WALK1] = { 26.0f, 40.0f },
+    [ASSET_VEHICLE_TREEBOT_DOWN_FULL_WALK2] = { 25.0f, 40.0f },
+    [ASSET_VEHICLE_TREEBOT_DOWN_FULL_WALK3] = { 25.0f, 40.0f },
+    [ASSET_VEHICLE_TREEBOT_DOWN_FULL_WALK4] = { 28.0f, 38.0f },
+    [ASSET_VEHICLE_TREEBOT_LEFT_FULL_WALK1] = { 23.0f, 49.0f },
+    [ASSET_VEHICLE_TREEBOT_LEFT_FULL_WALK2] = { 17.0f, 51.0f },
+    [ASSET_VEHICLE_TREEBOT_LEFT_FULL_WALK3] = { 23.0f, 50.0f },
+    [ASSET_VEHICLE_TREEBOT_LEFT_FULL_WALK4] = { 30.0f, 51.0f },
+    [ASSET_VEHICLE_TREEBOT_RIGHT_FULL_WALK1] = { 21.0f, 48.0f },
+    [ASSET_VEHICLE_TREEBOT_RIGHT_FULL_WALK2] = { 16.0f, 49.0f },
+    [ASSET_VEHICLE_TREEBOT_RIGHT_FULL_WALK3] = { 12.0f, 49.0f },
+    [ASSET_VEHICLE_TREEBOT_RIGHT_FULL_WALK4] = { 23.0f, 47.0f },
+    [ASSET_VEHICLE_TREEBOT_UP_FULL_LIFT1] = { 24.0f, 50.0f },
+    [ASSET_VEHICLE_TREEBOT_UP_FULL_LIFT2] = { 25.0f, 48.0f },
+    [ASSET_VEHICLE_TREEBOT_DOWN_FULL_LIFT1] = { 25.0f, 47.0f },
+    [ASSET_VEHICLE_TREEBOT_DOWN_FULL_LIFT2] = { 27.0f, 47.0f },
+    [ASSET_VEHICLE_TREEBOT_LEFT_FULL_LIFT1] = { 12.0f, 51.0f },
+    [ASSET_VEHICLE_TREEBOT_LEFT_FULL_LIFT2] = { 7.0f, 51.0f },
+    [ASSET_VEHICLE_TREEBOT_RIGHT_FULL_LIFT1] = { 17.0f, 52.0f },
+    [ASSET_VEHICLE_TREEBOT_RIGHT_FULL_LIFT2] = { 15.0f, 52.0f },
+
+    [ASSET_VEHICLE_DEFENDER_UP]    = { 33.0f, 49.0f },
+    [ASSET_VEHICLE_DEFENDER_DOWN]  = { 30.0f, 47.0f },
+    [ASSET_VEHICLE_DEFENDER_LEFT]  = { 26.0f, 49.0f },
+    [ASSET_VEHICLE_DEFENDER_RIGHT] = { 29.0f, 53.0f },
+    [ASSET_VEHICLE_DEFENDER_UP_WALK1] = { 33.0f, 49.0f },
+    [ASSET_VEHICLE_DEFENDER_UP_WALK2] = { 33.0f, 49.0f },
+    [ASSET_VEHICLE_DEFENDER_UP_WALK3] = { 33.0f, 49.0f },
+    [ASSET_VEHICLE_DEFENDER_UP_WALK4] = { 33.0f, 49.0f },
+    [ASSET_VEHICLE_DEFENDER_DOWN_WALK1] = { 30.0f, 47.0f },
+    [ASSET_VEHICLE_DEFENDER_DOWN_WALK2] = { 30.0f, 47.0f },
+    [ASSET_VEHICLE_DEFENDER_DOWN_WALK3] = { 30.0f, 47.0f },
+    [ASSET_VEHICLE_DEFENDER_DOWN_WALK4] = { 30.0f, 47.0f },
+    [ASSET_VEHICLE_DEFENDER_LEFT_WALK1] = { 26.0f, 49.0f },
+    [ASSET_VEHICLE_DEFENDER_LEFT_WALK2] = { 26.0f, 49.0f },
+    [ASSET_VEHICLE_DEFENDER_LEFT_WALK3] = { 26.0f, 49.0f },
+    [ASSET_VEHICLE_DEFENDER_LEFT_WALK4] = { 26.0f, 49.0f },
+    [ASSET_VEHICLE_DEFENDER_RIGHT_WALK1] = { 29.0f, 53.0f },
+    [ASSET_VEHICLE_DEFENDER_RIGHT_WALK2] = { 29.0f, 53.0f },
+    [ASSET_VEHICLE_DEFENDER_RIGHT_WALK3] = { 29.0f, 53.0f },
+    [ASSET_VEHICLE_DEFENDER_RIGHT_WALK4] = { 29.0f, 53.0f },
+    [ASSET_VEHICLE_DEFENDER_HERO]  = { 60.0f, 83.0f },
+
+    [ASSET_VEHICLE_REPAIRBOT_UP]    = { 23.0f, 15.0f },
+    [ASSET_VEHICLE_REPAIRBOT_DOWN]  = { 23.0f, 16.0f },
+    [ASSET_VEHICLE_REPAIRBOT_LEFT]  = { 12.0f, 18.0f },
+    [ASSET_VEHICLE_REPAIRBOT_RIGHT] = { 11.0f, 18.0f },
+    [ASSET_VEHICLE_REPAIRBOT_UP_WALK1] = { 23.0f, 15.0f },
+    [ASSET_VEHICLE_REPAIRBOT_UP_WALK2] = { 23.0f, 15.0f },
+    [ASSET_VEHICLE_REPAIRBOT_DOWN_WALK1] = { 23.0f, 16.0f },
+    [ASSET_VEHICLE_REPAIRBOT_DOWN_WALK2] = { 23.0f, 16.0f },
+    [ASSET_VEHICLE_REPAIRBOT_LEFT_WALK1] = { 12.0f, 18.0f },
+    [ASSET_VEHICLE_REPAIRBOT_LEFT_WALK2] = { 12.0f, 18.0f },
+    [ASSET_VEHICLE_REPAIRBOT_RIGHT_WALK1] = { 11.0f, 18.0f },
+    [ASSET_VEHICLE_REPAIRBOT_RIGHT_WALK2] = { 11.0f, 18.0f },
+    [ASSET_VEHICLE_REPAIRBOT_UP_REPAIR1] = { 23.0f, 15.0f },
+    [ASSET_VEHICLE_REPAIRBOT_UP_REPAIR2] = { 23.0f, 15.0f },
+    [ASSET_VEHICLE_REPAIRBOT_DOWN_REPAIR1] = { 23.0f, 16.0f },
+    [ASSET_VEHICLE_REPAIRBOT_DOWN_REPAIR2] = { 23.0f, 16.0f },
+    [ASSET_VEHICLE_REPAIRBOT_LEFT_REPAIR1] = { 12.0f, 18.0f },
+    [ASSET_VEHICLE_REPAIRBOT_LEFT_REPAIR2] = { 12.0f, 18.0f },
+    [ASSET_VEHICLE_REPAIRBOT_RIGHT_REPAIR1] = { 11.0f, 18.0f },
+    [ASSET_VEHICLE_REPAIRBOT_RIGHT_REPAIR2] = { 11.0f, 18.0f },
+    [ASSET_VEHICLE_REPAIRBOT_HERO]  = { 44.0f, 54.0f },
+
+    [ASSET_PLAN_TREEBOT]   = { 14.0f, 20.0f },
+    [ASSET_PLAN_DEFENDER]  = { 13.0f, 20.0f },
+    [ASSET_PLAN_REPAIRBOT] = { 16.0f, 11.0f },
+
+    /* ── buildings ─────────────────────────────────────────────────────── */
+    [ASSET_BUILDING_GAS_STATION]       = {  8.0f, 12.0f },
+    [ASSET_BUILDING_GUARD_TOWER]       = { 12.0f, 12.0f },
+    [ASSET_BUILDING_GUARD_TOWER_UP]    = {  9.0f, 20.0f },
+    [ASSET_BUILDING_GUARD_TOWER_DOWN]  = {  9.0f, 12.0f },
+    [ASSET_BUILDING_GUARD_TOWER_LEFT]  = { 13.0f, 13.0f },
+    [ASSET_BUILDING_GUARD_TOWER_RIGHT] = {  9.0f, 15.0f },
+    [ASSET_BUILDING_MARINA]            = { 14.0f,  8.0f },
+    [ASSET_BUILDING_ROBOT_LAB]         = {  4.0f, 28.0f },
+    [ASSET_BUILDING_GAS_STATION_HERO]   = { 54.0f, 63.0f },
+    [ASSET_BUILDING_MARINA_HERO]        = { 56.0f, 63.0f },
+    [ASSET_BUILDING_ROBOT_LAB_HERO]     = { 35.0f, 64.0f },
+    [ASSET_BUILDING_GUARD_TOWER_HERO]   = { 37.0f, 56.0f },
+    [ASSET_PLAN_GAS_STATION]           = { 18.0f, 15.0f },
+    [ASSET_PLAN_GUARD_TOWER]           = { 12.0f, 14.0f },
+    [ASSET_PLAN_MARINA]                = { 15.0f, 20.0f },
+    [ASSET_PLAN_ROBOT_LAB]             = { 11.0f, 20.0f },
+    [ASSET_PLAN_DUCK]                  = { 11.0f, 14.0f },
+
+    /* WB2 buildings */
+    [ASSET_BUILDING_FACTORY]       = { 19.0f, 15.0f },
+    [ASSET_BUILDING_FACTORY_BLUE]  = { 19.0f, 15.0f },
+    [ASSET_BUILDING_FACTORY_GREEN] = { 19.0f, 15.0f },
+    [ASSET_BUILDING_FACTORY_RED]   = { 19.0f, 15.0f },
+    [ASSET_BUILDING_FACTORY_WHITE] = { 19.0f, 15.0f },
+    [ASSET_BUILDING_FACTORY_YELLOW]= { 19.0f, 15.0f },
+    [ASSET_BUILDING_FACTORY_HERO]  = { 47.0f, 59.0f },
+    [ASSET_PLAN_FACTORY]           = { 12.0f, 14.0f },
+    [ASSET_BUILDING_HOUSE]         = { 19.0f, 10.0f },
+    [ASSET_BUILDING_HOUSE_HERO]    = { 52.0f, 35.0f },
+    [ASSET_PLAN_HOUSE]             = { 15.0f, 8.0f },
+    [ASSET_BUILDING_WINDMILL_1]    = { 20.0f, 32.0f },
+    [ASSET_BUILDING_WINDMILL_2]    = { 20.0f, 32.0f },
+    [ASSET_BUILDING_WINDMILL_3]    = { 20.0f, 32.0f },
+    [ASSET_BUILDING_WINDMILL_4]    = { 20.0f, 32.0f },
+    [ASSET_BUILDING_WINDMILL_HERO] = { 41.0f, 49.0f },
+    [ASSET_PLAN_WINDMILL]          = { 14.0f, 18.0f },
+    [ASSET_BUILDING_GARAGE]        = { 7.0f, 14.0f },
+    [ASSET_BUILDING_GARAGE_HERO]   = { 49.0f, 60.0f },
+    [ASSET_PLAN_GARAGE]            = { 10.0f, 13.0f },
+    [ASSET_BUILDING_NURSERY]       = { 17.0f, 11.0f },
+    [ASSET_BUILDING_NURSERY_HERO]  = { 54.0f, 46.0f },
+    [ASSET_PLAN_NURSERY]           = { 14.0f, 13.0f },
+
+    /* WB2 monsters (lion) */
+    [ASSET_MONSTER_LION]            = { 42.0f, 23.0f },
+    [ASSET_MONSTER_LION_HERO]       = { 42.0f, 23.0f },
+    [ASSET_PLAN_LION]               = { 42.0f, 23.0f },
+    [ASSET_MONSTER_LION_DOWN]       = { 18.0f, 35.0f },
+    [ASSET_MONSTER_LION_DOWN_WALK1] = { 18.0f, 34.0f },
+    [ASSET_MONSTER_LION_DOWN_WALK2] = { 20.0f, 26.0f },
+    [ASSET_MONSTER_LION_DOWN_ATK1]  = { 20.0f, 37.0f },
+    [ASSET_MONSTER_LION_DOWN_ATK2]  = { 19.0f, 25.0f },
+    [ASSET_MONSTER_LION_LEFT]       = { 42.0f, 23.0f },
+    [ASSET_MONSTER_LION_LEFT_WALK1] = { 34.0f, 32.0f },
+    [ASSET_MONSTER_LION_LEFT_WALK2] = { 42.0f, 26.0f },
+    [ASSET_MONSTER_LION_LEFT_ATK1]  = { 33.0f, 31.0f },
+    [ASSET_MONSTER_LION_LEFT_ATK2]  = { 38.0f, 31.0f },
+    [ASSET_MONSTER_LION_RIGHT]      = { 43.0f, 23.0f },
+    [ASSET_MONSTER_LION_RIGHT_WALK1]= { 35.0f, 32.0f },
+    [ASSET_MONSTER_LION_RIGHT_WALK2]= { 43.0f, 26.0f },
+    [ASSET_MONSTER_LION_RIGHT_ATK1] = { 36.0f, 29.0f },
+    [ASSET_MONSTER_LION_RIGHT_ATK2] = { 40.0f, 36.0f },
+    [ASSET_MONSTER_LION_UP]         = { 18.0f, 28.0f },
+    [ASSET_MONSTER_LION_UP_WALK1]   = { 18.0f, 26.0f },
+    [ASSET_MONSTER_LION_UP_WALK2]   = { 19.0f, 31.0f },
+    [ASSET_MONSTER_LION_UP_ATK1]    = { 20.0f, 27.0f },
+    [ASSET_MONSTER_LION_UP_ATK2]    = { 20.0f, 38.0f },
+    [ASSET_MONSTER_LION_FROZEN]     = { 22.0f, 37.0f },
+    [ASSET_MONSTER_CRAB_FROZEN]     = { 22.0f, 15.0f },
+    [ASSET_MONSTER_GATOR_FROZEN]    = { 22.0f, 15.0f },
+    [ASSET_MONSTER_SCORPION_FROZEN] = { 22.0f, 15.0f },
+    [ASSET_MONSTER_SHARK_FROZEN]    = { 22.0f, 15.0f },
+    [ASSET_MONSTER_TREX_FROZEN]     = { 22.0f, 15.0f },
+    [ASSET_MONSTER_WATER_CRAB_FROZEN] = { 22.0f, 15.0f },
+
+    /* WB2 vehicles (freezebot) */
+    [ASSET_VEHICLE_FREEZEBOT]            = { 22.0f, 27.0f },
+    [ASSET_VEHICLE_FREEZEBOT_HERO]       = { 53.0f, 56.0f },
+    [ASSET_PLAN_FREEZEBOT]               = { 13.0f, 14.0f },
+    [ASSET_VEHICLE_FREEZEBOT_DOWN]       = { 22.0f, 27.0f },
+    [ASSET_VEHICLE_FREEZEBOT_DOWN_WALK1] = { 22.0f, 26.0f },
+    [ASSET_VEHICLE_FREEZEBOT_DOWN_WALK2] = { 23.0f, 22.0f },
+    [ASSET_VEHICLE_FREEZEBOT_DOWN_WALK3] = { 23.0f, 24.0f },
+    [ASSET_VEHICLE_FREEZEBOT_DOWN_WALK4] = { 23.0f, 28.0f },
+    [ASSET_VEHICLE_FREEZEBOT_DOWN_ATK1]  = { 18.0f, 28.0f },
+    [ASSET_VEHICLE_FREEZEBOT_DOWN_ATK2]  = { 18.0f, 27.0f },
+    [ASSET_VEHICLE_FREEZEBOT_LEFT]       = { 23.0f, 27.0f },
+    [ASSET_VEHICLE_FREEZEBOT_LEFT_WALK1] = { 23.0f, 27.0f },
+    [ASSET_VEHICLE_FREEZEBOT_LEFT_WALK2] = { 23.0f, 27.0f },
+    [ASSET_VEHICLE_FREEZEBOT_LEFT_WALK3] = { 23.0f, 27.0f },
+    [ASSET_VEHICLE_FREEZEBOT_LEFT_WALK4] = { 23.0f, 27.0f },
+    [ASSET_VEHICLE_FREEZEBOT_LEFT_ATK1]  = { 23.0f, 27.0f },
+    [ASSET_VEHICLE_FREEZEBOT_LEFT_ATK2]  = { 23.0f, 27.0f },
+    [ASSET_VEHICLE_FREEZEBOT_RIGHT]      = { 23.0f, 27.0f },
+    [ASSET_VEHICLE_FREEZEBOT_RIGHT_WALK1]= { 23.0f, 27.0f },
+    [ASSET_VEHICLE_FREEZEBOT_RIGHT_WALK2]= { 23.0f, 27.0f },
+    [ASSET_VEHICLE_FREEZEBOT_RIGHT_WALK3]= { 23.0f, 27.0f },
+    [ASSET_VEHICLE_FREEZEBOT_RIGHT_WALK4]= { 23.0f, 27.0f },
+    [ASSET_VEHICLE_FREEZEBOT_RIGHT_ATK1] = { 23.0f, 27.0f },
+    [ASSET_VEHICLE_FREEZEBOT_RIGHT_ATK2] = { 23.0f, 27.0f },
+    [ASSET_VEHICLE_FREEZEBOT_UP]         = { 22.0f, 23.0f },
+    [ASSET_VEHICLE_FREEZEBOT_UP_WALK1]   = { 22.0f, 23.0f },
+    [ASSET_VEHICLE_FREEZEBOT_UP_WALK2]   = { 22.0f, 23.0f },
+    [ASSET_VEHICLE_FREEZEBOT_UP_WALK3]   = { 22.0f, 23.0f },
+    [ASSET_VEHICLE_FREEZEBOT_UP_WALK4]   = { 22.0f, 23.0f },
+    [ASSET_VEHICLE_FREEZEBOT_UP_ATK1]    = { 22.0f, 23.0f },
+    [ASSET_VEHICLE_FREEZEBOT_UP_ATK2]    = { 22.0f, 23.0f },
+
+    /* WB2 resources */
+    [ASSET_RESOURCE_WHITE_1] = { 12.0f, 8.0f },
+    [ASSET_RESOURCE_WHITE_2] = { 19.0f, 11.0f },
+    [ASSET_RESOURCE_WHITE_3] = { 19.0f, 13.0f },
+    [ASSET_RESOURCE_WHITE_4] = { 34.0f, 25.0f },
+    [ASSET_CARRY_WHITE]      = { 12.0f, 8.0f }
+};
+
+static const WBAnchor g_pileRegPoints[] = {
+    { 22.0f, 7.0f },
+    { 17.0f, 18.0f },
+    { 12.0f, 28.0f },
+    { 6.0f, 39.0f }
+};
+
+typedef struct WBMissionPoint {
+    float x;
+    float y;
+    bool lake;
+} WBMissionPoint;
+
+typedef struct WBMiniSeed {
+    int world;
+    int mission;
+    bool bonus;
+    bool lake;
+    int assetId;
+} WBMiniSeed;
+
+static const int g_worldSkyAssets[8] = {
+    0,
+    ASSET_TITLE_SKY1,
+    ASSET_TITLE_SKY2,
+    ASSET_TITLE_SKY3,
+    ASSET_TITLE_SKY4,
+    ASSET_TITLE_SKY5,
+    ASSET_WB2SKY1,
+    ASSET_WB2SKY2
+};
+
+static const int g_worldMapAssets[8] = {
+    0,
+    ASSET_WORLDMAP1,
+    ASSET_WORLDMAP2,
+    ASSET_WORLDMAP3,
+    ASSET_WORLDMAP4,
+    ASSET_WORLDMAP5,
+    ASSET_WORLDMAP6,
+    ASSET_WORLDMAP7
+};
+
+static const WBAnchor g_worldMapSourceSize[8] = {
+    { 0.0f, 0.0f },
+    { 516.0f, 335.0f },
+    { 610.0f, 366.0f },
+    { 610.0f, 366.0f },
+    { 610.0f, 366.0f },
+    { 610.0f, 366.0f },
+    { 505.0f, 280.0f },
+    { 506.0f, 279.0f }
+};
+
+static const WBMissionPoint g_worldMissionPoints[8][13] = {
+    { {0} },
+    {
+        {0},
+        {118.0f, 246.0f, false}, {36.0f, 155.0f, false}, {104.0f, 222.0f, false}, {185.0f, 76.0f, false},
+        {182.0f, 132.0f, true},  {240.0f, 96.0f, false}, {305.0f, 148.0f, false}, {217.0f, 212.0f, true},
+        {454.0f, 95.0f, false},  {436.0f, 148.0f, false}, {365.0f, 248.0f, false}, {27.0f, 198.0f, false}
+    },
+    {
+        {0},
+        {95.0f, 150.0f, true},   {145.0f, 102.0f, false}, {212.0f, 86.0f, false}, {285.0f, 112.0f, true},
+        {355.0f, 74.0f, false},  {438.0f, 67.0f, false},  {515.0f, 86.0f, false}, {520.0f, 154.0f, false},
+        {458.0f, 214.0f, false}, {377.0f, 238.0f, false}, {274.0f, 228.0f, false}, {154.0f, 225.0f, false}
+    },
+    {
+        {0},
+        {100.0f, 170.0f, true},  {146.0f, 146.0f, false}, {197.0f, 118.0f, false}, {259.0f, 94.0f, true},
+        {335.0f, 98.0f, true},   {404.0f, 126.0f, false}, {483.0f, 152.0f, true}, {467.0f, 221.0f, false},
+        {386.0f, 251.0f, false}, {300.0f, 276.0f, true},  {212.0f, 255.0f, false}, {142.0f, 226.0f, false}
+    },
+    {
+        {0},
+        {202.0f, 90.0f, true},   {292.0f, 82.0f, true},   {400.0f, 86.0f, true},   {425.0f, 140.0f, true},
+        {332.0f, 160.0f, true},  {218.0f, 152.0f, true},  {138.0f, 176.0f, true},  {260.0f, 230.0f, true},
+        {372.0f, 242.0f, true},  {470.0f, 232.0f, true},  {515.0f, 174.0f, true},  {126.0f, 110.0f, true}
+    },
+    {
+        {0},
+        {83.0f, 205.0f, false},  {107.0f, 151.0f, false}, {154.0f, 94.0f, false},  {205.0f, 155.0f, false},
+        {238.0f, 97.0f, false},  {288.0f, 183.0f, false}, {346.0f, 142.0f, false}, {396.0f, 109.0f, false},
+        {443.0f, 155.0f, false}, {494.0f, 88.0f, false},  {552.0f, 142.0f, false}, {468.0f, 215.0f, false}
+    },
+    /* WB2 World 1 (jungle) -- positions estimated from worldmap6.png (505x280, scale=0.857, mapX=-56.4) */
+    {
+        {0},
+        {165.0f, 245.0f, false}, {130.0f, 210.0f, false}, {215.0f, 215.0f, false}, {260.0f, 180.0f, false},
+        {220.0f, 147.0f, false}, {180.0f, 112.0f, false}, {270.0f, 132.0f, false}, {140.0f,  80.0f, false},
+        {335.0f, 105.0f, false}, {375.0f, 152.0f, false}, {413.0f, 197.0f, false}, {418.0f, 248.0f, false}
+    },
+    /* WB2 World 2 (urban) -- positions estimated from worldmap7.png (506x279, scale=0.860, mapX=-57.65) */
+    {
+        {0},
+        {175.0f, 240.0f, false}, {108.0f, 205.0f, false}, {220.0f, 218.0f, false}, {260.0f, 185.0f, false},
+        {220.0f, 150.0f, false}, {178.0f, 115.0f, false}, {268.0f, 132.0f, false}, {137.0f,  83.0f, false},
+        {332.0f, 108.0f, false}, {376.0f, 155.0f, false}, {410.0f, 200.0f, false}, {416.0f, 248.0f, false}
+    }
+};
+
+static const WBMiniSeed g_worldMiniSeeds[] = {
+    {1, 1, false, false, ASSET_BUGGY_MINI},
+    {1, 5, false, false, ASSET_DUCK_MINI},
+    {2, 1, false, false, ASSET_BUGGY_MINI},
+    {2, 6, false, true, ASSET_FISH_MINI},
+    {3, 1, false, false, ASSET_SNAIL_MINI},
+    {4, 1, false, true, ASSET_DUCK_WATER_MINI},
+    {4, 5, false, true, ASSET_FISH_MINI},
+    {5, 1, false, false, ASSET_SNAIL_MINI},
+    {6, 1, false, false, ASSET_BUGGY_MINI},
+    {7, 1, false, false, ASSET_BUGGY_MINI}
+};
+
+static bool tryPickUpAt(AppState* app, int tx, int ty);
+static bool tryDropAt(AppState* app, int tx, int ty);
+static void resolvePendingAction(AppState* app);
+static bool getSelectedUnitView(const AppState* app, WBSelectedUnitView* outView);
+static void clampCamera(AppState* app);
+static void loadGameplaySheets(AppState* app);
+static bool activeMonsterAt(const WBMonsterState* self, int row, int col);
+static WBUnitType planTypeToUnit(WBPlanType planType);
+static void saveLevelProgress(const AppState* app);
+static bool parseWorldMetadata(AppState* app);
+static WBBuildingType planTypeToBuilding(WBPlanType planType);
+static int buildingPanelIconAssetId(WBBuildingType buildingType);
+static void startPlanSwoop(AppState* app, WBPlanType planType, float fromX, float fromY);
+static void drawPlanSwoop(AppState* app);
+static void appendDebugLog(const char* msg);
+static void tickCollectGoals(AppState* app);
+
+static int worldSheetIndexForWorld(int world) {
+    if (world <= 2) return 0;
+    if (world <= 4) return 1;
+    if (world <= 5) return 2;
+    return 3;
+}
+
+static void ensureMenuSheetsLoaded(AppState* app) {
+    if (!app->titleMainSheet) app->titleMainSheet = C2D_SpriteSheetLoad("romfs:/gfx/titlemain.t3x");
+    if (!app->worldIconSheet) app->worldIconSheet = C2D_SpriteSheetLoad("romfs:/gfx/worldicons.t3x");
+    if (!app->licenseSheet)   app->licenseSheet   = C2D_SpriteSheetLoad("romfs:/gfx/license.t3x");
+}
+
+/* Frees all sky/map sheets except the one needed for `world`, then loads
+   that sheet if not already present. Call whenever worldSelectWorld changes. */
+static void switchWorldSelectSheets(AppState* app, int world) {
+    static const char* const skyPaths[4] = {
+        "romfs:/gfx/worldsky_a.t3x",
+        "romfs:/gfx/worldsky_b.t3x",
+        "romfs:/gfx/worldsky_c.t3x",
+        "romfs:/gfx/worldsky_d.t3x"
+    };
+    static const char* const mapPaths[4] = {
+        "romfs:/gfx/worldmap_a.t3x",
+        "romfs:/gfx/worldmap_b.t3x",
+        "romfs:/gfx/worldmap_c.t3x",
+        "romfs:/gfx/worldmap_d.t3x"
+    };
+    int needed = worldSheetIndexForWorld(world);
+    int i;
+    for (i = 0; i < 4; ++i) {
+        if (i == needed) continue;
+        if (app->worldSkySheets[i]) { C2D_SpriteSheetFree(app->worldSkySheets[i]); app->worldSkySheets[i] = NULL; }
+        if (app->worldMapSheets[i]) { C2D_SpriteSheetFree(app->worldMapSheets[i]); app->worldMapSheets[i] = NULL; }
+    }
+    if (!app->worldSkySheets[needed]) app->worldSkySheets[needed] = C2D_SpriteSheetLoad(skyPaths[needed]);
+    if (!app->worldMapSheets[needed]) app->worldMapSheets[needed] = C2D_SpriteSheetLoad(mapPaths[needed]);
+}
+
+static void trimMenuSheetsForGameplay(AppState* app, int world) {
+    int keepSky = worldSheetIndexForWorld(world);
+    int i;
+    if (app->titleMainSheet) {
+        C2D_SpriteSheetFree(app->titleMainSheet);
+        app->titleMainSheet = NULL;
+    }
+    for (i = 0; i < 4; ++i) {
+        if (i == keepSky) {
+            continue;
+        }
+        if (app->worldSkySheets[i]) {
+            C2D_SpriteSheetFree(app->worldSkySheets[i]);
+            app->worldSkySheets[i] = NULL;
+        }
+    }
+    if (!app->worldSkySheets[keepSky]) {
+        static const char* skyPath[4] = {
+            "romfs:/gfx/worldsky_a.t3x",
+            "romfs:/gfx/worldsky_b.t3x",
+            "romfs:/gfx/worldsky_c.t3x",
+            "romfs:/gfx/worldsky_d.t3x"
+        };
+        app->worldSkySheets[keepSky] = C2D_SpriteSheetLoad(skyPath[keepSky]);
+    }
+    for (i = 0; i < 4; ++i) {
+        if (app->worldMapSheets[i]) {
+            C2D_SpriteSheetFree(app->worldMapSheets[i]);
+            app->worldMapSheets[i] = NULL;
+        }
+    }
+    if (app->worldIconSheet) {
+        C2D_SpriteSheetFree(app->worldIconSheet);
+        app->worldIconSheet = NULL;
+    }
+}
+
+static int terrainAssetId(WBTerrainType terrain, uint8_t variant) {
+    switch (terrain) {
+        case WB_TERRAIN_NORMAL: return ASSET_TERRAIN_NORMAL;
+        case WB_TERRAIN_TREE: return ASSET_TERRAIN_TREE;
+        case WB_TERRAIN_WATER: return ASSET_TERRAIN_WATER;
+        case WB_TERRAIN_MOUNTAIN: return ASSET_TERRAIN_MOUNTAIN;
+        case WB_TERRAIN_NORMAL_UNDIGGABLE: return ASSET_TERRAIN_NORMAL_UNDIGGABLE;
+        case WB_TERRAIN_WATER_UNFILLABLE: return ASSET_TERRAIN_WATER_UNDIGGABLE;
+        case WB_TERRAIN_WATER_REEFS: return ASSET_TERRAIN_WATER_REEFS;
+        case WB_TERRAIN_HOLE: return -1;
+        case WB_TERRAIN_BILLBOARD: return ASSET_TERRAIN_BILLBOARD;
+        case WB_TERRAIN_SWAMP: return ASSET_TERRAIN_SWAMP;
+        case WB_TERRAIN_WATER_WHIRLPOOL: return ASSET_TERRAIN_WATER;
+        case WB_TERRAIN_CEMENT: return ASSET_TERRAIN_CEMENT;
+        case WB_TERRAIN_JUNGLE: return ASSET_TERRAIN_JUNGLE1 + (variant < 4 ? variant : 3);
+        case WB_TERRAIN_ROADBLOCK: return ASSET_TERRAIN_ROADBLOCK;
+        case WB_TERRAIN_STREET: return ASSET_TERRAIN_STREET1 + (variant < 10 ? variant : 9);
+        case WB_TERRAIN_STREET_UNDIGGABLE: return ASSET_TERRAIN_STREET_UNDIGGABLE;
+        case WB_TERRAIN_TREE2: return ASSET_TERRAIN_TREE2;
+        case WB_TERRAIN_TREE3: return ASSET_TERRAIN_TREE3;
+        case WB_TERRAIN_TREE4: return ASSET_TERRAIN_TREE4;
+        default: return -1;
+    }
+}
+
+static int minimapTerrainAssetId(WBTerrainType terrain, uint8_t variant) {
+    switch (terrain) {
+        case WB_TERRAIN_NORMAL: return ASSET_MINI_NORMAL;
+        case WB_TERRAIN_TREE: return ASSET_MINI_TREE;
+        case WB_TERRAIN_WATER: return ASSET_MINI_WATER;
+        case WB_TERRAIN_MOUNTAIN: return ASSET_MINI_MOUNTAIN;
+        case WB_TERRAIN_NORMAL_UNDIGGABLE: return ASSET_MINI_NORMAL_UNDIGGABLE;
+        case WB_TERRAIN_WATER_UNFILLABLE: return ASSET_MINI_WATER_UNDIGGABLE;
+        case WB_TERRAIN_WATER_REEFS: return ASSET_MINI_WATER_REEFS;
+        case WB_TERRAIN_HOLE: return ASSET_MINI_HOLE;
+        case WB_TERRAIN_BILLBOARD: return ASSET_MINI_HOLE;
+        case WB_TERRAIN_SWAMP: return ASSET_MINI_SWAMP;
+        case WB_TERRAIN_WATER_WHIRLPOOL: return ASSET_MINI_WATER;
+        case WB_TERRAIN_CEMENT: return ASSET_MINI_CEMENT;
+        case WB_TERRAIN_JUNGLE: return ASSET_MINI_JUNGLE1 + (variant < 4 ? variant : 3);
+        case WB_TERRAIN_ROADBLOCK: return ASSET_MINI_ROADBLOCK;
+        case WB_TERRAIN_STREET: return ASSET_MINI_STREET1 + (variant < 10 ? variant : 9);
+        case WB_TERRAIN_STREET_UNDIGGABLE: return ASSET_MINI_STREET_UNDIGGABLE;
+        case WB_TERRAIN_TREE2: return ASSET_MINI_TREE2;
+        case WB_TERRAIN_TREE3: return ASSET_MINI_TREE3;
+        case WB_TERRAIN_TREE4: return ASSET_MINI_TREE4;
+        default: return -1;
+    }
+}
+
+static C2D_Image getImage(const AppState* app, int assetId) {
+    if (assetId >= ASSET_TITLE_LOGO && assetId <= ASSET_TITLE_WB2_IMAGE) {
+        return C2D_SpriteSheetGetImage(app->titleMainSheet, assetId - ASSET_TITLE_LOGO);
+    }
+    if (assetId >= ASSET_TITLE_SKY1 && assetId <= ASSET_TITLE_SKY5) {
+        static const int sheetIndex[5] = {0, 0, 1, 1, 2};
+        static const int imageIndex[5] = {0, 1, 0, 1, 0};
+        int idx = assetId - ASSET_TITLE_SKY1;
+        return C2D_SpriteSheetGetImage(app->worldSkySheets[sheetIndex[idx]], imageIndex[idx]);
+    }
+    if (assetId >= ASSET_WORLDMAP1 && assetId <= ASSET_WORLDMAP5) {
+        static const int sheetIndex[5] = {0, 0, 1, 1, 2};
+        static const int imageIndex[5] = {0, 1, 0, 1, 0};
+        int idx = assetId - ASSET_WORLDMAP1;
+        return C2D_SpriteSheetGetImage(app->worldMapSheets[sheetIndex[idx]], imageIndex[idx]);
+    }
+    if (assetId == ASSET_WORLDMAP6) {
+        return C2D_SpriteSheetGetImage(app->worldMapSheets[3], 0);
+    }
+    if (assetId == ASSET_WORLDMAP7) {
+        return C2D_SpriteSheetGetImage(app->worldMapSheets[3], 1);
+    }
+    if (assetId == ASSET_WB2SKY1) {
+        return C2D_SpriteSheetGetImage(app->worldSkySheets[3], 0);
+    }
+    if (assetId == ASSET_WB2SKY2) {
+        return C2D_SpriteSheetGetImage(app->worldSkySheets[3], 1);
+    }
+    if (assetId >= ASSET_LICENSE_BASE && assetId <= ASSET_WB2_REWARD_CLASS3) {
+        if (!app->licenseSheet) { C2D_Image blank; memset(&blank, 0, sizeof(blank)); return blank; }
+        return C2D_SpriteSheetGetImage(app->licenseSheet, assetId - ASSET_LICENSE_BASE);
+    }
+    if (assetId >= ASSET_WB2_RESOURCES_BASE) {
+        return C2D_SpriteSheetGetImage(app->wb2ResourcesSheet, assetId - ASSET_WB2_RESOURCES_BASE);
+    }
+    if (assetId >= ASSET_WB2_TERRAIN_BASE) {
+        return C2D_SpriteSheetGetImage(app->wb2TerrainSheet, assetId - ASSET_WB2_TERRAIN_BASE);
+    }
+    if (assetId >= ASSET_WB2_BUILDINGS_BASE) {
+        return C2D_SpriteSheetGetImage(app->wb2BuildingsSheet, assetId - ASSET_WB2_BUILDINGS_BASE);
+    }
+    if (assetId >= ASSET_WB2_VEHICLES_BASE) {
+        return C2D_SpriteSheetGetImage(app->wb2VehiclesSheet, assetId - ASSET_WB2_VEHICLES_BASE);
+    }
+    if (assetId >= ASSET_WB2_MONSTERS_BASE) {
+        return C2D_SpriteSheetGetImage(app->wb2MonstersSheet, assetId - ASSET_WB2_MONSTERS_BASE);
+    }
+    if (assetId >= ASSET_WHIRLPOOL_BASE) {
+        return C2D_SpriteSheetGetImage(app->whirlpoolSheet, assetId - ASSET_WHIRLPOOL_BASE);
+    }
+    if (assetId >= ASSET_BUILDINGS_BASE) {
+        return C2D_SpriteSheetGetImage(app->buildingsSheet, assetId - ASSET_BUILDINGS_BASE);
+    }
+    if (assetId >= ASSET_MONSTERS_B_BASE) {
+        return C2D_SpriteSheetGetImage(app->monstersBSheet, assetId - ASSET_MONSTERS_B_BASE);
+    }
+    if (assetId >= ASSET_MONSTERS_A_BASE) {
+        return C2D_SpriteSheetGetImage(app->monstersASheet, assetId - ASSET_MONSTERS_A_BASE);
+    }
+    if (assetId >= ASSET_VEHICLES_ROBOT_BASE) {
+        return C2D_SpriteSheetGetImage(app->vehiclesRobotSheet, assetId - ASSET_VEHICLES_ROBOT_BASE);
+    }
+    if (assetId >= ASSET_VEHICLES_ANIMAL_BASE) {
+        return C2D_SpriteSheetGetImage(app->vehiclesAnimalSheet, assetId - ASSET_VEHICLES_ANIMAL_BASE);
+    }
+    if (assetId >= ASSET_VEHICLES_WATER_BASE) {
+        return C2D_SpriteSheetGetImage(app->vehiclesWaterSheet, assetId - ASSET_VEHICLES_WATER_BASE);
+    }
+    if (assetId >= ASSET_VEHICLES_LAND_BASE) {
+        return C2D_SpriteSheetGetImage(app->vehiclesLandSheet, assetId - ASSET_VEHICLES_LAND_BASE);
+    }
+    if (assetId >= ASSET_WORLD_QUESTION_MARK) {
+        return C2D_SpriteSheetGetImage(app->worldIconSheet, assetId - ASSET_WORLD_QUESTION_MARK);
+    }
+    return C2D_SpriteSheetGetImage(app->spriteSheet, assetId);
+}
+
+/* Extra icons appended to worldbuilder.t3s after build_cloud2. */
+#define WB_EXTRA_UI_LOW_ENERGY_IDX   100
+#define WB_EXTRA_UI_CHARGE_0_IDX     101
+#define WB_EXTRA_UI_CHARGE_1_IDX     102
+#define WB_EXTRA_UI_CHARGE_2_IDX     103
+#define WB_EXTRA_CARRY_RED_IDX       104
+#define WB_EXTRA_CARRY_YELLOW_IDX    105
+#define WB_EXTRA_CARRY_GREEN_IDX     106
+#define WB_EXTRA_CARRY_BLUE_IDX      107
+#define WB_EXTRA_CARRY_WHEEL_IDX     108
+#define WB_EXTRA_CARRY_ENERGY_IDX    109
+#define WB_EXTRA_CARRY_ENERGY_LOW_IDX 110
+#define WB_EXTRA_CARRY_ENERGY_DEAD_IDX 111
+
+static C2D_Image getWorldbuilderExtraImage(const AppState* app, int sheetIndex) {
+    C2D_Image img;
+    img.subtex = NULL;
+    img.tex = NULL;
+    if (!app || !app->spriteSheet) {
+        return img;
+    }
+    if (sheetIndex < 0 || sheetIndex >= (int)C2D_SpriteSheetCount(app->spriteSheet)) {
+        return img;
+    }
+    return C2D_SpriteSheetGetImage(app->spriteSheet, sheetIndex);
+}
+
+static float imageWidth(C2D_Image image, float scale) {
+    return image.subtex ? image.subtex->width * scale : 0.0f;
+}
+
+static float imageHeight(C2D_Image image, float scale) {
+    return image.subtex ? image.subtex->height * scale : 0.0f;
+}
+
+static u32 readLE32(const u8* p) {
+    return (u32) p[0] | ((u32) p[1] << 8) | ((u32) p[2] << 16) | ((u32) p[3] << 24);
+}
+
+static u16 readLE16(const u8* p) {
+    return (u16) p[0] | ((u16) p[1] << 8);
+}
+
+static bool loadWavClip(const char* path, WBAudioClip* outClip) {
+    FILE* fp = fopen(path, "rb");
+    long fileSize;
+    u8* fileData;
+    u8* cursor;
+    u8* end;
+    u16 audioFormat = 0;
+    u16 channels = 0;
+    u32 sampleRate = 0;
+    u16 bitsPerSample = 0;
+    u8* pcmData = NULL;
+    u32 pcmSize = 0;
+
+    memset(outClip, 0, sizeof(*outClip));
+    if (!fp) {
+        return false;
+    }
+    fseek(fp, 0, SEEK_END);
+    fileSize = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    if (fileSize < 44) {
+        fclose(fp);
+        return false;
+    }
+    fileData = (u8*) malloc((size_t) fileSize);
+    if (!fileData) {
+        fclose(fp);
+        return false;
+    }
+    if (fread(fileData, 1, (size_t) fileSize, fp) != (size_t) fileSize) {
+        free(fileData);
+        fclose(fp);
+        return false;
+    }
+    fclose(fp);
+    if (memcmp(fileData, "RIFF", 4) != 0 || memcmp(fileData + 8, "WAVE", 4) != 0) {
+        free(fileData);
+        return false;
+    }
+    cursor = fileData + 12;
+    end = fileData + fileSize;
+    while (cursor + 8 <= end) {
+        u32 chunkSize = readLE32(cursor + 4);
+        u8* chunkData = cursor + 8;
+        if (memcmp(cursor, "fmt ", 4) == 0 && chunkSize >= 16 && chunkData + chunkSize <= end) {
+            audioFormat = readLE16(chunkData + 0);
+            channels = readLE16(chunkData + 2);
+            sampleRate = readLE32(chunkData + 4);
+            bitsPerSample = readLE16(chunkData + 14);
+        } else if (memcmp(cursor, "data", 4) == 0 && chunkData + chunkSize <= end) {
+            pcmData = chunkData;
+            pcmSize = chunkSize;
+        }
+        cursor = chunkData + chunkSize + (chunkSize & 1);
+    }
+    if (audioFormat != 1 || bitsPerSample != 16 || !pcmData || pcmSize == 0 || (channels != 1 && channels != 2)) {
+        free(fileData);
+        return false;
+    }
+    if (channels == 1) {
+        u32 sampleCount = pcmSize / sizeof(int16_t);
+        s16* src = (s16*) pcmData;
+        s16* dst;
+        u32 i;
+        outClip->data = linearAlloc(sampleCount * sizeof(int16_t) * 2);
+        if (!outClip->data) {
+            free(fileData);
+            return false;
+        }
+        dst = (s16*) outClip->data;
+        for (i = 0; i < sampleCount; ++i) {
+            dst[i * 2 + 0] = src[i];
+            dst[i * 2 + 1] = src[i];
+        }
+        DSP_FlushDataCache(outClip->data, sampleCount * sizeof(int16_t) * 2);
+        outClip->size = sampleCount * sizeof(int16_t) * 2;
+        outClip->sampleRate = sampleRate;
+        outClip->channels = 2;
+        outClip->loaded = true;
+        free(fileData);
+        return true;
+    }
+    outClip->data = linearAlloc(pcmSize);
+    if (!outClip->data) {
+        free(fileData);
+        return false;
+    }
+    memcpy(outClip->data, pcmData, pcmSize);
+    DSP_FlushDataCache(outClip->data, pcmSize);
+    outClip->size = pcmSize;
+    outClip->sampleRate = sampleRate;
+    outClip->channels = channels;
+    outClip->loaded = true;
+    free(fileData);
+    return true;
+}
+
+static void freeWavClip(WBAudioClip* clip) {
+    if (clip->data) {
+        linearFree(clip->data);
+    }
+    memset(clip, 0, sizeof(*clip));
+}
+
+static void setupAudioChannel(int channel, int sampleRate, int channels, float volume) {
+    float mix[12];
+    memset(mix, 0, sizeof(mix));
+    mix[0] = volume;
+    mix[1] = volume;
+    ndspChnReset(channel);
+    ndspChnWaveBufClear(channel);
+    ndspSetOutputMode(NDSP_OUTPUT_STEREO);
+    ndspSetMasterVol(1.0f);
+    ndspChnSetInterp(channel, NDSP_INTERP_POLYPHASE);
+    ndspChnSetRate(channel, (float) sampleRate);
+    ndspChnSetFormat(channel, channels == 2 ? NDSP_FORMAT_STEREO_PCM16 : NDSP_FORMAT_MONO_PCM16);
+    ndspChnSetMix(channel, mix);
+}
+
+static void playClip(AppState* app, int channel, WBAudioClip* clip, bool looped) {
+    float vol;
+    if (!app->audioReady || !clip || !clip->loaded) {
+        return;
+    }
+    vol = (clip->volume > 0.0f) ? clip->volume : 1.0f;
+    setupAudioChannel(channel, (int) clip->sampleRate, clip->channels, vol);
+    memset(&clip->waveBuf, 0, sizeof(clip->waveBuf));
+    clip->waveBuf.data_vaddr = clip->data;
+    clip->waveBuf.data_pcm16 = (s16*) clip->data;
+    clip->waveBuf.nsamples = clip->size / (sizeof(int16_t) * clip->channels);
+    clip->waveBuf.looping = looped;
+    DSP_FlushDataCache(clip->data, clip->size);
+    ndspChnWaveBufAdd(channel, &clip->waveBuf);
+}
+
+static void playMusicClip(AppState* app, WBAudioClip* clip, bool looped) {
+    if (!app->audioReady || app->muteMusic) {
+        ndspChnWaveBufClear(MUSIC_CHANNEL);
+        return;
+    }
+    /* Timer-based advancement: looped clips never auto-advance; for one-shot clips
+       schedule the next track after the clip's exact duration plus a small buffer. */
+    if (looped || !clip || !clip->loaded) {
+        app->musicRetryAtMs = (u64)-1; /* never auto-advance */
+    } else {
+        u64 nsamples = (u64)clip->size / ((u64)sizeof(int16_t) * (u64)clip->channels);
+        u64 durationMs = nsamples * 1000ULL / (u64)clip->sampleRate;
+        app->musicRetryAtMs = osGetTime() + durationMs + 150ULL;
+    }
+    playClip(app, MUSIC_CHANNEL, clip, looped);
+}
+
+static void playSfxClip(AppState* app, WBAudioClip* clip) {
+    if (!app->audioReady || app->muteSfx) {
+        return;
+    }
+    if (osGetTime() < app->goalSfxUntilMs) {
+        return;  /* goal sound in progress; protect it from interruption */
+    }
+    ++app->sfxPlayCount;
+    playClip(app, SFX_CHANNEL, clip, false);
+}
+
+/* For world/combat/tick-based sounds (plays on SFX2_CHANNEL so they don't
+   override user-triggered sounds on SFX_CHANNEL). */
+static void playSfxClipWorld(AppState* app, WBAudioClip* clip) {
+    if (!app->audioReady || app->muteSfx) {
+        return;
+    }
+    if (osGetTime() < app->goalSfxUntilMs) {
+        return;  /* goal sound in progress; protect it from interruption */
+    }
+    ++app->sfxPlayCount;
+    playClip(app, SFX2_CHANNEL, clip, false);
+}
+
+/* Priority SFX: plays immediately regardless of other guards, and blocks
+   subsequent SFX for its full duration (used for goal/bonus-goal sounds). */
+static void playSfxClipPriority(AppState* app, WBAudioClip* clip) {
+    u64 nsamples;
+    u64 durationMs;
+    if (!app->audioReady || app->muteSfx || !clip || !clip->loaded) {
+        return;
+    }
+    nsamples   = (u64)clip->size / ((u64)sizeof(int16_t) * (u64)clip->channels);
+    durationMs = nsamples * 1000ULL / (u64)clip->sampleRate;
+    app->goalSfxUntilMs = osGetTime() + durationMs;
+    ++app->sfxPlayCount;
+    playClip(app, SFX_CHANNEL, clip, false);
+}
+
+static WBAudioClip* chooseRandomLoadedClip(WBAudioClip* clips, int count) {
+    int i;
+    int loadedCount = 0;
+    int pick;
+    for (i = 0; i < count; ++i) {
+        if (clips[i].loaded) {
+            ++loadedCount;
+        }
+    }
+    if (loadedCount <= 0) {
+        return NULL;
+    }
+    pick = (rand() % loadedCount) + 1;
+    for (i = 0; i < count; ++i) {
+        if (!clips[i].loaded) {
+            continue;
+        }
+        --pick;
+        if (pick == 0) {
+            return &clips[i];
+        }
+    }
+    return NULL;
+}
+
+static int chooseNextGameMusicFamilyIndex(AppState* app) {
+    static const char songKeys[] = { 'a', 'i', '6', '8', 'i', '6', '8' };
+    int pick = app->musicLastGameSongIndex;
+    int tries = 0;
+
+    while (tries < 12) {
+        pick = rand() % 7;
+        if (pick != app->musicLastGameSongIndex) {
+            break;
+        }
+        ++tries;
+    }
+    app->musicLastGameSongIndex = pick;
+
+    switch (songKeys[pick]) {
+        case '6': return '6';
+        case '8': return '8';
+        case 'a': return 'a';
+        case 'i': return 'i';
+        default: return -1;
+    }
+}
+
+/* Pick a random loaded segment from the given music family. */
+static WBAudioClip* chooseRandomGameMusicClipForFamily(int familyIndex, AppState* app) {
+    switch (familyIndex) {
+        case '6': return chooseRandomLoadedClip(app->musicGame6Variants, WB_MUSIC_GAME6_VARIANTS);
+        case '8': return chooseRandomLoadedClip(app->musicGame8Variants, WB_MUSIC_GAME8_VARIANTS);
+        case 'a': return chooseRandomLoadedClip(app->musicGameAVariants, WB_MUSIC_GAMEA_VARIANTS);
+        case 'i': return chooseRandomLoadedClip(app->musicGameIVariants, WB_MUSIC_GAMEI_VARIANTS);
+        default: return NULL;
+    }
+}
+
+static void playCurrentMusicTrack(AppState* app) {
+    WBAudioClip* clip = NULL;
+    bool looped = false;
+    if (!app->audioReady || app->muteMusic) {
+        ndspChnWaveBufClear(MUSIC_CHANNEL);
+        return;
+    }
+    if (app->musicUseGamePlaylist) {
+        /* Pick a random segment from the family chosen at level load; loop it. */
+        clip = chooseRandomGameMusicClipForFamily(app->musicBpm, app);
+        if (!clip || !clip->loaded) {
+            clip = &app->musicGame;
+        }
+        looped = true;
+    } else {
+        clip = chooseRandomLoadedClip(app->musicIntroVariants, WB_MUSIC_INTRO_VARIANTS);
+        if (!clip) {
+            clip = &app->musicIntro;
+            looped = true;
+        }
+    }
+    if (clip && clip->loaded) {
+        playMusicClip(app, clip, looped);
+    }
+}
+
+static void startMenuMusic(AppState* app) {
+    app->musicUseGamePlaylist = false;
+    app->musicBpm = 120;
+    playCurrentMusicTrack(app);
+}
+
+static void startGameMusic(AppState* app) {
+    app->musicUseGamePlaylist = true;
+    app->musicBpm = chooseNextGameMusicFamilyIndex(app);
+    playCurrentMusicTrack(app);
+}
+
+static void showGoalPopup(AppState* app, const char* text, bool bonus, bool complete, int tx, int ty) {
+    app->goalPopupVisible = true;
+    app->goalPopupBonus = bonus;
+    app->goalPopupComplete = complete;
+    app->goalPopupX = tx;
+    app->goalPopupY = ty;
+    strncpy(app->goalPopupText, text ? text : "", sizeof(app->goalPopupText) - 1);
+    app->goalPopupText[sizeof(app->goalPopupText) - 1] = '\0';
+}
+
+static void updateAudioRuntime(AppState* app) {
+    if (!app->audioReady || app->muteMusic) {
+        return;
+    }
+    if ((u64) osGetTime() < app->musicRetryAtMs) {
+        return;
+    }
+    playCurrentMusicTrack(app);
+}
+
+static void drawAnchoredImage(C2D_Image image, float x, float y, float scale, float anchorX, float anchorY) {
+    if (!image.subtex) {
+        return;
+    }
+    C2D_DrawImageAt(image, x - (anchorX * scale), y - (anchorY * scale), 0.0f, NULL, scale, scale);
+}
+
+static bool imageIntersectsScreen(C2D_Image image, float x, float y, float scale, float anchorX, float anchorY, float screenW, float screenH) {
+    if (!image.subtex) {
+        return false;
+    }
+    float left = x - (anchorX * scale);
+    float top = y - (anchorY * scale);
+    float w = imageWidth(image, scale);
+    float h = imageHeight(image, scale);
+    return !((left + w) < 0.0f || left >= screenW || (top + h) < 0.0f || top >= screenH);
+}
+
+static void drawTextLine(C2D_TextBuf buf, float x, float y, float scale, const char* text) {
+    C2D_Text tmp;
+    C2D_TextParse(&tmp, buf, text);
+    C2D_TextOptimize(&tmp);
+    C2D_DrawText(&tmp, 0, x, y, 0.5f, scale, scale);
+}
+
+static void drawTextLineWhite(C2D_TextBuf buf, float x, float y, float scale, const char* text) {
+    C2D_Text tmp;
+    C2D_TextParse(&tmp, buf, text);
+    C2D_TextOptimize(&tmp);
+    C2D_DrawText(&tmp, C2D_WithColor, x, y, 0.5f, scale, scale, C2D_Color32(0xFF, 0xFF, 0xFF, 0xFF));
+}
+
+static void drawTextLineBlack(C2D_TextBuf buf, float x, float y, float scale, const char* text) {
+    C2D_Text tmp;
+    C2D_TextParse(&tmp, buf, text);
+    C2D_TextOptimize(&tmp);
+    C2D_DrawText(&tmp, C2D_WithColor, x, y, 0.5f, scale, scale, C2D_Color32(0x00, 0x00, 0x00, 0xFF));
+}
+
+static bool inBounds(const AppState* app, int x, int y) {
+    return x >= 0 && x < app->map.width && y >= 0 && y < app->map.height;
+}
+
+static int randRange(int minValue, int maxValue) {
+    if (maxValue <= minValue) {
+        return minValue;
+    }
+    return minValue + (rand() % ((maxValue - minValue) + 1));
+}
+
+static bool packagedMissionExists(int world, int mission) {
+    char path[64];
+    FILE* fp;
+    snprintf(path, sizeof(path), "romfs:/maps/map%d_%d.txt", world, mission);
+    fp = fopen(path, "rb");
+    if (!fp) {
+        return false;
+    }
+    fclose(fp);
+    return true;
+}
+
+static int worldSkyAssetId(int world) {
+    if (world < 1 || world > 7) {
+        return ASSET_TITLE_SKY1;
+    }
+    return g_worldSkyAssets[world];
+}
+
+static int worldMapAssetId(int world) {
+    if (world < 1 || world > 7) {
+        return ASSET_WORLDMAP1;
+    }
+    return g_worldMapAssets[world];
+}
+
+static const char* worldName(int world) {
+    switch (world) {
+        case 1: return "World 1";
+        case 2: return "World 2";
+        case 3: return "World 3";
+        case 4: return "Ocean World";
+        case 5: return "Prehistoric World";
+        case 6: return "WB2 World 1";
+        case 7: return "WB2 World 2";
+        default: return "World";
+    }
+}
+
+static int worldMissionState(const AppState* app, int world, int mission) {
+    if (world < 1 || world > 7 || mission < 1 || mission > 12) {
+        return -1;
+    }
+    return app->levelState[world][mission];
+}
+
+static bool parseWorldMetadata(AppState* app) {
+    FILE* fp;
+    char line[256];
+    int world;
+    int mission;
+    memset(app->levelState, 0xFF, sizeof(app->levelState));
+    memset(app->levelOpenCount, 0, sizeof(app->levelOpenCount));
+    memset(app->levelOpens, 0, sizeof(app->levelOpens));
+    memset(app->missionNames, 0, sizeof(app->missionNames));
+
+    fp = fopen("romfs:/meta/worlds.txt", "r");
+    if (!fp) {
+        return false;
+    }
+    while (fgets(line, sizeof(line), fp)) {
+        char opens[64] = {0};
+        int read = sscanf(line, "%d %d %63s", &world, &mission, opens);
+        if (read >= 2 && world >= 1 && world <= 7 && mission >= 1 && mission <= 12) {
+            char* token;
+            int idx = 0;
+            if (read == 3) {
+                token = strtok(opens, ",");
+                while (token && idx < 4) {
+                    app->levelOpens[world][mission][idx++] = atoi(token);
+                    token = strtok(NULL, ",");
+                }
+            }
+            app->levelOpenCount[world][mission] = idx;
+            app->levelState[world][mission] = -1;
+        }
+    }
+    fclose(fp);
+
+    app->levelState[1][1] = 0;
+    app->levelState[4][1] = 0;
+    app->levelState[5][1] = 0;
+    app->levelState[6][1] = 0;
+    /* WB2 World 2 (world 7) requires completing WB2 World 1 — unlocked via applyMissionSuccess */
+
+    fp = fopen("romfs:/meta/level_names.txt", "r");
+    if (!fp) {
+        return false;
+    }
+    while (fgets(line, sizeof(line), fp)) {
+        char* p = line;
+        char* name;
+        while (*p == ' ' || *p == '\t') {
+            ++p;
+        }
+        world = (int) strtol(p, &p, 10);
+        mission = (int) strtol(p, &p, 10);
+        while (*p == ' ' || *p == '\t') {
+            ++p;
+        }
+        name = p;
+        while (*name && (*name == ' ' || *name == '\t')) {
+            ++name;
+        }
+        if (world >= 1 && world <= 7 && mission >= 1 && mission <= 12) {
+            int len = (int)strlen(name);
+            while (len > 0 && (name[len - 1] == '\r' || name[len - 1] == '\n')) {
+                name[--len] = '\0';
+            }
+            strncpy(app->missionNames[world][mission], name, WB_MAX_NAME - 1);
+        }
+    }
+    fclose(fp);
+    return true;
+}
+
+static void applyMissionSuccess(AppState* app, int world, int mission, int state) {
+    int current;
+    int i;
+    current = app->levelState[world][mission];
+    if (current < 1) {
+        app->levelState[world][mission] = state;
+    } else if (current != state) {
+        app->levelState[world][mission] = 3;
+    }
+    if (app->levelState[world][mission] == 1 || app->levelState[world][mission] == 3) {
+        for (i = 0; i < app->levelOpenCount[world][mission]; ++i) {
+            int openMission = app->levelOpens[world][mission][i];
+            if (openMission > 12) {
+                if (world < 7 && app->levelState[world + 1][1] < 0) {
+                    app->levelState[world + 1][1] = 0;
+                }
+            } else if (openMission >= 1 && openMission <= 12 && app->levelState[world][openMission] < 0) {
+                app->levelState[world][openMission] = 0;
+            }
+        }
+    }
+    saveLevelProgress(app);
+}
+
+static void saveLevelProgress(const AppState* app) {
+    int w, m;
+    FILE* fp;
+    /* Ensure directory exists (ignore error if already present) */
+    mkdir("sdmc:/legowb3ds", 0777);
+    fp = fopen(WB_SAVE_PATH, "w");
+    if (!fp) { return; }
+    for (w = 1; w <= 7; ++w) {
+        for (m = 1; m <= 12; ++m) {
+            int st = app->levelState[w][m];
+            if (st >= 0) {
+                fprintf(fp, "%d %d %d\n", w, m, st);
+            }
+        }
+    }
+    fclose(fp);
+}
+
+static void loadLevelProgress(AppState* app) {
+    FILE* fp;
+    char line[64];
+    fp = fopen(WB_SAVE_PATH, "r");
+    if (!fp) { return; }
+    while (fgets(line, sizeof(line), fp)) {
+        int w = 0, m = 0, st = 0;
+        if (sscanf(line, "%d %d %d", &w, &m, &st) == 3) {
+            if (w >= 1 && w <= 7 && m >= 1 && m <= 12 && st >= 0 && st <= 3) {
+                /* Only update if the level is known (not permanently locked at -1 from worlds.txt) */
+                if (app->levelState[w][m] >= -1) {
+                    applyMissionSuccess(app, w, m, st);
+                    if (st == 0 && app->levelState[w][m] < 0) {
+                        app->levelState[w][m] = 0;
+                    }
+                }
+            }
+        }
+    }
+    fclose(fp);
+    /* Re-validate cross-world unlocks: worlds 2, 3, and 7 are gated by completing
+       the previous world. If a stale save has their mission 1 as 0 (unlocked-not-played)
+       but no completed mission in the predecessor world actually unlocks it, revert. */
+    {
+        int w;
+        for (w = 2; w <= 7; ++w) {
+            int justified;
+            int prev;
+            int m;
+            if (w == 4 || w == 5 || w == 6) continue; /* default-open worlds */
+            if (app->levelState[w][1] != 0) continue;  /* locked or already played */
+            justified = 0;
+            prev = w - 1;
+            for (m = 1; m <= 12 && !justified; ++m) {
+                int st = app->levelState[prev][m];
+                if (st == 1 || st == 3) {
+                    int j;
+                    for (j = 0; j < app->levelOpenCount[prev][m]; ++j) {
+                        if (app->levelOpens[prev][m][j] > 12) {
+                            justified = 1;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!justified) {
+                app->levelState[w][1] = -1;
+            }
+        }
+    }
+}
+
+static void clearSaveData(AppState* app) {
+    FILE* fp;
+    fp = fopen(WB_SAVE_PATH, "w");
+    if (fp) { fclose(fp); }
+    /* Re-parse fresh metadata, restoring only the default-open levels */
+    parseWorldMetadata(app);
+}
+
+static void unlockAllLevels(AppState* app) {
+    int w, m;
+    for (w = 1; w <= 7; ++w) {
+        for (m = 1; m <= 12; ++m) {
+            /* Only unlock levels that are known in worlds.txt (state >= -1 means known) */
+            if (app->levelState[w][m] >= -1) {
+                applyMissionSuccess(app, w, m, 1);
+            }
+        }
+    }
+    saveLevelProgress(app);
+}
+
+static u8* memsearch(u8* buf, size_t bufLen, u8* cmp, size_t cmpLen) {
+    u8* origin = buf;
+    while (bufLen - ((size_t) (buf - origin)) > 0 && (buf = memchr(buf, *cmp, bufLen - ((size_t) (buf - origin))))) {
+        if (memcmp(buf, cmp, cmpLen) == 0) {
+            return buf;
+        }
+        buf++;
+    }
+    return NULL;
+}
+
+static u32 blzDecompressSize(u8* compressed, u32 compressedSize) {
+    return compressedSize + *(u32*) (compressed + compressedSize - 4);
+}
+
+static bool blzDecompress(u8* compressed, u32 compressedSize, u8* decompressed, u32 decompressedSize) {
+    u8* footer = compressed + compressedSize - 8;
+    u32 bufferTopAndBottom = (footer[0] << 0) | (footer[1] << 8) | (footer[2] << 16) | (footer[3] << 24);
+    u32 out = decompressedSize;
+    u32 index = compressedSize - ((bufferTopAndBottom >> 24) & 0xFF);
+    u32 stopIndex = compressedSize - (bufferTopAndBottom & 0xFFFFFF);
+    u32 i;
+
+    memset(decompressed, 0, decompressedSize);
+    memcpy(decompressed, compressed, compressedSize);
+
+    while (index > stopIndex) {
+        u8 control = compressed[--index];
+        for (i = 0; i < 8; ++i) {
+            if (index <= stopIndex || out <= 0) {
+                break;
+            }
+            if (control & 0x80) {
+                u32 j;
+                u32 segmentOffset;
+                u32 segmentSize;
+                if (index < 2) {
+                    return false;
+                }
+                index -= 2;
+                segmentOffset = compressed[index] | (compressed[index + 1] << 8);
+                segmentSize = ((segmentOffset >> 12) & 15) + 3;
+                segmentOffset = (segmentOffset & 0x0FFF) + 2;
+                if (out < segmentSize) {
+                    return false;
+                }
+                for (j = 0; j < segmentSize; ++j) {
+                    u8 data;
+                    if (out + segmentOffset >= decompressedSize) {
+                        return false;
+                    }
+                    data = decompressed[out + segmentOffset];
+                    decompressed[--out] = data;
+                }
+            } else {
+                if (out < 1 || index < 1) {
+                    return false;
+                }
+                decompressed[--out] = compressed[--index];
+            }
+            control <<= 1;
+        }
+    }
+    return true;
+}
+
+static bool initAudioSystem(AppState* app) {
+    static u8* dspBuf = NULL;
+    Result res = ndspInit();
+    app->audioInitResult = res;
+    app->audioFallbackOpenResult = 0;
+    app->audioFallbackInitResult = 0;
+    if (R_SUCCEEDED(res)) {
+        ndspSetOutputMode(NDSP_OUTPUT_STEREO);
+        return true;
+    }
+
+    {
+        static const u64 tidHigh = 0x0004003000000000ULL;
+        static const u32 tidLowHome[6] = {
+            0x0000F202, 0x00008202, 0x00009802, 0x0000A102, 0x0000A902, 0x0000B102
+        };
+        static const u32 filePathRaw[] = {0x00000000, 0x00000000, 0x00000002, 0x646F632E, 0x00000065};
+        Handle file = 0;
+        u64 fileSize = 0;
+        u32 readSize = 0;
+        u8* compressed = NULL;
+        u8* decompressed = NULL;
+        int i;
+
+        for (i = 0; i < 6; ++i) {
+            u64 tid = tidHigh | tidLowHome[i];
+            u32 archPathRaw[] = {(u32) (tid & 0xFFFFFFFFULL), (u32) ((tid >> 32) & 0xFFFFFFFFULL), 0, 0};
+            FS_Path archPath = {PATH_BINARY, 0x10, (u8*) archPathRaw};
+            FS_Path filePath = {PATH_BINARY, 0x14, (u8*) filePathRaw};
+            res = FSUSER_OpenFileDirectly(&file, (FS_ArchiveID) 0x2345678A, archPath, filePath, FS_OPEN_READ, 0);
+            if (R_SUCCEEDED(res)) {
+                break;
+            }
+        }
+        app->audioFallbackOpenResult = res;
+        if (R_FAILED(res)) {
+            return false;
+        }
+        if (R_FAILED(FSFILE_GetSize(file, &fileSize))) {
+            FSFILE_Close(file);
+            return false;
+        }
+        compressed = (u8*) malloc((size_t) fileSize);
+        if (!compressed) {
+            FSFILE_Close(file);
+            return false;
+        }
+        res = FSFILE_Read(file, &readSize, 0, compressed, (u32) fileSize);
+        FSFILE_Close(file);
+        if (R_FAILED(res) || readSize != (u32) fileSize) {
+            free(compressed);
+            return false;
+        }
+        {
+            u32 decompressedSize = blzDecompressSize(compressed, (u32) fileSize);
+            u8* dspLoc;
+            const char* magic = "DSP1";
+            decompressed = (u8*) malloc(decompressedSize);
+            if (!decompressed) {
+                free(compressed);
+                return false;
+            }
+            if (!blzDecompress(compressed, (u32) fileSize, decompressed, decompressedSize)) {
+                free(compressed);
+                free(decompressed);
+                return false;
+            }
+            dspLoc = memsearch(decompressed, decompressedSize, (u8*) magic, 4);
+            free(compressed);
+            if (!dspLoc) {
+                free(decompressed);
+                return false;
+            }
+            {
+                u32 dspSize = *(u32*) (dspLoc + 4);
+                dspLoc -= 0x100;
+                dspBuf = (u8*) malloc(dspSize);
+                if (!dspBuf) {
+                    free(decompressed);
+                    return false;
+                }
+                memcpy(dspBuf, dspLoc, dspSize);
+                free(decompressed);
+                ndspUseComponent(dspBuf, dspSize, 0xFF, 0xFF);
+            }
+        }
+        res = ndspInit();
+        app->audioFallbackInitResult = res;
+        if (R_SUCCEEDED(res)) {
+            ndspSetOutputMode(NDSP_OUTPUT_STEREO);
+            return true;
+        }
+    }
+
+    (void) app;
+    return false;
+}
+
+static void clampCamera(AppState* app) {
+    int maxX = app->map.width - VIEW_TILE_W + 1 + 5;
+    int maxY = app->map.height - VIEW_TILE_H + 1 + 3;
+    if (app->cameraX < -1) app->cameraX = -1;
+    if (app->cameraY < -2) app->cameraY = -2;
+    if (app->cameraX > maxX) app->cameraX = maxX;
+    if (app->cameraY > maxY) app->cameraY = maxY;
+}
+
+static void centerCameraOn(AppState* app, int tileX, int tileY) {
+    app->cameraX = (tileX + 1) - (VIEW_TILE_W / 2) + 1;
+    app->cameraY = (tileY + 1) - (VIEW_TILE_H / 2);
+    clampCamera(app);
+}
+
+static void posToLoc(const AppState* app, int posX, int posY, float* outX, float* outY) {
+    float x = ((posX - app->cameraX) * DIRECTOR_TILE_SIZE_X)
+        + DIRECTOR_PIXEL_TOPLEFT_X
+        + (DIRECTOR_PIXEL_SKEW_X * (VIEW_TILE_H + (app->cameraY - posY) - 2));
+    float y = ((posY - app->cameraY) * DIRECTOR_TILE_SIZE_Y) + DIRECTOR_PIXEL_TOPLEFT_Y;
+    *outX = roundf(WORLD_OFFSET_X + (x * DIRECTOR_SCALE));
+    *outY = roundf(WORLD_OFFSET_Y + (y * DIRECTOR_SCALE));
+}
+
+static int unitAssetId(WBUnitType unitType) {
+    switch (unitType) {
+        case WB_UNIT_BUGGY:     return ASSET_VEHICLE_BUGGY;
+        case WB_UNIT_DUCK:      return ASSET_VEHICLE_DUCK;
+        case WB_UNIT_DIRTBUGGY: return ASSET_VEHICLE_DIRTBUGGY_RIGHT;
+        case WB_UNIT_STEAMSHOVEL: return ASSET_VEHICLE_STEAMSHOVEL_RIGHT;
+        case WB_UNIT_DUMPTRUCK: return ASSET_VEHICLE_DUMPTRUCK_RIGHT;
+        case WB_UNIT_FORKLIFT:  return ASSET_VEHICLE_FORKLIFT_RIGHT;
+        case WB_UNIT_DOZER:     return ASSET_VEHICLE_DOZER_RIGHT;
+        case WB_UNIT_SPEEDBOAT: return ASSET_VEHICLE_SPEEDBOAT_RIGHT;
+        case WB_UNIT_TUGBOAT:   return ASSET_VEHICLE_TUGBOAT_RIGHT;
+        case WB_UNIT_FREIGHTER: return ASSET_VEHICLE_FREIGHTER_RIGHT;
+        case WB_UNIT_FROG:      return ASSET_VEHICLE_FROG_RIGHT;
+        case WB_UNIT_FISH:      return ASSET_VEHICLE_FISH_WATER_RIGHT;
+        case WB_UNIT_SNAIL:     return ASSET_VEHICLE_SNAIL_RIGHT;
+        case WB_UNIT_TREEBOT:   return ASSET_VEHICLE_TREEBOT_RIGHT;
+        case WB_UNIT_REPAIRBOT: return ASSET_VEHICLE_REPAIRBOT_RIGHT;
+        case WB_UNIT_DEFENDER:   return ASSET_VEHICLE_DEFENDER_RIGHT;
+        case WB_UNIT_DEFENDER2:  return ASSET_VEHICLE_DEFENDER_RIGHT;
+        case WB_UNIT_FREEZEBOT:  return ASSET_VEHICLE_FREEZEBOT;
+        default: return -1;
+    }
+}
+
+static int planAssetId(WBPlanType planType) {
+    switch (planType) {
+        case WB_PLAN_BUGGY:      return ASSET_PLAN_BUGGY;
+        case WB_PLAN_DUCK:       return ASSET_PLAN_DUCK;
+        case WB_PLAN_DIRTBUGGY:  return ASSET_PLAN_DIRTBUGGY;
+        case WB_PLAN_STEAMSHOVEL:return ASSET_PLAN_STEAMSHOVEL;
+        case WB_PLAN_DUMPTRUCK:  return ASSET_PLAN_DUMPTRUCK;
+        case WB_PLAN_FORKLIFT:   return ASSET_PLAN_FORKLIFT;
+        case WB_PLAN_DOZER:      return ASSET_PLAN_DOZER;
+        case WB_PLAN_SPEEDBOAT:  return ASSET_PLAN_SPEEDBOAT;
+        case WB_PLAN_TUGBOAT:    return ASSET_PLAN_TUGBOAT;
+        case WB_PLAN_FREIGHTER:  return ASSET_PLAN_FREIGHTER;
+        case WB_PLAN_FROG:       return ASSET_PLAN_FROG;
+        case WB_PLAN_FISH:       return ASSET_PLAN_FISH;
+        case WB_PLAN_SNAIL:      return ASSET_PLAN_SNAIL;
+        case WB_PLAN_TREEBOT:    return ASSET_PLAN_TREEBOT;
+        case WB_PLAN_REPAIRBOT:  return ASSET_PLAN_REPAIRBOT;
+        case WB_PLAN_DEFENDER:   return ASSET_PLAN_DEFENDER;
+        case WB_PLAN_FREEZEBOT:  return ASSET_PLAN_FREEZEBOT;
+        case WB_PLAN_HOUSE:
+        case WB_PLAN_FACTORY:
+        case WB_PLAN_WINDMILL:
+        case WB_PLAN_GARAGE:
+        case WB_PLAN_NURSERY:    return buildingPanelIconAssetId(planTypeToBuilding(planType));
+        case WB_PLAN_GUARD_TOWER: return ASSET_PLAN_GUARD_TOWER;
+        case WB_PLAN_GAS_STATION: return ASSET_PLAN_GAS_STATION;
+        case WB_PLAN_MARINA:      return ASSET_PLAN_MARINA;
+        case WB_PLAN_ROBOT_LAB:   return ASSET_PLAN_ROBOT_LAB;
+        case WB_PLAN_AIRPORT:    return ASSET_PLAN_GENERIC;
+        default: return -1;
+    }
+}
+
+static int worldPlanAssetId(WBPlanType planType) {
+    switch (planType) {
+        case WB_PLAN_GAS_STATION: return ASSET_PLAN_GENERIC;
+        case WB_PLAN_MARINA:      return ASSET_PLAN_GENERIC;
+        case WB_PLAN_ROBOT_LAB:   return ASSET_PLAN_GENERIC;
+        case WB_PLAN_GUARD_TOWER: return ASSET_PLAN_GENERIC;
+        case WB_PLAN_HOUSE:       return ASSET_PLAN_GENERIC;
+        case WB_PLAN_FACTORY:     return ASSET_PLAN_GENERIC;
+        case WB_PLAN_WINDMILL:    return ASSET_PLAN_GENERIC;
+        case WB_PLAN_GARAGE:      return ASSET_PLAN_GENERIC;
+        case WB_PLAN_NURSERY:     return ASSET_PLAN_GENERIC;
+        default: return ASSET_PLAN_GENERIC;
+    }
+}
+
+static bool terrainUsesWaterSprite(WBTerrainType terrain) {
+    return terrain == WB_TERRAIN_WATER || terrain == WB_TERRAIN_WATER_REEFS || terrain == WB_TERRAIN_WATER_UNFILLABLE;
+}
+
+#define WB_UNIT_ANIM_NONE   0
+#define WB_UNIT_ANIM_DIG    1
+#define WB_UNIT_ANIM_FILL   2
+#define WB_UNIT_ANIM_UPROOT 3
+#define WB_UNIT_ANIM_PLANT  4
+#define WB_UNIT_ANIM_REPAIR 5
+
+static bool unitUsesVisibleBob(WBUnitType unitType) {
+    switch (unitType) {
+        case WB_UNIT_BUGGY:
+        case WB_UNIT_DUCK:
+        case WB_UNIT_DIRTBUGGY:
+        case WB_UNIT_STEAMSHOVEL:
+        case WB_UNIT_DUMPTRUCK:
+        case WB_UNIT_FORKLIFT:
+        case WB_UNIT_DOZER:
+        case WB_UNIT_SPEEDBOAT:
+        case WB_UNIT_TUGBOAT:
+        case WB_UNIT_FREIGHTER:
+        case WB_UNIT_FISH:
+        case WB_UNIT_SNAIL:
+        case WB_UNIT_DEFENDER2:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static WBDirection directionFromStep(int fromX, int fromY, int toX, int toY) {
+    if (toX < fromX) return WB_DIR_LEFT;
+    if (toX > fromX) return WB_DIR_RIGHT;
+    if (toY < fromY) return WB_DIR_UP;
+    return WB_DIR_DOWN;
+}
+
+static int unitAnimFrame(WBUnitType unitType, float progress) {
+    switch (unitType) {
+        case WB_UNIT_TREEBOT: return (int)(progress * 6.0f) % 6;
+        case WB_UNIT_FREEZEBOT:
+        case WB_UNIT_DEFENDER:
+        case WB_UNIT_DEFENDER2:
+            return (int)(progress * 4.0f) % 4;
+        case WB_UNIT_REPAIRBOT:
+            return (int)(progress * 2.0f) % 2;
+        case WB_UNIT_FROG:    return (progress > 0.2f && progress < 0.8f) ? 1 : 0;
+        default: return 0;
+    }
+}
+
+static int unitAnimAssetId(WBUnitType unitType, WBDirection direction, bool waterVersion, float progress, const WBResourcePile* cargo, u8 actionAnim) {
+    int frame = unitAnimFrame(unitType, progress);
+    switch (unitType) {
+        case WB_UNIT_BUGGY:
+            switch (direction) {
+                case WB_DIR_UP: return ASSET_VEHICLE_BUGGY_UP;
+                case WB_DIR_DOWN: return ASSET_VEHICLE_BUGGY_DOWN;
+                case WB_DIR_LEFT: return ASSET_VEHICLE_BUGGY_LEFT;
+                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_BUGGY_RIGHT;
+            }
+        case WB_UNIT_DUCK:
+            if (waterVersion) {
+                switch (direction) {
+                    case WB_DIR_UP: return ASSET_VEHICLE_DUCK_WATER_UP;
+                    case WB_DIR_DOWN: return ASSET_VEHICLE_DUCK_WATER_DOWN;
+                    case WB_DIR_LEFT: return ASSET_VEHICLE_DUCK_WATER_LEFT;
+                    case WB_DIR_RIGHT: default: return ASSET_VEHICLE_DUCK_WATER_RIGHT;
+                }
+            }
+            switch (direction) {
+                case WB_DIR_UP: return ASSET_VEHICLE_DUCK_UP;
+                case WB_DIR_DOWN: return ASSET_VEHICLE_DUCK_DOWN;
+                case WB_DIR_LEFT: return ASSET_VEHICLE_DUCK_LEFT;
+                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_DUCK_RIGHT;
+            }
+        case WB_UNIT_DIRTBUGGY:
+            switch (direction) {
+                case WB_DIR_UP: return ASSET_VEHICLE_DIRTBUGGY_UP;
+                case WB_DIR_DOWN: return ASSET_VEHICLE_DIRTBUGGY_DOWN;
+                case WB_DIR_LEFT: return ASSET_VEHICLE_DIRTBUGGY_LEFT;
+                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_DIRTBUGGY_RIGHT;
+            }
+        case WB_UNIT_STEAMSHOVEL:
+            if (actionAnim == 1 || actionAnim == 2) {
+                switch (direction) {
+                    case WB_DIR_UP: return ASSET_VEHICLE_STEAMSHOVEL_UP_DIG;
+                    case WB_DIR_DOWN: return ASSET_VEHICLE_STEAMSHOVEL_DOWN_DIG;
+                    case WB_DIR_LEFT: return ASSET_VEHICLE_STEAMSHOVEL_LEFT_DIG;
+                    case WB_DIR_RIGHT: default: return ASSET_VEHICLE_STEAMSHOVEL_RIGHT_DIG;
+                }
+            }
+            if (cargo && (cargo->red > 0 || cargo->blue > 0)) {
+                switch (direction) {
+                    case WB_DIR_UP: return ASSET_VEHICLE_STEAMSHOVEL_UP_FULL;
+                    case WB_DIR_DOWN: return ASSET_VEHICLE_STEAMSHOVEL_DOWN_FULL;
+                    case WB_DIR_LEFT: return ASSET_VEHICLE_STEAMSHOVEL_LEFT_FULL;
+                    case WB_DIR_RIGHT: default: return ASSET_VEHICLE_STEAMSHOVEL_RIGHT_FULL;
+                }
+            }
+            switch (direction) {
+                case WB_DIR_UP: return ASSET_VEHICLE_STEAMSHOVEL_UP;
+                case WB_DIR_DOWN: return ASSET_VEHICLE_STEAMSHOVEL_DOWN;
+                case WB_DIR_LEFT: return ASSET_VEHICLE_STEAMSHOVEL_LEFT;
+                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_STEAMSHOVEL_RIGHT;
+            }
+        case WB_UNIT_DUMPTRUCK:
+            switch (direction) {
+                case WB_DIR_UP: return ASSET_VEHICLE_DUMPTRUCK_UP;
+                case WB_DIR_DOWN: return ASSET_VEHICLE_DUMPTRUCK_DOWN;
+                case WB_DIR_LEFT: return ASSET_VEHICLE_DUMPTRUCK_LEFT;
+                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_DUMPTRUCK_RIGHT;
+            }
+        case WB_UNIT_FORKLIFT:
+            switch (direction) {
+                case WB_DIR_UP: return ASSET_VEHICLE_FORKLIFT_UP;
+                case WB_DIR_DOWN: return ASSET_VEHICLE_FORKLIFT_DOWN;
+                case WB_DIR_LEFT: return ASSET_VEHICLE_FORKLIFT_LEFT;
+                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_FORKLIFT_RIGHT;
+            }
+        case WB_UNIT_DOZER:
+            switch (direction) {
+                case WB_DIR_UP: return ASSET_VEHICLE_DOZER_UP;
+                case WB_DIR_DOWN: return ASSET_VEHICLE_DOZER_DOWN;
+                case WB_DIR_LEFT: return ASSET_VEHICLE_DOZER_LEFT;
+                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_DOZER_RIGHT;
+            }
+        case WB_UNIT_SPEEDBOAT:
+            switch (direction) {
+                case WB_DIR_UP: return ASSET_VEHICLE_SPEEDBOAT_UP;
+                case WB_DIR_DOWN: return ASSET_VEHICLE_SPEEDBOAT_DOWN;
+                case WB_DIR_LEFT: return ASSET_VEHICLE_SPEEDBOAT_LEFT;
+                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_SPEEDBOAT_RIGHT;
+            }
+        case WB_UNIT_TUGBOAT:
+            switch (direction) {
+                case WB_DIR_UP: return ASSET_VEHICLE_TUGBOAT_UP;
+                case WB_DIR_DOWN: return ASSET_VEHICLE_TUGBOAT_DOWN;
+                case WB_DIR_LEFT: return ASSET_VEHICLE_TUGBOAT_LEFT;
+                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_TUGBOAT_RIGHT;
+            }
+        case WB_UNIT_FREIGHTER:
+            switch (direction) {
+                case WB_DIR_UP: return ASSET_VEHICLE_FREIGHTER_UP;
+                case WB_DIR_DOWN: return ASSET_VEHICLE_FREIGHTER_DOWN;
+                case WB_DIR_LEFT: return ASSET_VEHICLE_FREIGHTER_LEFT;
+                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_FREIGHTER_RIGHT;
+            }
+        case WB_UNIT_FROG:
+            if (waterVersion) {
+                switch (direction) {
+                    case WB_DIR_UP:    return frame ? ASSET_VEHICLE_FROG_WATER_UP_JUMP    : ASSET_VEHICLE_FROG_WATER_UP;
+                    case WB_DIR_DOWN:  return frame ? ASSET_VEHICLE_FROG_WATER_DOWN_JUMP  : ASSET_VEHICLE_FROG_WATER_DOWN;
+                    case WB_DIR_LEFT:  return frame ? ASSET_VEHICLE_FROG_WATER_LEFT_JUMP  : ASSET_VEHICLE_FROG_WATER_LEFT;
+                    case WB_DIR_RIGHT: default: return frame ? ASSET_VEHICLE_FROG_WATER_RIGHT_JUMP : ASSET_VEHICLE_FROG_WATER_RIGHT;
+                }
+            }
+            switch (direction) {
+                case WB_DIR_UP:    return frame ? ASSET_VEHICLE_FROG_UP_JUMP    : ASSET_VEHICLE_FROG_UP;
+                case WB_DIR_DOWN:  return frame ? ASSET_VEHICLE_FROG_DOWN_JUMP  : ASSET_VEHICLE_FROG_DOWN;
+                case WB_DIR_LEFT:  return frame ? ASSET_VEHICLE_FROG_LEFT_JUMP  : ASSET_VEHICLE_FROG_LEFT;
+                case WB_DIR_RIGHT: default: return frame ? ASSET_VEHICLE_FROG_RIGHT_JUMP : ASSET_VEHICLE_FROG_RIGHT;
+            }
+        case WB_UNIT_FISH:
+            switch (direction) {
+                case WB_DIR_UP:    return ASSET_VEHICLE_FISH_WATER_UP;
+                case WB_DIR_DOWN:  return ASSET_VEHICLE_FISH_WATER_DOWN;
+                case WB_DIR_LEFT:  return ASSET_VEHICLE_FISH_WATER_LEFT;
+                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_FISH_WATER_RIGHT;
+            }
+        case WB_UNIT_SNAIL:
+            switch (direction) {
+                case WB_DIR_UP:    return ASSET_VEHICLE_SNAIL_UP;
+                case WB_DIR_DOWN:  return ASSET_VEHICLE_SNAIL_DOWN;
+                case WB_DIR_LEFT:  return ASSET_VEHICLE_SNAIL_LEFT;
+                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_SNAIL_RIGHT;
+            }
+        case WB_UNIT_TREEBOT: {
+            static const int upWalk[6]    = { ASSET_VEHICLE_TREEBOT_UP_WALK1,    ASSET_VEHICLE_TREEBOT_UP_WALK2,    ASSET_VEHICLE_TREEBOT_UP_WALK3,    ASSET_VEHICLE_TREEBOT_UP_WALK4,    ASSET_VEHICLE_TREEBOT_UP_WALK5,    ASSET_VEHICLE_TREEBOT_UP_WALK6    };
+            static const int downWalk[6]  = { ASSET_VEHICLE_TREEBOT_DOWN_WALK1,  ASSET_VEHICLE_TREEBOT_DOWN_WALK2,  ASSET_VEHICLE_TREEBOT_DOWN_WALK3,  ASSET_VEHICLE_TREEBOT_DOWN_WALK4,  ASSET_VEHICLE_TREEBOT_DOWN_WALK5,  ASSET_VEHICLE_TREEBOT_DOWN_WALK6  };
+            static const int leftWalk[6]  = { ASSET_VEHICLE_TREEBOT_LEFT_WALK1,  ASSET_VEHICLE_TREEBOT_LEFT_WALK2,  ASSET_VEHICLE_TREEBOT_LEFT_WALK3,  ASSET_VEHICLE_TREEBOT_LEFT_WALK4,  ASSET_VEHICLE_TREEBOT_LEFT_WALK5,  ASSET_VEHICLE_TREEBOT_LEFT_WALK6  };
+            static const int rightWalk[6] = { ASSET_VEHICLE_TREEBOT_RIGHT_WALK1, ASSET_VEHICLE_TREEBOT_RIGHT_WALK2, ASSET_VEHICLE_TREEBOT_RIGHT_WALK3, ASSET_VEHICLE_TREEBOT_RIGHT_WALK4, ASSET_VEHICLE_TREEBOT_RIGHT_WALK5, ASSET_VEHICLE_TREEBOT_RIGHT_WALK6 };
+            static const int upFullWalk[4]    = { ASSET_VEHICLE_TREEBOT_UP_FULL_WALK1,    ASSET_VEHICLE_TREEBOT_UP_FULL_WALK2,    ASSET_VEHICLE_TREEBOT_UP_FULL_WALK3,    ASSET_VEHICLE_TREEBOT_UP_FULL_WALK4 };
+            static const int downFullWalk[4]  = { ASSET_VEHICLE_TREEBOT_DOWN_FULL_WALK1,  ASSET_VEHICLE_TREEBOT_DOWN_FULL_WALK2,  ASSET_VEHICLE_TREEBOT_DOWN_FULL_WALK3,  ASSET_VEHICLE_TREEBOT_DOWN_FULL_WALK4 };
+            static const int leftFullWalk[4]  = { ASSET_VEHICLE_TREEBOT_LEFT_FULL_WALK1,  ASSET_VEHICLE_TREEBOT_LEFT_FULL_WALK2,  ASSET_VEHICLE_TREEBOT_LEFT_FULL_WALK3,  ASSET_VEHICLE_TREEBOT_LEFT_FULL_WALK4 };
+            static const int rightFullWalk[4] = { ASSET_VEHICLE_TREEBOT_RIGHT_FULL_WALK1, ASSET_VEHICLE_TREEBOT_RIGHT_FULL_WALK2, ASSET_VEHICLE_TREEBOT_RIGHT_FULL_WALK3, ASSET_VEHICLE_TREEBOT_RIGHT_FULL_WALK4 };
+            bool hasTree = cargo && cargo->green > 0;
+            if (actionAnim == 3 || actionAnim == 4) {
+                int liftFrame = ((int)(osGetTime() / 180)) & 1;
+                if (actionAnim == 4) {
+                    liftFrame = 1 - liftFrame;
+                }
+                if (hasTree) {
+                    switch (direction) {
+                        case WB_DIR_UP:    return liftFrame == 0 ? ASSET_VEHICLE_TREEBOT_UP_FULL_LIFT1 : ASSET_VEHICLE_TREEBOT_UP_FULL_LIFT2;
+                        case WB_DIR_DOWN:  return liftFrame == 0 ? ASSET_VEHICLE_TREEBOT_DOWN_FULL_LIFT1 : ASSET_VEHICLE_TREEBOT_DOWN_FULL_LIFT2;
+                        case WB_DIR_LEFT:  return liftFrame == 0 ? ASSET_VEHICLE_TREEBOT_LEFT_FULL_LIFT1 : ASSET_VEHICLE_TREEBOT_LEFT_FULL_LIFT2;
+                        case WB_DIR_RIGHT: default: return liftFrame == 0 ? ASSET_VEHICLE_TREEBOT_RIGHT_FULL_LIFT1 : ASSET_VEHICLE_TREEBOT_RIGHT_FULL_LIFT2;
+                    }
+                }
+                switch (direction) {
+                    case WB_DIR_UP:    return liftFrame == 0 ? ASSET_VEHICLE_TREEBOT_UP_LIFT1 : ASSET_VEHICLE_TREEBOT_UP_LIFT2;
+                    case WB_DIR_DOWN:  return liftFrame == 0 ? ASSET_VEHICLE_TREEBOT_DOWN_LIFT1 : ASSET_VEHICLE_TREEBOT_DOWN_LIFT2;
+                    case WB_DIR_LEFT:  return liftFrame == 0 ? ASSET_VEHICLE_TREEBOT_LEFT_LIFT1 : ASSET_VEHICLE_TREEBOT_LEFT_LIFT2;
+                    case WB_DIR_RIGHT: default: return liftFrame == 0 ? ASSET_VEHICLE_TREEBOT_RIGHT_LIFT1 : ASSET_VEHICLE_TREEBOT_RIGHT_LIFT2;
+                }
+            }
+            if (progress <= 0.0f) {
+                if (hasTree) {
+                    switch (direction) {
+                        case WB_DIR_UP:    return ASSET_VEHICLE_TREEBOT_UP_FULL;
+                        case WB_DIR_DOWN:  return ASSET_VEHICLE_TREEBOT_DOWN_FULL;
+                        case WB_DIR_LEFT:  return ASSET_VEHICLE_TREEBOT_LEFT_FULL;
+                        case WB_DIR_RIGHT: default: return ASSET_VEHICLE_TREEBOT_RIGHT_FULL;
+                    }
+                }
+                switch (direction) {
+                    case WB_DIR_UP:    return ASSET_VEHICLE_TREEBOT_UP;
+                    case WB_DIR_DOWN:  return ASSET_VEHICLE_TREEBOT_DOWN;
+                    case WB_DIR_LEFT:  return ASSET_VEHICLE_TREEBOT_LEFT;
+                    case WB_DIR_RIGHT: default: return ASSET_VEHICLE_TREEBOT_RIGHT;
+                }
+            }
+            if (hasTree) {
+                int fullFrame = (int)(progress * 4.0f) % 4;
+                switch (direction) {
+                    case WB_DIR_UP:    return upFullWalk[fullFrame];
+                    case WB_DIR_DOWN:  return downFullWalk[fullFrame];
+                    case WB_DIR_LEFT:  return leftFullWalk[fullFrame];
+                    case WB_DIR_RIGHT: default: return rightFullWalk[fullFrame];
+                }
+            }
+            switch (direction) {
+                case WB_DIR_UP:    return upWalk[frame];
+                case WB_DIR_DOWN:  return downWalk[frame];
+                case WB_DIR_LEFT:  return leftWalk[frame];
+                case WB_DIR_RIGHT: default: return rightWalk[frame];
+            }
+        }
+        case WB_UNIT_REPAIRBOT:
+            if (progress > 0.0f) {
+                switch (direction) {
+                    case WB_DIR_UP:    return frame ? ASSET_VEHICLE_REPAIRBOT_UP_WALK2 : ASSET_VEHICLE_REPAIRBOT_UP_WALK1;
+                    case WB_DIR_DOWN:  return frame ? ASSET_VEHICLE_REPAIRBOT_DOWN_WALK2 : ASSET_VEHICLE_REPAIRBOT_DOWN_WALK1;
+                    case WB_DIR_LEFT:  return frame ? ASSET_VEHICLE_REPAIRBOT_LEFT_WALK2 : ASSET_VEHICLE_REPAIRBOT_LEFT_WALK1;
+                    case WB_DIR_RIGHT: default: return frame ? ASSET_VEHICLE_REPAIRBOT_RIGHT_WALK2 : ASSET_VEHICLE_REPAIRBOT_RIGHT_WALK1;
+                }
+            }
+            if (actionAnim == 5) {
+                int repairFrame = ((int)(osGetTime() / 120)) & 1;
+                switch (direction) {
+                    case WB_DIR_UP:    return repairFrame ? ASSET_VEHICLE_REPAIRBOT_UP_REPAIR2 : ASSET_VEHICLE_REPAIRBOT_UP_REPAIR1;
+                    case WB_DIR_DOWN:  return repairFrame ? ASSET_VEHICLE_REPAIRBOT_DOWN_REPAIR2 : ASSET_VEHICLE_REPAIRBOT_DOWN_REPAIR1;
+                    case WB_DIR_LEFT:  return repairFrame ? ASSET_VEHICLE_REPAIRBOT_LEFT_REPAIR2 : ASSET_VEHICLE_REPAIRBOT_LEFT_REPAIR1;
+                    case WB_DIR_RIGHT: default: return repairFrame ? ASSET_VEHICLE_REPAIRBOT_RIGHT_REPAIR2 : ASSET_VEHICLE_REPAIRBOT_RIGHT_REPAIR1;
+                }
+            }
+            switch (direction) {
+                case WB_DIR_UP:    return ASSET_VEHICLE_REPAIRBOT_UP;
+                case WB_DIR_DOWN:  return ASSET_VEHICLE_REPAIRBOT_DOWN;
+                case WB_DIR_LEFT:  return ASSET_VEHICLE_REPAIRBOT_LEFT;
+                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_REPAIRBOT_RIGHT;
+            }
+        case WB_UNIT_DEFENDER:
+        case WB_UNIT_DEFENDER2:
+            if (progress > 0.0f) {
+                switch (direction) {
+                    case WB_DIR_UP:
+                        switch (frame) {
+                            case 0: return ASSET_VEHICLE_DEFENDER_UP_WALK1;
+                            case 1: return ASSET_VEHICLE_DEFENDER_UP_WALK2;
+                            case 2: return ASSET_VEHICLE_DEFENDER_UP_WALK3;
+                            default: return ASSET_VEHICLE_DEFENDER_UP_WALK4;
+                        }
+                    case WB_DIR_DOWN:
+                        switch (frame) {
+                            case 0: return ASSET_VEHICLE_DEFENDER_DOWN_WALK1;
+                            case 1: return ASSET_VEHICLE_DEFENDER_DOWN_WALK2;
+                            case 2: return ASSET_VEHICLE_DEFENDER_DOWN_WALK3;
+                            default: return ASSET_VEHICLE_DEFENDER_DOWN_WALK4;
+                        }
+                    case WB_DIR_LEFT:
+                        switch (frame) {
+                            case 0: return ASSET_VEHICLE_DEFENDER_LEFT_WALK1;
+                            case 1: return ASSET_VEHICLE_DEFENDER_LEFT_WALK2;
+                            case 2: return ASSET_VEHICLE_DEFENDER_LEFT_WALK3;
+                            default: return ASSET_VEHICLE_DEFENDER_LEFT_WALK4;
+                        }
+                    case WB_DIR_RIGHT:
+                    default:
+                        switch (frame) {
+                            case 0: return ASSET_VEHICLE_DEFENDER_RIGHT_WALK1;
+                            case 1: return ASSET_VEHICLE_DEFENDER_RIGHT_WALK2;
+                            case 2: return ASSET_VEHICLE_DEFENDER_RIGHT_WALK3;
+                            default: return ASSET_VEHICLE_DEFENDER_RIGHT_WALK4;
+                        }
+                }
+            }
+            switch (direction) {
+                case WB_DIR_UP:    return ASSET_VEHICLE_DEFENDER_UP;
+                case WB_DIR_DOWN:  return ASSET_VEHICLE_DEFENDER_DOWN;
+                case WB_DIR_LEFT:  return ASSET_VEHICLE_DEFENDER_LEFT;
+                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_DEFENDER_RIGHT;
+            }
+        case WB_UNIT_FREEZEBOT: {
+            /* Use ATK frames when attacking (actionAnim used as attack flag), walk otherwise. */
+            bool attacking = (actionAnim != 0 && progress <= 0.0f);
+            if (progress > 0.0f) {
+                switch (direction) {
+                    case WB_DIR_UP:
+                        switch (frame) {
+                            case 0: return ASSET_VEHICLE_FREEZEBOT_UP_WALK1;
+                            case 1: return ASSET_VEHICLE_FREEZEBOT_UP_WALK2;
+                            case 2: return ASSET_VEHICLE_FREEZEBOT_UP_WALK3;
+                            default: return ASSET_VEHICLE_FREEZEBOT_UP_WALK4;
+                        }
+                    case WB_DIR_DOWN:
+                        switch (frame) {
+                            case 0: return ASSET_VEHICLE_FREEZEBOT_DOWN_WALK1;
+                            case 1: return ASSET_VEHICLE_FREEZEBOT_DOWN_WALK2;
+                            case 2: return ASSET_VEHICLE_FREEZEBOT_DOWN_WALK3;
+                            default: return ASSET_VEHICLE_FREEZEBOT_DOWN_WALK4;
+                        }
+                    case WB_DIR_LEFT:
+                        switch (frame) {
+                            case 0: return ASSET_VEHICLE_FREEZEBOT_LEFT_WALK1;
+                            case 1: return ASSET_VEHICLE_FREEZEBOT_LEFT_WALK2;
+                            case 2: return ASSET_VEHICLE_FREEZEBOT_LEFT_WALK3;
+                            default: return ASSET_VEHICLE_FREEZEBOT_LEFT_WALK4;
+                        }
+                    case WB_DIR_RIGHT:
+                    default:
+                        switch (frame) {
+                            case 0: return ASSET_VEHICLE_FREEZEBOT_RIGHT_WALK1;
+                            case 1: return ASSET_VEHICLE_FREEZEBOT_RIGHT_WALK2;
+                            case 2: return ASSET_VEHICLE_FREEZEBOT_RIGHT_WALK3;
+                            default: return ASSET_VEHICLE_FREEZEBOT_RIGHT_WALK4;
+                        }
+                }
+            }
+            if (attacking) {
+                int atkFrame = ((int)(osGetTime() / 200)) & 1;
+                switch (direction) {
+                    case WB_DIR_UP:    return atkFrame ? ASSET_VEHICLE_FREEZEBOT_UP_ATK2    : ASSET_VEHICLE_FREEZEBOT_UP_ATK1;
+                    case WB_DIR_DOWN:  return atkFrame ? ASSET_VEHICLE_FREEZEBOT_DOWN_ATK2  : ASSET_VEHICLE_FREEZEBOT_DOWN_ATK1;
+                    case WB_DIR_LEFT:  return atkFrame ? ASSET_VEHICLE_FREEZEBOT_LEFT_ATK2  : ASSET_VEHICLE_FREEZEBOT_LEFT_ATK1;
+                    case WB_DIR_RIGHT: default: return atkFrame ? ASSET_VEHICLE_FREEZEBOT_RIGHT_ATK2 : ASSET_VEHICLE_FREEZEBOT_RIGHT_ATK1;
+                }
+            }
+            switch (direction) {
+                case WB_DIR_UP:    return ASSET_VEHICLE_FREEZEBOT_UP;
+                case WB_DIR_DOWN:  return ASSET_VEHICLE_FREEZEBOT_DOWN;
+                case WB_DIR_LEFT:  return ASSET_VEHICLE_FREEZEBOT_LEFT;
+                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_FREEZEBOT_RIGHT;
+            }
+        }
+        default:
+            return unitAssetId(unitType);
+    }
+}
+
+static int heroAssetIdForUnit(WBUnitType unitType) {
+    switch (unitType) {
+        case WB_UNIT_BUGGY:       return ASSET_VEHICLE_BUGGY_HERO;
+        case WB_UNIT_DUCK:        return ASSET_VEHICLE_DUCK_HERO;
+        case WB_UNIT_DIRTBUGGY:   return ASSET_VEHICLE_DIRTBUGGY_HERO;
+        case WB_UNIT_STEAMSHOVEL: return ASSET_VEHICLE_STEAMSHOVEL_HERO;
+        case WB_UNIT_DUMPTRUCK:   return ASSET_VEHICLE_DUMPTRUCK_HERO;
+        case WB_UNIT_FORKLIFT:    return ASSET_VEHICLE_FORKLIFT_HERO;
+        case WB_UNIT_DOZER:       return ASSET_VEHICLE_DOZER_HERO;
+        case WB_UNIT_SPEEDBOAT:   return ASSET_VEHICLE_SPEEDBOAT_HERO;
+        case WB_UNIT_TUGBOAT:     return ASSET_VEHICLE_TUGBOAT_HERO;
+        case WB_UNIT_FREIGHTER:   return ASSET_VEHICLE_FREIGHTER_HERO;
+        case WB_UNIT_FROG:        return ASSET_VEHICLE_FROG_HERO;
+        case WB_UNIT_FISH:        return ASSET_VEHICLE_FISH_HERO;
+        case WB_UNIT_SNAIL:       return ASSET_VEHICLE_SNAIL_HERO;
+        case WB_UNIT_TREEBOT:     return ASSET_VEHICLE_TREEBOT_HERO;
+        case WB_UNIT_DEFENDER:    return ASSET_VEHICLE_DEFENDER_HERO;
+        case WB_UNIT_DEFENDER2:   return ASSET_VEHICLE_DEFENDER_HERO;
+        case WB_UNIT_REPAIRBOT:   return ASSET_VEHICLE_REPAIRBOT_HERO;
+        case WB_UNIT_FREEZEBOT:   return ASSET_VEHICLE_FREEZEBOT_HERO;
+        default: return -1;
+    }
+}
+
+static const char* unitDescription(WBUnitType unitType) {
+    switch (unitType) {
+        case WB_UNIT_BUGGY:
+            /* WB1/WB2 guide verbatim */
+            return "A basic land vehicle that can carry up to 3 bricks.\nTerrain: Normal\nSpeed: Fast\nActions: Pick Up,\nDrop Off\nCapacity: 3 Bricks";
+        case WB_UNIT_DUCK:
+            /* WB1/WB2 guide verbatim */
+            return "A yellow creature that's amphibious -- it can travel over land and water!\nTerrain: Normal, Water\nSpeed: Fast\nActions: None";
+        case WB_UNIT_DIRTBUGGY:
+            /* WB1/WB2 guide verbatim */
+            return "Extra-big tires get the Dirtbuggy over rough terrain. Carries 3 bricks.\nTerrain: Normal, Rocky\nSpeed: Fast\nActions: Pick Up,\nDrop Off\nCapacity: 3 Bricks";
+        case WB_UNIT_STEAMSHOVEL:
+            /* WB1/WB2 guide verbatim */
+            return "Use the steamshovel to dig up ground, turning it into water. You can also fill water, turning it into ground.\nTerrain: Normal\nSpeed: Medium\nActions: Dig, Fill";
+        case WB_UNIT_DUMPTRUCK:
+            /* WB1/WB2 guide verbatim */
+            return "The Dumptruck is slow and steady and can carry a heavy load.\nTerrain: Normal, Rocky\nSpeed: Slow\nActions: Pick Up,\nDrop Off\nCapacity: 25 Bricks";
+        case WB_UNIT_FORKLIFT:
+            /* WB1/WB2 guide verbatim */
+            return "The forklift moves a little slow, but it can carry a whopping 10 bricks.\nTerrain: Normal\nSpeed: Medium\nActions: Pick Up,\nDrop Off\nCapacity: 10 Bricks";
+        case WB_UNIT_DOZER:
+            /* WB1/WB2 guide, adapted for 3DS controls */
+            return "The Dozer can push boulders and piles of bricks. Move it next to the target and press A to push.\nTerrain: Normal\nSpeed: Medium\nActions: Push";
+        case WB_UNIT_SPEEDBOAT:
+            /* WB1/WB2 guide verbatim */
+            return "Fast and furious, the speedboat has turbo-charged maneuverability and packs a nice defensive wallop.\nTerrain: Water\nSpeed: Fast\nActions: Attack";
+        case WB_UNIT_TUGBOAT:
+            /* WB1/WB2 guide verbatim */
+            return "This sturdy vessel is guaranteed not to sink.\nTerrain: Water\nSpeed: Medium\nActions: Pick Up,\nDrop Off\nCapacity: 5 Bricks";
+        case WB_UNIT_FREIGHTER:
+            /* Derived from WB1 game context; not in guide */
+            return "This massive ship can haul a gigantic load -- more than any other vessel. Not the fastest, but nothing beats it for big deliveries.\nTerrain: Water\nSpeed: Slow\nActions: Pick Up,\nDrop Off\nCapacity: 25 Bricks";
+        case WB_UNIT_FROG:
+            /* WB1/WB2 guide verbatim */
+            return "Frogs are small, green, and entirely made out of LEGO bricks.\nTerrain: Normal,\nShallow Water\nSpeed: Fast\nActions: None";
+        case WB_UNIT_FISH:
+            /* WB1/WB2 guide verbatim */
+            return "This slippery critter lives in the water, which is not unusual - for a fish.\nTerrain: Water\nSpeed: Fast\nActions: None";
+        case WB_UNIT_SNAIL:
+            /* WB1/WB2 guide verbatim */
+            return "You'd be slow too if you had to carry your entire house on your back.\nTerrain: Normal\nSpeed: Very Slow\nActions: None";
+        case WB_UNIT_TREEBOT:
+            /* WB1/WB2 guide verbatim */
+            return "It may take a lot of bricks, but this mighty mech can pull up trees and replant them in the ground.\nTerrain: Normal\nSpeed: Medium\nActions: Uproot Tree,\nPlant Tree";
+        case WB_UNIT_REPAIRBOT:
+            /* WB1/WB2 guide verbatim */
+            return "This handy little mechanic loves to fix broken machinery.\nTerrain: Normal\nSpeed: Fast\nActions: Auto-recharges\nnearby robots";
+        case WB_UNIT_DEFENDER:
+            /* WB1/WB2 guide verbatim */
+            return "Use the Defender to disassemble pesky monsters.\nTerrain: Normal\nSpeed: Medium\nActions: Attack";
+        case WB_UNIT_DEFENDER2:
+            /* Derived from WB2 context; not in guide */
+            return "An upgraded Defender built for the prehistoric frontier. Bigger treads let it hunt down pesky monsters on rocky ground.\nTerrain: Normal, Rocky\nSpeed: Medium\nActions: Attack";
+        case WB_UNIT_FREEZEBOT:
+            /* WB2 guide verbatim */
+            return "He's not the toughest robot, so he just freezes any enemy that gets within two paces! His freeze ray has a short recharge time...\nTerrain: Normal\nSpeed: Fast\nActions: Auto-freezes\nnearby enemies";
+        case WB_UNIT_NONE:
+            return "No description available.";
+        default:
+            return "No description available.";
+    }
+}
+
+static int ordinaryResourceVariant(int amount, int asset1, int asset2, int asset3, int asset4) {
+    if (amount >= 13) return asset4;
+    if (amount >= 6) return asset3;
+    if (amount >= 2) return asset2;
+    return asset1;
+}
+
+static int pileEntryAssetId(const WBResourcePile* pile, int kind) {
+    switch (kind) {
+        case 0: return ordinaryResourceVariant(pile->red, ASSET_RESOURCE_RED_1, ASSET_RESOURCE_RED_2, ASSET_RESOURCE_RED_3, ASSET_RESOURCE_RED_4);
+        case 1: return ordinaryResourceVariant(pile->blue, ASSET_RESOURCE_BLUE_1, ASSET_RESOURCE_BLUE_2, ASSET_RESOURCE_BLUE_3, ASSET_RESOURCE_BLUE_4);
+        case 2: return ordinaryResourceVariant(pile->green, ASSET_RESOURCE_GREEN_1, ASSET_RESOURCE_GREEN_2, ASSET_RESOURCE_GREEN_3, ASSET_RESOURCE_GREEN_4);
+        case 3: return ordinaryResourceVariant(pile->yellow, ASSET_RESOURCE_YELLOW_1, ASSET_RESOURCE_YELLOW_2, ASSET_RESOURCE_YELLOW_3, ASSET_RESOURCE_YELLOW_4);
+        case 4: return ASSET_RESOURCE_WHEEL_FULL;
+        case 5:
+            return pile->energy > 0 ? ASSET_RESOURCE_ENERGY_FULL : -1;
+        case 6:
+            return ordinaryResourceVariant(pile->white, ASSET_RESOURCE_WHITE_1, ASSET_RESOURCE_WHITE_2, ASSET_RESOURCE_WHITE_3, ASSET_RESOURCE_WHITE_4);
+        default:
+            return -1;
+    }
+}
+
+static int energyAssetForValue(int energyValue) {
+    if (energyValue >= 80) {
+        return ASSET_RESOURCE_ENERGY_FULL;
+    }
+    if (energyValue > 1) {
+        return ASSET_RESOURCE_ENERGY_LOW;
+    }
+    return ASSET_RESOURCE_ENERGY_DEAD;
+}
+
+static bool unitIsAdjacentToCharger(const AppState* app, int ux, int uy, WBUnitType unitType) {
+    static const int offsets[4][2] = {{1,0},{-1,0},{0,1},{0,-1}};
+    bool needGas, needMarina, needLab;
+    int i;
+    switch (unitType) {
+        case WB_UNIT_TUGBOAT:
+        case WB_UNIT_FREIGHTER:
+        case WB_UNIT_SPEEDBOAT:
+        case WB_UNIT_FISH:
+            needGas = false; needMarina = true; needLab = false; break;
+        case WB_UNIT_TREEBOT:
+        case WB_UNIT_REPAIRBOT:
+        case WB_UNIT_DEFENDER:
+        case WB_UNIT_DEFENDER2:
+        case WB_UNIT_FREEZEBOT:
+            needGas = false; needMarina = false; needLab = true; break;
+        default:
+            needGas = true; needMarina = false; needLab = false; break;
+    }
+    for (i = 0; i < 4; ++i) {
+        int nx = ux + offsets[i][0];
+        int ny = uy + offsets[i][1];
+        const WBCell* nc;
+        if (!inBounds(app, nx, ny)) continue;
+        nc = &app->map.cells[ny][nx];
+        if (nc->hasBuilding) {
+            if (needGas && (nc->buildingType == WB_BUILDING_GAS_STATION || nc->buildingType == WB_BUILDING_GARAGE)) return true;
+            if (needMarina && nc->buildingType == WB_BUILDING_MARINA) return true;
+            if (needLab && nc->buildingType == WB_BUILDING_ROBOT_LAB) return true;
+        }
+        if (nc->hasUnit && nc->unitType == WB_UNIT_REPAIRBOT && nc->unitEnergyDeci > 0 && needLab) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool findAdjacentCharger(AppState* app, int ux, int uy, WBUnitType unitType, int* outX, int* outY, bool* outIsRepairbot) {
+    static const int offsets[4][2] = {{1,0},{-1,0},{0,1},{0,-1}};
+    bool needGas, needMarina, needLab;
+    int i;
+    switch (unitType) {
+        case WB_UNIT_TUGBOAT:
+        case WB_UNIT_FREIGHTER:
+        case WB_UNIT_SPEEDBOAT:
+        case WB_UNIT_FISH:
+            needGas = false; needMarina = true; needLab = false; break;
+        case WB_UNIT_TREEBOT:
+        case WB_UNIT_REPAIRBOT:
+        case WB_UNIT_DEFENDER:
+        case WB_UNIT_DEFENDER2:
+        case WB_UNIT_FREEZEBOT:
+            needGas = false; needMarina = false; needLab = true; break;
+        default:
+            needGas = true; needMarina = false; needLab = false; break;
+    }
+    for (i = 0; i < 4; ++i) {
+        int nx = ux + offsets[i][0];
+        int ny = uy + offsets[i][1];
+        WBCell* nc;
+        if (!inBounds(app, nx, ny)) continue;
+        nc = &app->map.cells[ny][nx];
+        if (nc->hasBuilding) {
+            if (needGas && (nc->buildingType == WB_BUILDING_GAS_STATION || nc->buildingType == WB_BUILDING_GARAGE)) {
+                if (outX) *outX = nx;
+                if (outY) *outY = ny;
+                if (outIsRepairbot) *outIsRepairbot = false;
+                return true;
+            }
+            if (needMarina && nc->buildingType == WB_BUILDING_MARINA) {
+                if (outX) *outX = nx;
+                if (outY) *outY = ny;
+                if (outIsRepairbot) *outIsRepairbot = false;
+                return true;
+            }
+            if (needLab && nc->buildingType == WB_BUILDING_ROBOT_LAB) {
+                if (outX) *outX = nx;
+                if (outY) *outY = ny;
+                if (outIsRepairbot) *outIsRepairbot = false;
+                return true;
+            }
+        }
+        if (nc->hasUnit && nc->unitType == WB_UNIT_REPAIRBOT && nc->unitEnergyDeci > 0 && needLab) {
+            if (outX) *outX = nx;
+            if (outY) *outY = ny;
+            if (outIsRepairbot) *outIsRepairbot = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Factory: consumes an adjacent boulder or tree after 2 s, then produces 25 colored
+   bricks (color set by factoryColor) on that same neighbor tile.
+   Windmill: produces 1 energy brick on a random adjacent empty normal tile every 2 s,
+   but only when no energy brick already exists on an adjacent tile.
+   Garage:   produces 4 wheel bricks on a random adjacent empty normal tile every 2 s,
+   but only when no wheel brick already exists on an adjacent tile.
+   Nursery:  converts a random adjacent empty normal tile into a random tree every 2 s. */
+static void spawnWorldEffect(AppState* app, WBWorldEffectKind kind, int tileX, int tileY); /* forward decl */
+static void cleanupResourceCell(WBCell* cell); /* forward decl */
+static void tickBuildings(AppState* app) {
+    static const int dx4[4] = {1, -1, 0,  0};
+    static const int dy4[4] = {0,  0, -1, 1};
+    int y;
+    int x;
+    u64 now = osGetTime();
+    for (y = 0; y < app->map.height; ++y) {
+        for (x = 0; x < app->map.width; ++x) {
+            WBCell* cell = &app->map.cells[y][x];
+            if (!cell->hasBuilding) {
+                app->buildingTickMs[y][x] = 0;
+                continue;
+            }
+            switch (cell->buildingType) {
+
+            case WB_BUILDING_FACTORY: {
+                /* WB2 config: energy[#make]:7.5 — each production cycle costs 7.5% (75/1000).
+                   If the factory is out of energy, it auto-consumes an adjacent energy brick
+                   to recharge (players can refuel by dropping energy bricks next to it). */
+                int fi;
+                int foundX = -1;
+                int foundY = -1;
+                bool foundBoulder = false;
+
+                /* Initialise energy if this is the first tick (legacy maps). */
+                if (cell->buildingEnergy <= 0) {
+                    /* Try to consume an adjacent energy brick to recharge */
+                    int ei;
+                    for (ei = 0; ei < 4; ++ei) {
+                        int ex = x + dx4[ei];
+                        int ey = y + dy4[ei];
+                        WBCell* ec;
+                        if (!inBounds(app, ex, ey)) continue;
+                        ec = &app->map.cells[ey][ex];
+                        if (ec->hasResource && !ec->resourceIsPlan && ec->pile.energy > 0) {
+                            ec->pile.energy--;
+                            cell->buildingEnergy = 1000;
+                            cleanupResourceCell(ec);
+                            spawnWorldEffect(app, WB_WORLD_EFFECT_TAKE_APART_CLOUD, ex, ey);
+                            break;
+                        }
+                    }
+                    if (cell->buildingEnergy <= 0) {
+                        app->buildingTickMs[y][x] = 0;
+                        break; /* no energy, dormant */
+                    }
+                }
+
+                /* Find the first adjacent boulder (monster) or tree terrain */
+                for (fi = 0; fi < 4 && foundX < 0; ++fi) {
+                    int nx = x + dx4[fi];
+                    int ny = y + dy4[fi];
+                    int mi2;
+                    WBTerrainType tt;
+                    if (!inBounds(app, nx, ny)) {
+                        continue;
+                    }
+                    /* Check for an active, non-dying boulder monster */
+                    for (mi2 = 0; mi2 < g_monsterCount && foundX < 0; ++mi2) {
+                        WBMonsterState* ms2 = &g_monsters[mi2];
+                        if (ms2->active && !ms2->dying && ms2->type == WB_MONSTER_BOULDER
+                                && ms2->col == nx && ms2->row == ny) {
+                            foundX = nx;
+                            foundY = ny;
+                            foundBoulder = true;
+                        }
+                    }
+                    if (foundX >= 0) {
+                        break;
+                    }
+                    /* Check for tree terrain */
+                    tt = app->map.cells[ny][nx].terrain;
+                    if (tt == WB_TERRAIN_TREE || tt == WB_TERRAIN_TREE2 ||
+                            tt == WB_TERRAIN_TREE3 || tt == WB_TERRAIN_TREE4) {
+                        foundX = nx;
+                        foundY = ny;
+                    }
+                }
+                if (foundX < 0) {
+                    app->buildingTickMs[y][x] = 0;
+                    break;
+                }
+                if (app->buildingTickMs[y][x] == 0) {
+                    app->buildingTickMs[y][x] = now;
+                    break;
+                }
+                if ((now - app->buildingTickMs[y][x]) < 2000ULL) {
+                    break;
+                }
+                /* Timer fired: consume the boulder or tree */
+                app->buildingTickMs[y][x] = 0;
+                /* Deduct factory energy for this production cycle (7.5% = 75/1000) */
+                cell->buildingEnergy -= 75;
+                if (cell->buildingEnergy < 0) cell->buildingEnergy = 0;
+                if (foundBoulder) {
+                    int mi2;
+                    for (mi2 = 0; mi2 < g_monsterCount; ++mi2) {
+                        WBMonsterState* ms2 = &g_monsters[mi2];
+                        if (ms2->active && !ms2->dying && ms2->type == WB_MONSTER_BOULDER
+                                && ms2->col == foundX && ms2->row == foundY) {
+                            ms2->active = false;
+                            app->map.cells[foundY][foundX].hasMonster = false;
+                            app->map.cells[foundY][foundX].monsterType = WB_MONSTER_NONE;
+                            spawnWorldEffect(app, WB_WORLD_EFFECT_TAKE_APART_CLOUD, foundX, foundY);
+                            playSfxClipWorld(app, &app->sfxDisassemble);
+                            break;
+                        }
+                    }
+                } else {
+                    app->map.cells[foundY][foundX].terrain = WB_TERRAIN_NORMAL;
+                    spawnWorldEffect(app, WB_WORLD_EFFECT_TAKE_APART_CLOUD, foundX, foundY);
+                    playSfxClipWorld(app, &app->sfxDisassemble);
+                }
+                /* Produce 25 colored bricks on that tile */
+                {
+                    /* 0=RED, 1=YELLOW, 2=GREEN, 3=BLUE, 4=WHITE */
+                    WBCell* tc = &app->map.cells[foundY][foundX];
+                    int fci = (cell->factoryColor < 0 || cell->factoryColor > 4) ? 0 : cell->factoryColor;
+                    if (!tc->hasResource || tc->resourceIsPlan) {
+                        tc->hasResource = true;
+                        tc->resourceIsPlan = false;
+                        memset(&tc->pile, 0, sizeof(tc->pile));
+                    }
+                    switch (fci) {
+                        case 0: tc->pile.red    += 25; if (tc->pile.red    > 100) tc->pile.red    = 100; break;
+                        case 1: tc->pile.yellow += 25; if (tc->pile.yellow > 100) tc->pile.yellow = 100; break;
+                        case 2: tc->pile.green  += 25; if (tc->pile.green  > 100) tc->pile.green  = 100; break;
+                        case 3: tc->pile.blue   += 25; if (tc->pile.blue   > 100) tc->pile.blue   = 100; break;
+                        case 4: tc->pile.white  += 25; if (tc->pile.white  > 100) tc->pile.white  = 100; break;
+                        default: break;
+                    }
+                }
+                break;
+            }
+
+            case WB_BUILDING_WINDMILL: {
+                /* Find adjacent empty normal tiles; check for existing adjacent energy */
+                int wi;
+                bool hasAdjEnergy = false;
+                int emptyX[4];
+                int emptyY[4];
+                int emptyCount = 0;
+                for (wi = 0; wi < 4; ++wi) {
+                    int nx = x + dx4[wi];
+                    int ny = y + dy4[wi];
+                    const WBCell* nc;
+                    if (!inBounds(app, nx, ny)) {
+                        continue;
+                    }
+                    nc = &app->map.cells[ny][nx];
+                    if (nc->hasResource && !nc->resourceIsPlan && nc->pile.energy > 0) {
+                        hasAdjEnergy = true;
+                        break;
+                    }
+                    if (nc->terrain == WB_TERRAIN_NORMAL && !nc->hasUnit && !nc->hasBuilding
+                            && !activeMonsterAt(NULL, ny, nx) && !nc->hasResource) {
+                        emptyX[emptyCount] = nx;
+                        emptyY[emptyCount] = ny;
+                        ++emptyCount;
+                    }
+                }
+                if (hasAdjEnergy || emptyCount == 0) {
+                    app->buildingTickMs[y][x] = 0;
+                    break;
+                }
+                if (app->buildingTickMs[y][x] == 0) {
+                    app->buildingTickMs[y][x] = now;
+                    break;
+                }
+                if ((now - app->buildingTickMs[y][x]) < 2000ULL) {
+                    break;
+                }
+                app->buildingTickMs[y][x] = 0;
+                {
+                    int pick = (int)(now % (u64)emptyCount);
+                    WBCell* tc = &app->map.cells[emptyY[pick]][emptyX[pick]];
+                    tc->hasResource = true;
+                    tc->resourceIsPlan = false;
+                    memset(&tc->pile, 0, sizeof(tc->pile));
+                    tc->pile.energy = 1;
+                    tc->pileEnergyValue = 100;
+                }
+                break;
+            }
+
+            case WB_BUILDING_GARAGE: {
+                /* Find adjacent empty normal tiles; check for existing adjacent wheel bricks */
+                int gi;
+                bool hasAdjWheels = false;
+                int garEmptyX[4];
+                int garEmptyY[4];
+                int garEmptyCount = 0;
+                for (gi = 0; gi < 4; ++gi) {
+                    int nx = x + dx4[gi];
+                    int ny = y + dy4[gi];
+                    const WBCell* nc;
+                    if (!inBounds(app, nx, ny)) {
+                        continue;
+                    }
+                    nc = &app->map.cells[ny][nx];
+                    if (nc->hasResource && !nc->resourceIsPlan && nc->pile.wheel > 0) {
+                        hasAdjWheels = true;
+                        break;
+                    }
+                    if (nc->terrain == WB_TERRAIN_NORMAL && !nc->hasUnit && !nc->hasBuilding
+                            && !activeMonsterAt(NULL, ny, nx) && !nc->hasResource) {
+                        garEmptyX[garEmptyCount] = nx;
+                        garEmptyY[garEmptyCount] = ny;
+                        ++garEmptyCount;
+                    }
+                }
+                if (hasAdjWheels || garEmptyCount == 0) {
+                    app->buildingTickMs[y][x] = 0;
+                    break;
+                }
+                if (app->buildingTickMs[y][x] == 0) {
+                    app->buildingTickMs[y][x] = now;
+                    break;
+                }
+                if ((now - app->buildingTickMs[y][x]) < 2000ULL) {
+                    break;
+                }
+                app->buildingTickMs[y][x] = 0;
+                {
+                    int pick = (int)(now % (u64)garEmptyCount);
+                    WBCell* tc = &app->map.cells[garEmptyY[pick]][garEmptyX[pick]];
+                    tc->hasResource = true;
+                    tc->resourceIsPlan = false;
+                    memset(&tc->pile, 0, sizeof(tc->pile));
+                    tc->pile.wheel = 4;
+                }
+                break;
+            }
+
+            case WB_BUILDING_NURSERY: {
+                /* Find adjacent empty normal tiles; convert one to a random tree type */
+                static const WBTerrainType s_nurseryTreeTypes[4] = {
+                    WB_TERRAIN_TREE, WB_TERRAIN_TREE2, WB_TERRAIN_TREE3, WB_TERRAIN_TREE4
+                };
+                int ni;
+                int nurEmptyX[4];
+                int nurEmptyY[4];
+                int nurEmptyCount = 0;
+                for (ni = 0; ni < 4; ++ni) {
+                    int nx = x + dx4[ni];
+                    int ny = y + dy4[ni];
+                    const WBCell* nc;
+                    if (!inBounds(app, nx, ny)) {
+                        continue;
+                    }
+                    nc = &app->map.cells[ny][nx];
+                    if (nc->terrain == WB_TERRAIN_NORMAL && !nc->hasUnit && !nc->hasBuilding
+                            && !activeMonsterAt(NULL, ny, nx) && !nc->hasResource) {
+                        nurEmptyX[nurEmptyCount] = nx;
+                        nurEmptyY[nurEmptyCount] = ny;
+                        ++nurEmptyCount;
+                    }
+                }
+                if (nurEmptyCount == 0) {
+                    app->buildingTickMs[y][x] = 0;
+                    break;
+                }
+                if (app->buildingTickMs[y][x] == 0) {
+                    app->buildingTickMs[y][x] = now;
+                    break;
+                }
+                if ((now - app->buildingTickMs[y][x]) < 2000ULL) {
+                    break;
+                }
+                app->buildingTickMs[y][x] = 0;
+                {
+                    int pick = (int)(now % (u64)nurEmptyCount);
+                    int treePick = (int)((now / 7) % 4);
+                    WBCell* tc = &app->map.cells[nurEmptyY[pick]][nurEmptyX[pick]];
+                    tc->terrain = s_nurseryTreeTypes[treePick];
+                }
+                break;
+            }
+
+            default:
+                app->buildingTickMs[y][x] = 0;
+                break;
+            }
+        }
+    }
+}
+
+static void tickUnitRecharging(AppState* app) {
+    int y;
+    int x;
+    u64 now = osGetTime();
+    for (y = 0; y < app->map.height; ++y) {
+        for (x = 0; x < app->map.width; ++x) {
+            WBCell* cell = &app->map.cells[y][x];
+            int chargerX;
+            int chargerY;
+            bool chargerIsRepairbot = false;
+            if (!cell->hasUnit || cell->unitEnergyDeci >= 1000) {
+                app->unitRechargeTickMs[y][x] = 0;
+                continue;
+            }
+            if (!findAdjacentCharger(app, x, y, cell->unitType, &chargerX, &chargerY, &chargerIsRepairbot)) {
+                app->unitRechargeTickMs[y][x] = 0;
+                continue;
+            }
+            if (app->unitRechargeTickMs[y][x] == 0) {
+                app->unitRechargeTickMs[y][x] = now;
+                continue;
+            }
+            if ((now - app->unitRechargeTickMs[y][x]) < 300) {
+                continue;
+            }
+            app->unitRechargeTickMs[y][x] = now;
+            cell->unitEnergyDeci += 60;
+            if (cell->unitEnergyDeci > 1000) {
+                cell->unitEnergyDeci = 1000;
+            }
+            cell->unitEnergy = (cell->unitEnergyDeci + 9) / 10;
+            if (chargerIsRepairbot && inBounds(app, chargerX, chargerY)) {
+                WBCell* chargerCell = &app->map.cells[chargerY][chargerX];
+                chargerCell->unitDirection = directionFromStep(chargerX, chargerY, x, y);
+                app->unitActionAnim[chargerY][chargerX] = WB_UNIT_ANIM_REPAIR;
+                app->unitActionUntilMs[chargerY][chargerX] = now + 350;
+            }
+        }
+    }
+}
+
+static void drawUnitEnergyBadge(AppState* app, int energyDeci, float unitX, float unitY) {
+    /* Charging animation: cycle ASSET_UI_ENERGY_ICON at ~230ms per frame.
+       Only possible for stationary units (we don't have position in moving path here),
+       so callers that know position pass cellX/cellY separately. */
+    if (energyDeci <= 0) {
+        /* Dead battery — show no_energy icon */
+        int assetId = ASSET_UI_NO_ENERGY;
+        drawAnchoredImage(getImage(app, assetId),
+            unitX + (12.0f * DIRECTOR_SCALE),
+            unitY + (10.0f * DIRECTOR_SCALE),
+            DIRECTOR_SCALE,
+            g_objectAnchors[assetId].x,
+            g_objectAnchors[assetId].y);
+    } else if (energyDeci <= 200) {
+        /* Low battery — use proper icon.low_energy sprite when available. */
+        C2D_Image lowImg = getWorldbuilderExtraImage(app, WB_EXTRA_UI_LOW_ENERGY_IDX);
+        if (lowImg.subtex) {
+            drawAnchoredImage(lowImg,
+                unitX + (12.0f * DIRECTOR_SCALE),
+                unitY + (10.0f * DIRECTOR_SCALE),
+                DIRECTOR_SCALE,
+                lowImg.subtex->width * 0.5f,
+                lowImg.subtex->height * 0.5f);
+        } else {
+            int assetId = ASSET_RESOURCE_ENERGY_LOW;
+            drawAnchoredImage(getImage(app, assetId),
+                unitX + (12.0f * DIRECTOR_SCALE),
+                unitY + (10.0f * DIRECTOR_SCALE),
+                DIRECTOR_SCALE,
+                g_objectAnchors[assetId].x,
+                g_objectAnchors[assetId].y);
+        }
+    }
+}
+
+/* Variant that also draws a charging animation when the unit is adjacent to a charger. */
+static void drawUnitEnergyBadgeAt(AppState* app, int energyDeci, float unitX, float unitY, int cellX, int cellY, WBUnitType unitType) {
+    if (energyDeci > 0 && energyDeci < 1000 && unitIsAdjacentToCharger(app, cellX, cellY, unitType)) {
+        /* Cycling animation: icon.charging.0/1/2 @ ~230ms each. */
+        int frame = (int)(osGetTime() / 230) % 3;
+        int idx = (frame == 0) ? WB_EXTRA_UI_CHARGE_0_IDX :
+                  (frame == 1) ? WB_EXTRA_UI_CHARGE_1_IDX : WB_EXTRA_UI_CHARGE_2_IDX;
+        C2D_Image chargeImg = getWorldbuilderExtraImage(app, idx);
+        if (chargeImg.subtex) {
+            drawAnchoredImage(chargeImg,
+                unitX + (12.0f * DIRECTOR_SCALE),
+                unitY + (8.0f * DIRECTOR_SCALE),
+                DIRECTOR_SCALE,
+                chargeImg.subtex->width * 0.5f,
+                chargeImg.subtex->height * 0.5f);
+        } else {
+            int assetId = (frame == 0) ? ASSET_UI_ENERGY_ICON : ASSET_UI_ENERGY_STRIPE_BG;
+            C2D_DrawImageAt(getImage(app, assetId),
+                unitX + (12.0f * DIRECTOR_SCALE),
+                unitY + (8.0f * DIRECTOR_SCALE),
+                0.0f, NULL, DIRECTOR_SCALE, DIRECTOR_SCALE);
+        }
+        return;
+    }
+    drawUnitEnergyBadge(app, energyDeci, unitX, unitY);
+}
+
+static int pileEntryAmount(const WBResourcePile* pile, int kind) {
+    switch (kind) {
+        case 0: return pile->red;
+        case 1: return pile->blue;
+        case 2: return pile->green;
+        case 3: return pile->yellow;
+        case 4: return pile->wheel;
+        case 5: return pile->energy;
+        default: return 0;
+    }
+}
+
+static void sortPileKinds(const WBResourcePile* pile, int* kinds, int* count) {
+    int n = 0;
+    int i;
+    int j;
+    if (pile->red > 0) kinds[n++] = 0;
+    if (pile->blue > 0) kinds[n++] = 1;
+    if (pile->green > 0) kinds[n++] = 2;
+    if (pile->yellow > 0) kinds[n++] = 3;
+    if (pile->wheel > 0) kinds[n++] = 4;
+    if (pile->energy > 0) kinds[n++] = 5;
+    if (pile->white > 0) kinds[n++] = 6;
+    for (i = 0; i < n; ++i) {
+        for (j = i + 1; j < n; ++j) {
+            if (pileEntryAmount(pile, kinds[j]) > pileEntryAmount(pile, kinds[i])) {
+                int tmp = kinds[i];
+                kinds[i] = kinds[j];
+                kinds[j] = tmp;
+            }
+        }
+    }
+    *count = n;
+}
+
+static int resourceTotal(const WBResourcePile* pile) {
+    return pile->red + pile->blue + pile->green + pile->yellow + pile->wheel + pile->energy + pile->white;
+}
+
+static bool pileEmpty(const WBResourcePile* pile) {
+    return resourceTotal(pile) == 0;
+}
+
+static bool unitSupportsPickDrop(WBUnitType unitType) {
+    switch (unitType) {
+        case WB_UNIT_BUGGY:
+        case WB_UNIT_DIRTBUGGY:
+        case WB_UNIT_DUMPTRUCK:
+        case WB_UNIT_FORKLIFT:
+        case WB_UNIT_TUGBOAT:
+        case WB_UNIT_FREIGHTER:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static bool unitSupportsDigFill(WBUnitType unitType) {
+    return unitType == WB_UNIT_STEAMSHOVEL;
+}
+
+static bool unitSupportsTransplant(WBUnitType unitType) {
+    return unitType == WB_UNIT_TREEBOT;
+}
+
+static bool unitSupportsPush(WBUnitType unitType) {
+    return unitType == WB_UNIT_DOZER;
+}
+
+static bool steamshovelHasFillCargo(const WBCell* cell) {
+    return cell && (cell->unitCargo.red > 0 || cell->unitCargo.blue > 0);
+}
+
+static void setSelectedUnitActionAnim(AppState* app, u8 anim, u64 durationMs) {
+    if (!app || !app->hasSelection || !inBounds(app, app->selectedX, app->selectedY)) {
+        return;
+    }
+    app->unitActionAnim[app->selectedY][app->selectedX] = anim;
+    app->unitActionUntilMs[app->selectedY][app->selectedX] = osGetTime() + durationMs;
+}
+
+static bool treebotHasSapling(const WBCell* cell) {
+    return cell && (cell->unitCargo.green > 0);
+}
+
+static int unitCarryCapacity(WBUnitType unitType) {
+    switch (unitType) {
+        case WB_UNIT_BUGGY:     return 3;
+        case WB_UNIT_DIRTBUGGY: return 3;
+        case WB_UNIT_DUMPTRUCK: return 25;
+        case WB_UNIT_FORKLIFT:  return 10;
+        case WB_UNIT_TUGBOAT:   return 5;
+        case WB_UNIT_FREIGHTER: return 25;
+        case WB_UNIT_TREEBOT:   return 1;
+        default: return 0;
+    }
+}
+
+static const char* actionModeName(WBActionMode mode) {
+    switch (mode) {
+        case WB_ACTION_PICK: return "pick";
+        case WB_ACTION_DROP: return "drop";
+        case WB_ACTION_DIG: return "dig";
+        case WB_ACTION_FILL: return "fill";
+        case WB_ACTION_UPROOT: return "uproot";
+        case WB_ACTION_PLANT: return "plant";
+        case WB_ACTION_PUSH: return "push";
+        case WB_ACTION_MOVE:
+        default: return "move";
+    }
+}
+
+static int unitMoveCostDeci(WBUnitType unitType) {
+    switch (unitType) {
+        case WB_UNIT_BUGGY:      return 7;
+        case WB_UNIT_DUCK:       return 4;
+        case WB_UNIT_DIRTBUGGY:  return 7;
+        case WB_UNIT_STEAMSHOVEL:return 12;
+        case WB_UNIT_DUMPTRUCK:  return 12;
+        case WB_UNIT_FORKLIFT:   return 10;
+        case WB_UNIT_DOZER:      return 10;
+        case WB_UNIT_SPEEDBOAT:  return 10;
+        case WB_UNIT_TUGBOAT:    return 12;
+        case WB_UNIT_FREIGHTER:  return 12;
+        case WB_UNIT_FROG:       return 4;
+        case WB_UNIT_FISH:       return 4;
+        case WB_UNIT_SNAIL:      return 4;
+        case WB_UNIT_TREEBOT:    return 20;
+        case WB_UNIT_REPAIRBOT:  return 7;
+        case WB_UNIT_DEFENDER:   return 10;
+        case WB_UNIT_DEFENDER2:  return 10;
+        case WB_UNIT_FREEZEBOT:  return 10;
+        default: return 0;
+    }
+}
+
+static int manhattanDistance(int ax, int ay, int bx, int by) {
+    int dx = ax - bx;
+    int dy = ay - by;
+    if (dx < 0) dx = -dx;
+    if (dy < 0) dy = -dy;
+    return dx + dy;
+}
+
+static int chooseLeastBrickKind(const WBResourcePile* pile) {
+    int bestKind = -1;
+    int bestAmount = 2147483647;
+    int amounts[7] = { pile->red, pile->blue, pile->green, pile->yellow, pile->wheel, pile->energy, pile->white };
+    int i;
+    for (i = 0; i < 7; ++i) {
+        if (amounts[i] > 0 && amounts[i] < bestAmount) {
+            bestAmount = amounts[i];
+            bestKind = i;
+        }
+    }
+    return bestKind;
+}
+
+static void takeOneKind(WBResourcePile* pile, int kind) {
+    switch (kind) {
+        case 0: if (pile->red > 0) --pile->red; break;
+        case 1: if (pile->blue > 0) --pile->blue; break;
+        case 2: if (pile->green > 0) --pile->green; break;
+        case 3: if (pile->yellow > 0) --pile->yellow; break;
+        case 4: if (pile->wheel > 0) --pile->wheel; break;
+        case 5: if (pile->energy > 0) --pile->energy; break;
+        case 6: if (pile->white > 0) --pile->white; break;
+    }
+}
+
+static void addOneKind(WBResourcePile* pile, int kind) {
+    switch (kind) {
+        case 0: ++pile->red; break;
+        case 1: ++pile->blue; break;
+        case 2: ++pile->green; break;
+        case 3: ++pile->yellow; break;
+        case 4: ++pile->wheel; break;
+        case 5: ++pile->energy; break;
+        case 6: ++pile->white; break;
+    }
+}
+
+static void addPile(WBResourcePile* dst, const WBResourcePile* src) {
+    dst->red += src->red;
+    dst->blue += src->blue;
+    dst->green += src->green;
+    dst->yellow += src->yellow;
+    dst->wheel += src->wheel;
+    dst->energy += src->energy;
+    dst->white += src->white;
+}
+
+static void spawnWorldEffect(AppState* app, WBWorldEffectKind kind, int tileX, int tileY) {
+    int slot = -1;
+    int i;
+    u64 oldestMs = 0;
+
+    for (i = 0; i < WB_MAX_WORLD_EFFECTS; ++i) {
+        if (!app->worldEffects[i].active) {
+            slot = i;
+            break;
+        }
+        if (slot < 0 || app->worldEffects[i].startMs < oldestMs) {
+            slot = i;
+            oldestMs = app->worldEffects[i].startMs;
+        }
+    }
+
+    if (slot < 0) {
+        return;
+    }
+
+    app->worldEffects[slot].active = true;
+    app->worldEffects[slot].kind = kind;
+    app->worldEffects[slot].tileX = tileX;
+    app->worldEffects[slot].tileY = tileY;
+    app->worldEffects[slot].startMs = osGetTime();
+    memset(app->worldEffects[slot].particleKinds, 0xFF, sizeof(app->worldEffects[slot].particleKinds));
+}
+
+static void setBuildEffectParticleKinds(WBWorldEffect* effect, const WBResourcePile* recipe) {
+    WBResourcePile tmp;
+    int total;
+    int threshold;
+    int kindIndex = 0;
+    int i;
+
+    if (!effect || !recipe) {
+        return;
+    }
+
+    tmp = *recipe;
+    total = tmp.red + tmp.blue + tmp.green + tmp.yellow + tmp.wheel + tmp.energy;
+    if (total <= 0) {
+        for (i = 0; i < 5; ++i) {
+            effect->particleKinds[i] = 4;
+        }
+        return;
+    }
+
+    threshold = total / 5;
+    if (threshold < 1) {
+        threshold = 1;
+    }
+
+    for (i = 0; i < 5; ++i) {
+        int kind;
+        if (kindIndex > 5) {
+            kindIndex = 5;
+        }
+        while (kindIndex < 6 && pileEntryAmount(&tmp, kindIndex) <= 0) {
+            ++kindIndex;
+        }
+        if (kindIndex >= 6) {
+            effect->particleKinds[i] = 4;
+            continue;
+        }
+        kind = kindIndex;
+        effect->particleKinds[i] = kind;
+        {
+            int use = threshold;
+            int have = pileEntryAmount(&tmp, kind);
+            if (use > have) {
+                use = have;
+            }
+            while (use-- > 0) {
+                takeOneKind(&tmp, kind);
+            }
+        }
+    }
+}
+
+static void spawnBuildCloudEffect(AppState* app, int tileX, int tileY, const WBResourcePile* recipe) {
+    int i;
+
+    spawnWorldEffect(app, WB_WORLD_EFFECT_BUILD_CLOUD, tileX, tileY);
+    for (i = 0; i < WB_MAX_WORLD_EFFECTS; ++i) {
+        WBWorldEffect* effect = &app->worldEffects[i];
+        if (!effect->active) {
+            continue;
+        }
+        if (effect->kind != WB_WORLD_EFFECT_BUILD_CLOUD) {
+            continue;
+        }
+        if (effect->tileX != tileX || effect->tileY != tileY) {
+            continue;
+        }
+        if (effect->startMs + 1000 < osGetTime()) {
+            continue;
+        }
+        setBuildEffectParticleKinds(effect, recipe);
+        return;
+    }
+}
+
+static void clearSelectionAt(AppState* app, int x, int y) {
+    if (app->hasSelection && app->selectedMover < 0 && app->selectedX == x && app->selectedY == y) {
+        app->hasSelection = false;
+        app->selectedMover = -1;
+        app->infoOverlayOpen = false;
+        app->actionMode = WB_ACTION_MOVE;
+    }
+}
+
+static void disassembleUnitAtCell(AppState* app, int x, int y) {
+    WBCell* cell;
+    const WBResourcePile* recipe;
+
+    if (!inBounds(app, x, y)) {
+        return;
+    }
+
+    cell = &app->map.cells[y][x];
+    if (!cell->hasUnit) {
+        return;
+    }
+
+    recipe = wbUnitRecipe(cell->unitType);
+    if (!recipe) {
+        return;
+    }
+
+    if (!cell->hasResource || cell->resourceIsPlan) {
+        cell->hasResource = true;
+        cell->resourceIsPlan = false;
+        memset(&cell->pile, 0, sizeof(cell->pile));
+        cell->pileEnergyValue = 0;  /* reset stale charge from any previous pile */
+    }
+
+    addPile(&cell->pile, recipe);
+    addPile(&cell->pile, &cell->unitCargo);
+    if (recipe->energy > 0) {
+        /* Take the MAX so an existing high-value battery on the pile is not downgraded. */
+        int newVal = cell->unitEnergy;
+        if (newVal > cell->pileEnergyValue) {
+            cell->pileEnergyValue = newVal;
+        }
+    }
+
+    spawnWorldEffect(app, WB_WORLD_EFFECT_TAKE_APART_CLOUD, x, y);
+    playSfxClip(app, &app->sfxDisassemble);
+
+    cell->hasUnit = false;
+    cell->unitType = WB_UNIT_NONE;
+    cell->unitEnergy = 0;
+    cell->unitEnergyDeci = 0;
+    memset(&cell->unitCargo, 0, sizeof(cell->unitCargo));
+    clearSelectionAt(app, x, y);
+}
+
+static void disassembleBuildingAtCell(AppState* app, int x, int y) {
+    WBCell* cell;
+    const WBResourcePile* recipe;
+    if (!inBounds(app, x, y)) {
+        return;
+    }
+    cell = &app->map.cells[y][x];
+    if (!cell->hasBuilding) {
+        return;
+    }
+    recipe = wbBuildingRecipe(cell->buildingType);
+    if (!recipe) {
+        return;
+    }
+    if (!cell->hasResource || cell->resourceIsPlan) {
+        cell->hasResource = true;
+        cell->resourceIsPlan = false;
+        memset(&cell->pile, 0, sizeof(cell->pile));
+    }
+    addPile(&cell->pile, recipe);
+    spawnWorldEffect(app, WB_WORLD_EFFECT_TAKE_APART_CLOUD, x, y);
+    playSfxClip(app, &app->sfxDisassemble);
+    cell->hasBuilding = false;
+    cell->buildingType = WB_BUILDING_NONE;
+    clearSelectionAt(app, x, y);
+}
+
+static void queueUnitBreak(AppState* app, int x, int y) {
+    int slot = -1;
+    int i;
+
+    for (i = 0; i < WB_MAX_PENDING_UNIT_BREAKS; ++i) {
+        if (app->pendingUnitBreaks[i].active &&
+            app->pendingUnitBreaks[i].tileX == x &&
+            app->pendingUnitBreaks[i].tileY == y) {
+            return;
+        }
+        if (slot < 0 && !app->pendingUnitBreaks[i].active) {
+            slot = i;
+        }
+    }
+
+    if (slot < 0) {
+        return;
+    }
+
+    app->pendingUnitBreaks[slot].active = true;
+    app->pendingUnitBreaks[slot].tileX = x;
+    app->pendingUnitBreaks[slot].tileY = y;
+    app->pendingUnitBreaks[slot].resolveMs = osGetTime() + WB_DAMAGE_EFFECT_DURATION_MS;
+}
+
+static void resolvePendingUnitBreaks(AppState* app) {
+    int i;
+    u64 now = osGetTime();
+
+    for (i = 0; i < WB_MAX_PENDING_UNIT_BREAKS; ++i) {
+        WBPendingUnitBreak* pending = &app->pendingUnitBreaks[i];
+        if (!pending->active || now < pending->resolveMs) {
+            continue;
+        }
+        if (inBounds(app, pending->tileX, pending->tileY)) {
+            WBCell* cell = &app->map.cells[pending->tileY][pending->tileX];
+            if (cell->hasUnit && cell->unitEnergyDeci <= 0) {
+                disassembleUnitAtCell(app, pending->tileX, pending->tileY);
+            }
+        }
+        pending->active = false;
+    }
+}
+
+/* Shield factors reduce damage received by the entity.
+   Original Lingo: damage = integer(damage * shield)
+   Values from WB1/WB2 config: unit shield applies vs monster attacks on units,
+   building shield applies vs monster attacks on buildings,
+   monster shield applies vs defender/guard tower attacks on monsters. */
+static float unitShieldFactor(WBUnitType t) {
+    switch (t) {
+        case WB_UNIT_DEFENDER:   return 0.05f;
+        case WB_UNIT_DEFENDER2:  return 0.05f;
+        case WB_UNIT_SPEEDBOAT:  return 0.05f;
+        default:                 return 1.0f;
+    }
+}
+
+static float buildingShieldFactor(WBBuildingType t) {
+    return (t == WB_BUILDING_GUARD_TOWER) ? 0.02f : 1.0f;
+}
+
+static float monsterShieldFactor(WBMonsterType t) {
+    switch (t) {
+        case WB_MONSTER_CRAB:       return 0.1f;
+        case WB_MONSTER_WATER_CRAB: return 0.1f;
+        case WB_MONSTER_GATOR:      return 0.1f;
+        case WB_MONSTER_SCORPION:   return 0.045f;
+        case WB_MONSTER_SHARK:      return 0.05f;
+        case WB_MONSTER_TREX:       return 0.02f;
+        case WB_MONSTER_LION:       return 0.03f;
+        case WB_MONSTER_BOULDER:    return 0.00000001f;
+        default:                    return 1.0f;
+    }
+}
+
+static void applyUnitDamageAtCell(AppState* app, int x, int y, int damageDeci, bool playSound) {
+    WBCell* cell;
+
+    if (!inBounds(app, x, y) || damageDeci <= 0) {
+        return;
+    }
+
+    cell = &app->map.cells[y][x];
+    if (!cell->hasUnit) {
+        return;
+    }
+
+    /* Apply unit shield: reduce incoming damage per original config (e.g. Defender 0.05) */
+    damageDeci = (int)(damageDeci * unitShieldFactor(cell->unitType) + 0.5f);
+    if (damageDeci <= 0) {
+        return;
+    }
+
+    cell->unitEnergyDeci -= damageDeci;
+    if (cell->unitEnergyDeci < 0) {
+        cell->unitEnergyDeci = 0;
+    }
+    cell->unitEnergy = (cell->unitEnergyDeci + 9) / 10;
+
+    spawnWorldEffect(app, WB_WORLD_EFFECT_DAMAGE_SMALL, x, y);
+    if (playSound) {
+        playSfxClipWorld(app, &app->sfxDamage);
+    }
+    if (cell->unitEnergyDeci <= 0) {
+        queueUnitBreak(app, x, y);
+    }
+}
+
+static void applyBuildingDamageAtCell(AppState* app, int x, int y, int damage, bool playSound) {
+    WBCell* cell;
+
+    if (!inBounds(app, x, y) || damage <= 0) {
+        return;
+    }
+
+    cell = &app->map.cells[y][x];
+    if (!cell->hasBuilding) {
+        return;
+    }
+
+    /* Apply building shield: e.g. Guard Tower 0.02 — nearly indestructible vs crabs */
+    damage = (int)(damage * buildingShieldFactor(cell->buildingType) + 0.5f);
+    if (damage <= 0) {
+        return;
+    }
+
+    cell->buildingHp -= damage;
+    if (cell->buildingHp < 0) {
+        cell->buildingHp = 0;
+    }
+
+    spawnWorldEffect(app, WB_WORLD_EFFECT_DAMAGE_SMALL, x, y);
+    if (playSound) {
+        playSfxClipWorld(app, &app->sfxDamage);
+    }
+    if (cell->buildingHp <= 0) {
+        spawnWorldEffect(app, WB_WORLD_EFFECT_TAKE_APART_CLOUD, x, y);
+        playSfxClipWorld(app, &app->sfxDisassemble);
+        cell->hasBuilding = false;
+        cell->buildingType = WB_BUILDING_NONE;
+        cell->buildingHp = 0;
+    }
+}
+
+static void damageMonster(AppState* app, WBMonsterState* monster, int damage, bool playSound) {
+    if (!monster || !monster->active || monster->dying || damage <= 0) {
+        return;
+    }
+
+    /* Apply monster shield: e.g. T-Rex 0.02, Crab/Gator 0.1, Boulder ~0 */
+    damage = (int)(damage * monsterShieldFactor(monster->type) + 0.5f);
+    if (damage <= 0) {
+        return;
+    }
+
+    monster->hp -= damage;
+    if (monster->hp < 0) {
+        monster->hp = 0;
+    }
+
+    spawnWorldEffect(app, WB_WORLD_EFFECT_DAMAGE_SMALL, monster->col, monster->row);
+    if (playSound) {
+        playSfxClipWorld(app, &app->sfxDamage);
+    }
+
+    if (monster->hp <= 0) {
+        monster->dying = true;
+        monster->breakResolveMs = osGetTime() + WB_DAMAGE_EFFECT_DURATION_MS;
+        monster->isMoving = false;
+    }
+}
+
+static void drawWorldEffectsBottom(AppState* app) {
+    int i;
+    u64 now = osGetTime();
+
+    for (i = 0; i < WB_MAX_WORLD_EFFECTS; ++i) {
+        WBWorldEffect* effect = &app->worldEffects[i];
+        u64 elapsed;
+        float locX;
+        float locY;
+        int assetId;
+        C2D_Image image;
+
+        if (!effect->active) {
+            continue;
+        }
+
+        elapsed = now - effect->startMs;
+        assetId = -1;
+
+        if (effect->kind == WB_WORLD_EFFECT_DAMAGE_SMALL) {
+            int frame = (int) (elapsed / (WB_DAMAGE_EFFECT_DURATION_MS / 5));
+            C2D_ImageTint tint;
+            u32 alpha = 0xFF;
+
+            if (elapsed >= WB_DAMAGE_EFFECT_DURATION_MS) {
+                effect->active = false;
+                continue;
+            }
+            if (frame > 4) {
+                frame = 4;
+            }
+            assetId = ASSET_DAMAGE_SMALL_1 + frame;
+            posToLoc(app, effect->tileX + 1, effect->tileY + 1, &locX, &locY);
+            image = getImage(app, assetId);
+            if (!imageIntersectsScreen(image, locX, locY, DIRECTOR_SCALE,
+                    g_objectAnchors[assetId].x, g_objectAnchors[assetId].y, BOTTOM_W, BOTTOM_H)) {
+                continue;
+            }
+            if (frame == 4) {
+                alpha = 0x8C;
+            }
+            C2D_PlainImageTint(&tint, C2D_Color32(0xFF, 0xFF, 0xFF, alpha), 1.0f);
+            C2D_DrawImageAt(image,
+                locX - (g_objectAnchors[assetId].x * DIRECTOR_SCALE),
+                locY - (g_objectAnchors[assetId].y * DIRECTOR_SCALE),
+                0.0f, &tint, DIRECTOR_SCALE, DIRECTOR_SCALE);
+            continue;
+        }
+
+        if (effect->kind == WB_WORLD_EFFECT_TAKE_APART_CLOUD) {
+            static const int cloudFrames[4] = {
+                ASSET_TAKE_APART_CLOUD_1,
+                ASSET_TAKE_APART_CLOUD_2,
+                ASSET_TAKE_APART_CLOUD_3,
+                ASSET_TAKE_APART_CLOUD_3
+            };
+            int frame = (int) (elapsed / WB_CLOUD_EFFECT_FRAME_MS);
+
+            if (frame >= 4) {
+                effect->active = false;
+                continue;
+            }
+            assetId = cloudFrames[frame];
+            posToLoc(app, effect->tileX + 1, effect->tileY + 1, &locX, &locY);
+            image = getImage(app, assetId);
+            if (!imageIntersectsScreen(image, locX, locY, DIRECTOR_SCALE,
+                    g_objectAnchors[assetId].x, g_objectAnchors[assetId].y, BOTTOM_W, BOTTOM_H)) {
+                continue;
+            }
+            drawAnchoredImage(image, locX, locY, DIRECTOR_SCALE,
+                g_objectAnchors[assetId].x, g_objectAnchors[assetId].y);
+            continue;
+        }
+
+        if (effect->kind == WB_WORLD_EFFECT_BUILD_CLOUD) {
+            float t = (float) elapsed / 750.0f;
+            int cloudAsset;
+
+            if (t > 1.0f) {
+                effect->active = false;
+                continue;
+            }
+
+            posToLoc(app, effect->tileX + 1, effect->tileY + 1, &locX, &locY);
+            cloudAsset = ((osGetTime() / 200) % 2) ? ASSET_BUILD_CLOUD_2 : ASSET_BUILD_CLOUD_1;
+            drawAnchoredImage(getImage(app, cloudAsset), locX, locY, DIRECTOR_SCALE,
+                g_objectAnchors[cloudAsset].x, g_objectAnchors[cloudAsset].y);
+
+            for (int p = 0; p < 5; ++p) {
+                int kind = effect->particleKinds[p];
+                int asset;
+                float theta;
+                float phi;
+                float a;
+                float x0;
+                float y0;
+                float x1;
+                float y1;
+                u8 alpha;
+                C2D_ImageTint tint;
+
+                if (kind < 0 || kind > 5) {
+                    continue;
+                }
+                if (kind == 5) {
+                    asset = ASSET_RESOURCE_ENERGY_FULL;
+                } else {
+                    asset = (kind == 0) ? ASSET_RESOURCE_RED_2 :
+                            (kind == 1) ? ASSET_RESOURCE_BLUE_2 :
+                            (kind == 2) ? ASSET_RESOURCE_GREEN_2 :
+                            (kind == 3) ? ASSET_RESOURCE_YELLOW_2 :
+                            ASSET_RESOURCE_WHEEL_FULL;
+                }
+
+                theta = 2.0f * 3.14159265f * ((6.0f * t) + ((float) (p + 1) / 3.0f));
+                phi = 2.0f * 3.14159265f * ((0.75f * t) + ((float) (p + 1) / 5.0f));
+                a = 1.0f - (t / 1.1f);
+                x0 = a * cosf(theta);
+                y0 = a * sinf(theta) / 4.0f;
+                x1 = (x0 * cosf(phi)) + (y0 * sinf(phi));
+                y1 = (x0 * sinf(phi)) - (y0 * cosf(phi));
+                alpha = (u8) (75 + (25 * cosf(phi)));
+                C2D_PlainImageTint(&tint, C2D_Color32(0xFF, 0xFF, 0xFF, alpha), 1.0f);
+                C2D_DrawImageAt(getImage(app, asset),
+                    (locX + (10.0f * DIRECTOR_SCALE) + (40.0f * x1)) - (g_objectAnchors[asset].x * DIRECTOR_SCALE),
+                    (locY + (18.0f * DIRECTOR_SCALE) + (40.0f * y1)) - (g_objectAnchors[asset].y * DIRECTOR_SCALE),
+                    0.0f, &tint, DIRECTOR_SCALE, DIRECTOR_SCALE);
+            }
+        }
+    }
+}
+
+static bool anyMoveActive(const AppState* app) {
+    int i;
+    for (i = 0; i < (int) (sizeof(app->moves) / sizeof(app->moves[0])); ++i) {
+        if (app->moves[i].active) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static const WBMoveState* selectedMove(const AppState* app) {
+    if (app->selectedMover < 0 || app->selectedMover >= (int) (sizeof(app->moves) / sizeof(app->moves[0]))) {
+        return NULL;
+    }
+    if (!app->moves[app->selectedMover].active) {
+        return NULL;
+    }
+    return &app->moves[app->selectedMover];
+}
+
+static WBMoveState* selectedMoveMutable(AppState* app) {
+    if (app->selectedMover < 0 || app->selectedMover >= (int) (sizeof(app->moves) / sizeof(app->moves[0]))) {
+        return NULL;
+    }
+    if (!app->moves[app->selectedMover].active) {
+        return NULL;
+    }
+    return &app->moves[app->selectedMover];
+}
+
+static int moveOccupiedX(const WBMoveState* move) {
+    if (!move->active) {
+        return -1;
+    }
+    if (!move->blockedWaiting && move->pathIndex < move->pathLen - 1) {
+        return move->pathX[move->pathIndex + 1];
+    }
+    return move->pathX[move->pathIndex];
+}
+
+static int moveOccupiedY(const WBMoveState* move) {
+    if (!move->active) {
+        return -1;
+    }
+    if (!move->blockedWaiting && move->pathIndex < move->pathLen - 1) {
+        return move->pathY[move->pathIndex + 1];
+    }
+    return move->pathY[move->pathIndex];
+}
+
+static int findFreeMoveSlot(AppState* app) {
+    int i;
+    for (i = 0; i < (int) (sizeof(app->moves) / sizeof(app->moves[0])); ++i) {
+        if (!app->moves[i].active) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static bool cellHasActiveMover(const AppState* app, int x, int y, int ignoreMover) {
+    int i;
+    for (i = 0; i < (int) (sizeof(app->moves) / sizeof(app->moves[0])); ++i) {
+        const WBMoveState* move = &app->moves[i];
+        if (!move->active || i == ignoreMover) {
+            continue;
+        }
+        if (moveOccupiedX(move) == x && moveOccupiedY(move) == y) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static const WBCell* selectedCell(const AppState* app) {
+    if (!app->hasSelection || app->selectedMover >= 0 || !inBounds(app, app->selectedX, app->selectedY)) {
+        return NULL;
+    }
+    return &app->map.cells[app->selectedY][app->selectedX];
+}
+
+static bool getSelectedUnitView(const AppState* app, WBSelectedUnitView* outView) {
+    memset(outView, 0, sizeof(*outView));
+    if (!app->hasSelection) {
+        return false;
+    }
+    if (selectedMove(app)) {
+        const WBMoveState* move = selectedMove(app);
+        int pathIndex = move->pathIndex;
+        if (pathIndex < 0) {
+            pathIndex = 0;
+        }
+        if (pathIndex >= move->pathLen) {
+            pathIndex = move->pathLen - 1;
+        }
+        outView->valid = true;
+        outView->unitType = move->unitType;
+        outView->terrain = app->map.cells[move->pathY[pathIndex]][move->pathX[pathIndex]].terrain;
+        outView->energy = move->unitEnergy;
+        outView->energyDeci = move->unitEnergyDeci;
+        outView->cargo = move->unitCargo;
+        outView->direction = move->direction;
+        return true;
+    }
+    if (!inBounds(app, app->selectedX, app->selectedY)) {
+        return false;
+    }
+    {
+        const WBCell* cell = &app->map.cells[app->selectedY][app->selectedX];
+        if (!cell->hasUnit) {
+            return false;
+        }
+        outView->valid = true;
+        outView->unitType = cell->unitType;
+        outView->terrain = cell->terrain;
+        outView->energy = cell->unitEnergy;
+        outView->energyDeci = cell->unitEnergyDeci;
+        outView->cargo = cell->unitCargo;
+        outView->direction = cell->unitDirection;
+        return true;
+    }
+}
+
+static WBCell* selectedCellMutable(AppState* app) {
+    if (!app->hasSelection || app->selectedMover >= 0 || !inBounds(app, app->selectedX, app->selectedY)) {
+        return NULL;
+    }
+    return &app->map.cells[app->selectedY][app->selectedX];
+}
+
+static void sceneInit(AppState* app) {
+    app->staticBuf = C2D_TextBufNew(1024);
+    app->dynamicBuf = C2D_TextBufNew(4096);
+    C2D_TextParse(&app->titleText, app->staticBuf, "LEGO World Builder 3DS Prototype");
+    C2D_TextParse(&app->screenTitleText, app->staticBuf, "LEGO World Builder");
+    C2D_TextOptimize(&app->titleText);
+    C2D_TextOptimize(&app->screenTitleText);
+    app->musicBpm = 151;
+    app->selectedMover = -1;
+    app->screenMode = WB_SCREEN_TITLE;
+    app->musicUseGamePlaylist = false;
+    app->musicLastGameSongIndex = -1;
+    app->worldSelectWorld = 1;
+    app->activeWorld = 1;
+    app->activeMission = 1;
+    parseWorldMetadata(app);
+    loadLevelProgress(app);
+}
+
+/* Forward declaration: defined later alongside the other per-level audio helpers */
+static void freeLevelAudio(AppState* app);
+
+static void sceneExit(AppState* app) {
+    int i;
+    C2D_TextBufDelete(app->dynamicBuf);
+    C2D_TextBufDelete(app->staticBuf);
+    if (app->spriteSheet) {
+        C2D_SpriteSheetFree(app->spriteSheet);
+    }
+    if (app->titleMainSheet) C2D_SpriteSheetFree(app->titleMainSheet);
+    for (int i = 0; i < 3; ++i) {
+        if (app->worldSkySheets[i]) C2D_SpriteSheetFree(app->worldSkySheets[i]);
+        if (app->worldMapSheets[i]) C2D_SpriteSheetFree(app->worldMapSheets[i]);
+    }
+    if (app->worldIconSheet) C2D_SpriteSheetFree(app->worldIconSheet);
+    if (app->licenseSheet)   C2D_SpriteSheetFree(app->licenseSheet);
+    if (app->vehiclesLandSheet)   C2D_SpriteSheetFree(app->vehiclesLandSheet);
+    if (app->vehiclesWaterSheet)  C2D_SpriteSheetFree(app->vehiclesWaterSheet);
+    if (app->vehiclesAnimalSheet) C2D_SpriteSheetFree(app->vehiclesAnimalSheet);
+    if (app->vehiclesRobotSheet)  C2D_SpriteSheetFree(app->vehiclesRobotSheet);
+    if (app->monstersASheet)      C2D_SpriteSheetFree(app->monstersASheet);
+    if (app->monstersBSheet)      C2D_SpriteSheetFree(app->monstersBSheet);
+    if (app->buildingsSheet)      C2D_SpriteSheetFree(app->buildingsSheet);
+    if (app->whirlpoolSheet)      C2D_SpriteSheetFree(app->whirlpoolSheet);
+    freeWavClip(&app->musicIntro);
+    freeWavClip(&app->musicGame);
+    for (i = 0; i < WB_MUSIC_INTRO_VARIANTS; ++i) {
+        freeWavClip(&app->musicIntroVariants[i]);
+    }
+    /* Per-level SFX + game music variants (idempotent: clips may already be freed) */
+    freeLevelAudio(app);
+    /* Global SFX */
+    freeWavClip(&app->sfxButton);
+    freeWavClip(&app->sfxRollover);
+    freeWavClip(&app->sfxWorldComingSoon);
+    freeWavClip(&app->sfxPlan);
+    freeWavClip(&app->sfxPickupPlan);
+    freeWavClip(&app->sfxMove);
+    freeWavClip(&app->sfxPickup);
+    freeWavClip(&app->sfxDrop);
+    freeWavClip(&app->sfxDamage);
+    freeWavClip(&app->sfxDisassemble);
+    freeWavClip(&app->sfxGoal);
+    freeWavClip(&app->sfxBonusGoal);
+    freeWavClip(&app->sfxAssembly);
+    freeWavClip(&app->sfxMoveMisc);
+}
+
+static bool cellBlocksPath(const AppState* app, int x, int y, int goalX, int goalY) {
+    const WBCell* cell = &app->map.cells[y][x];
+    /* Boulders are always impassable — they block even the goal cell */
+    {
+        int mi;
+        for (mi = 0; mi < g_monsterCount; ++mi) {
+            const WBMonsterState* m = &g_monsters[mi];
+            if (m->active && !m->dying && m->row == y && m->col == x) {
+                if (m->type == WB_MONSTER_BOULDER) {
+                    return true;
+                }
+                /* Non-boulder monsters block intermediate cells only */
+                if (x != goalX || y != goalY) {
+                    return true;
+                }
+            }
+        }
+    }
+    /* Buildings are always impassable — they block even the goal cell */
+    if (cell->hasBuilding) {
+        return true;
+    }
+    if (x == goalX && y == goalY) {
+        return false;
+    }
+    /* Moving units (active movers) are passable — only idle units block intermediate cells.
+       This matches the original: vehicleStatus #going tiles are not blocked for pathfinding. */
+    return cell->hasUnit;
+}
+
+static float unitMoveSpeed(WBUnitType unitType) {
+    switch (unitType) {
+        case WB_UNIT_BUGGY:      return 3.0f;
+        case WB_UNIT_DUCK:       return 2.0f;
+        case WB_UNIT_DIRTBUGGY:  return 3.0f;
+        case WB_UNIT_STEAMSHOVEL:return 2.0f;
+        case WB_UNIT_DUMPTRUCK:  return 1.0f;
+        case WB_UNIT_FORKLIFT:   return 2.0f;
+        case WB_UNIT_DOZER:      return 2.0f;
+        case WB_UNIT_SPEEDBOAT:  return 3.0f;
+        case WB_UNIT_TUGBOAT:    return 3.0f;
+        case WB_UNIT_FREIGHTER:  return 2.0f;
+        case WB_UNIT_FROG:       return 2.0f;
+        case WB_UNIT_FISH:       return 2.0f;
+        case WB_UNIT_SNAIL:      return 0.5f;
+        case WB_UNIT_TREEBOT:    return 2.3f;
+        case WB_UNIT_REPAIRBOT:  return 3.0f;
+        case WB_UNIT_DEFENDER:   return 2.0f;
+        case WB_UNIT_DEFENDER2:  return 2.0f;
+        case WB_UNIT_FREEZEBOT:  return 2.0f;
+        default: return 2.0f;
+    }
+}
+
+static void astarPush(int* qx, int* qy, float* qf, int* sz, int x, int y, float f) {
+    int i = (*sz)++;
+    int parent;
+    qx[i] = x; qy[i] = y; qf[i] = f;
+    while (i > 0) {
+        int tx, ty; float tf;
+        parent = (i - 1) >> 1;
+        if (qf[parent] <= qf[i]) break;
+        tx = qx[parent]; ty = qy[parent]; tf = qf[parent];
+        qx[parent] = qx[i]; qy[parent] = qy[i]; qf[parent] = qf[i];
+        qx[i] = tx; qy[i] = ty; qf[i] = tf;
+        i = parent;
+    }
+}
+
+static void astarPop(int* qx, int* qy, float* qf, int* sz, int* ox, int* oy) {
+    int last = --(*sz);
+    int i = 0;
+    *ox = qx[0]; *oy = qy[0];
+    if (last > 0) {
+        qx[0] = qx[last]; qy[0] = qy[last]; qf[0] = qf[last];
+        for (;;) {
+            int tx, ty; float tf;
+            int l = (i << 1) + 1, r = l + 1, s = i;
+            if (l < last && qf[l] < qf[s]) s = l;
+            if (r < last && qf[r] < qf[s]) s = r;
+            if (s == i) break;
+            tx = qx[s]; ty = qy[s]; tf = qf[s];
+            qx[s] = qx[i]; qy[s] = qy[i]; qf[s] = qf[i];
+            qx[i] = tx; qy[i] = ty; qf[i] = tf;
+            i = s;
+        }
+    }
+}
+
+/* A* pathfinding with swamp penalty matching original WB1/WB2 behaviour.
+   Heuristic: 1.5 * manhattan(node, goal) + swamp_penalty(node)
+   Step cost:  1.0 + swamp_path_penalty(FROM tile) where penalty = 6 for swamp.
+   Moving units are passable (only idle units block intermediate cells).
+   Matches original Lingo Internal_129 map display manager A* implementation. */
+static bool findPath(const AppState* app, int startX, int startY, int goalX, int goalY, WBUnitType unitType, int* outX, int* outY, int* outLen) {
+    static const float SWAMP_STEP_PENALTY  = 6.0f; /* cost added when leaving a swamp tile */
+    static const float HEURISTIC_SCALE     = 1.5f; /* admissible overestimate factor */
+    int heapSize = 0;
+    const int dirs[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+    int len = 0;
+
+    memset(g_visited, 0, sizeof(g_visited));
+    /* Set all g-costs to a large sentinel value (0x7F bytes => ~3.39e38f per cell) */
+    memset(g_gCost, 0x7F, sizeof(g_gCost));
+
+    if (!inBounds(app, goalX, goalY)) {
+        return false;
+    }
+    if (!wbUnitCanTraverse(unitType, app->map.cells[goalY][goalX].terrain) &&
+            !app->map.cells[goalY][goalX].isWhirlpool) {
+        return false;
+    }
+    if (cellBlocksPath(app, goalX, goalY, goalX, goalY)) {
+        return false;
+    }
+
+    g_gCost[startY][startX] = 0.0f;
+    g_parentX[startY][startX] = -1;
+    g_parentY[startY][startX] = -1;
+    {
+        float swampH = (app->map.cells[startY][startX].terrain == WB_TERRAIN_SWAMP) ? SWAMP_STEP_PENALTY : 0.0f;
+        float startF = HEURISTIC_SCALE * (float)(abs(startX - goalX) + abs(startY - goalY)) + swampH;
+        astarPush(g_queueX, g_queueY, g_queueF, &heapSize, startX, startY, startF);
+    }
+
+    while (heapSize > 0) {
+        int x, y, i;
+        astarPop(g_queueX, g_queueY, g_queueF, &heapSize, &x, &y);
+
+        if (g_visited[y][x]) continue; /* stale heap entry */
+        g_visited[y][x] = true;
+
+        if (x == goalX && y == goalY) break;
+
+        for (i = 0; i < 4; ++i) {
+            int nx = x + dirs[i][0];
+            int ny = y + dirs[i][1];
+            float moveCost, newG, swampH, newF;
+            if (!inBounds(app, nx, ny) || g_visited[ny][nx]) continue;
+            if (!wbUnitCanTraverse(unitType, app->map.cells[ny][nx].terrain) &&
+                    !(nx == goalX && ny == goalY && app->map.cells[ny][nx].isWhirlpool)) continue;
+            if (cellBlocksPath(app, nx, ny, goalX, goalY)) continue;
+
+            /* Step cost: 1 + swamp penalty when leaving a swamp tile */
+            moveCost = 1.0f + ((app->map.cells[y][x].terrain == WB_TERRAIN_SWAMP) ? SWAMP_STEP_PENALTY : 0.0f);
+            newG = g_gCost[y][x] + moveCost;
+            if (newG < g_gCost[ny][nx]) {
+                g_gCost[ny][nx] = newG;
+                g_parentX[ny][nx] = x;
+                g_parentY[ny][nx] = y;
+                swampH = (app->map.cells[ny][nx].terrain == WB_TERRAIN_SWAMP) ? SWAMP_STEP_PENALTY : 0.0f;
+                newF = newG + HEURISTIC_SCALE * (float)(abs(nx - goalX) + abs(ny - goalY)) + swampH;
+                astarPush(g_queueX, g_queueY, g_queueF, &heapSize, nx, ny, newF);
+            }
+        }
+    }
+
+    if (!g_visited[goalY][goalX]) {
+        return false;
+    }
+
+    {
+        int x = goalX;
+        int y = goalY;
+        while (x >= 0 && y >= 0) {
+            outX[len] = x;
+            outY[len] = y;
+            ++len;
+            if (x == startX && y == startY) {
+                break;
+            }
+            {
+                int px = g_parentX[y][x];
+                int py = g_parentY[y][x];
+                x = px;
+                y = py;
+            }
+        }
+    }
+
+    {
+        int i;
+        for (i = 0; i < len / 2; ++i) {
+            int tx = outX[i];
+            int ty = outY[i];
+            outX[i] = outX[len - 1 - i];
+            outY[i] = outY[len - 1 - i];
+            outX[len - 1 - i] = tx;
+            outY[len - 1 - i] = ty;
+        }
+    }
+
+    *outLen = len;
+    return len > 1;
+}
+
+static bool goalMatchesUnit(WBGoalType goalType, WBUnitType unitType) {
+    switch (goalType) {
+        case WB_GOAL_ANYTHING:   return unitType != WB_UNIT_NONE;
+        case WB_GOAL_BUGGY:      return unitType == WB_UNIT_BUGGY;
+        case WB_GOAL_DUCK:       return unitType == WB_UNIT_DUCK;
+        case WB_GOAL_DIRTBUGGY:  return unitType == WB_UNIT_DIRTBUGGY;
+        case WB_GOAL_STEAMSHOVEL:return unitType == WB_UNIT_STEAMSHOVEL;
+        case WB_GOAL_DUMPTRUCK:  return unitType == WB_UNIT_DUMPTRUCK;
+        case WB_GOAL_FORKLIFT:   return unitType == WB_UNIT_FORKLIFT;
+        case WB_GOAL_DOZER:      return unitType == WB_UNIT_DOZER;
+        case WB_GOAL_SPEEDBOAT:  return unitType == WB_UNIT_SPEEDBOAT;
+        case WB_GOAL_TUGBOAT:    return unitType == WB_UNIT_TUGBOAT;
+        case WB_GOAL_FREIGHTER:  return unitType == WB_UNIT_FREIGHTER;
+        case WB_GOAL_FROG:       return unitType == WB_UNIT_FROG;
+        case WB_GOAL_FISH:       return unitType == WB_UNIT_FISH;
+        case WB_GOAL_SNAIL:      return unitType == WB_UNIT_SNAIL;
+        case WB_GOAL_TREEBOT:    return unitType == WB_UNIT_TREEBOT;
+        case WB_GOAL_REPAIRBOT:  return unitType == WB_UNIT_REPAIRBOT;
+        case WB_GOAL_DEFENDER:   return unitType == WB_UNIT_DEFENDER;
+        case WB_GOAL_FREEZEBOT:  return unitType == WB_UNIT_FREEZEBOT;
+        default: return false;
+    }
+}
+
+static bool goalMatchesBuilding(WBGoalType goalType, WBBuildingType buildingType) {
+    switch (goalType) {
+        case WB_GOAL_GAS_STATION: return buildingType == WB_BUILDING_GAS_STATION;
+        case WB_GOAL_MARINA:      return buildingType == WB_BUILDING_MARINA;
+        case WB_GOAL_ROBOT_LAB:   return buildingType == WB_BUILDING_ROBOT_LAB;
+        case WB_GOAL_GUARD_TOWER: return buildingType == WB_BUILDING_GUARD_TOWER;
+        case WB_GOAL_AIRPORT:     return buildingType == WB_BUILDING_AIRPORT;
+        case WB_GOAL_HOUSE:       return buildingType == WB_BUILDING_HOUSE;
+        case WB_GOAL_GARAGE:      return buildingType == WB_BUILDING_GARAGE;
+        case WB_GOAL_FACTORY:     return buildingType == WB_BUILDING_FACTORY;
+        case WB_GOAL_WINDMILL:    return buildingType == WB_BUILDING_WINDMILL;
+        case WB_GOAL_NURSERY:     return buildingType == WB_BUILDING_NURSERY;
+        default: return false;
+    }
+}
+
+static bool goalMatchesMonster(WBGoalType goalType, WBMonsterType monsterType) {
+    switch (goalType) {
+        case WB_GOAL_LION: return monsterType == WB_MONSTER_LION;
+        case WB_GOAL_CRAB: return monsterType == WB_MONSTER_CRAB;
+        case WB_GOAL_GATOR: return monsterType == WB_MONSTER_GATOR;
+        default: return false;
+    }
+}
+
+static void satisfyGoalAt(AppState* app, WBCell* cell, int x, int y) {
+    cell->goalSatisfied = true;
+    if (cell->bonusGoal) {
+        app->map.bonusScore += 1;
+        applyMissionSuccess(app, app->activeWorld, app->activeMission, 3);
+        playSfxClipPriority(app, &app->sfxBonusGoal);
+        showGoalPopup(app, "Bonus Goal Complete", true, true, x, y);
+    } else {
+        app->map.goalScore += 1;
+        app->map.bonusAvailable = true;
+        applyMissionSuccess(app, app->activeWorld, app->activeMission, 1);
+        playSfxClipPriority(app, &app->sfxGoal);
+        showGoalPopup(app, "Goal Complete", false, true, x, y);
+    }
+}
+
+static const char* goalRequiredUnitName(WBGoalType goalType) {
+    switch (goalType) {
+        case WB_GOAL_BUGGY: return "Buggy";
+        case WB_GOAL_DUCK: return "Duck";
+        case WB_GOAL_DIRTBUGGY: return "Dirtbuggy";
+        case WB_GOAL_STEAMSHOVEL: return "Steamshovel";
+        case WB_GOAL_DUMPTRUCK: return "Dumptruck";
+        case WB_GOAL_FORKLIFT: return "Forklift";
+        case WB_GOAL_DOZER: return "Bulldozer";
+        case WB_GOAL_SPEEDBOAT: return "Speedboat";
+        case WB_GOAL_TUGBOAT: return "Tugboat";
+        case WB_GOAL_FREIGHTER: return "Freighter";
+        case WB_GOAL_FROG: return "Frog";
+        case WB_GOAL_FISH: return "Fish";
+        case WB_GOAL_SNAIL: return "Snail";
+        case WB_GOAL_TREEBOT: return "Treebot";
+        case WB_GOAL_REPAIRBOT: return "Repairbot";
+        case WB_GOAL_DEFENDER: return "Defender";
+        case WB_GOAL_GAS_STATION: return "Gas Station";
+        case WB_GOAL_MARINA: return "Marina";
+        case WB_GOAL_ROBOT_LAB: return "Robot Lab";
+        case WB_GOAL_GUARD_TOWER: return "Guard Tower";
+        case WB_GOAL_AIRPORT: return "Airport";
+        case WB_GOAL_HOUSE:   return "House";
+        case WB_GOAL_GARAGE:  return "Garage";
+        case WB_GOAL_FACTORY: return "Factory";
+        case WB_GOAL_WINDMILL: return "Windmill";
+        case WB_GOAL_NURSERY: return "Nursery";
+        case WB_GOAL_GATOR:   return "Gator";
+        case WB_GOAL_FREEZEBOT: return "Freezebot";
+        case WB_GOAL_LION:      return "Lion";
+        case WB_GOAL_CRAB:      return "Crab";
+        case WB_GOAL_ANYTHING:
+        default:
+            return "Any unit";
+    }
+}
+
+static bool findWhirlpoolPair(const AppState* app, int fromX, int fromY, int* outX, int* outY) {
+    const WBCell* fromCell;
+    int y;
+    int x;
+    if (!app || !inBounds(app, fromX, fromY) || !outX || !outY) {
+        return false;
+    }
+    fromCell = &app->map.cells[fromY][fromX];
+    if (!fromCell->isWhirlpool || fromCell->whirlpoolId == 0) {
+        return false;
+    }
+    for (y = 0; y < app->map.height; ++y) {
+        for (x = 0; x < app->map.width; ++x) {
+            const WBCell* c = &app->map.cells[y][x];
+            if (x == fromX && y == fromY) {
+                continue;
+            }
+            if (c->isWhirlpool && c->whirlpoolId == fromCell->whirlpoolId) {
+                *outX = x;
+                *outY = y;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static bool handleUnitArrival(AppState* app, int x, int y, WBUnitType unitType) {
+    WBCell* cell = &app->map.cells[y][x];
+    bool stopHere = false;
+
+    if (cell->hasResource && cell->resourceIsPlan) {
+        float locX;
+        float locY;
+        WBPlanType pickedPlan = cell->resourcePlanType;
+        if (cell->resourcePlanType > WB_PLAN_NONE && cell->resourcePlanType < WB_PLAN_COUNT) {
+            app->map.planInventory[cell->resourcePlanType] += cell->resourcePlanCount;
+        }
+        playSfxClip(app, app->sfxPickupPlan.loaded ? &app->sfxPickupPlan : &app->sfxMove);
+        posToLoc(app, x + 1, y + 1, &locX, &locY);
+        startPlanSwoop(app, pickedPlan, locX + (10.0f * DIRECTOR_SCALE), locY + (18.0f * DIRECTOR_SCALE));
+        cell->hasResource = false;
+        cell->resourceIsPlan = false;
+        cell->resourcePlanType = WB_PLAN_NONE;
+        cell->resourcePlanCount = 0;
+    }
+
+    if (cell->hasGoal && !cell->goalSatisfied) {
+        if ((!cell->bonusGoal || app->map.bonusAvailable) && goalMatchesUnit(cell->goalType, unitType)) {
+            stopHere = true;
+            satisfyGoalAt(app, cell, x, y);
+        }
+    }
+
+    /* Swamp terrain drains energy on each arrival */
+    if (cell->terrain == WB_TERRAIN_SWAMP && cell->hasUnit) {
+        applyUnitDamageAtCell(app, x, y, 100, false);
+        if (cell->unitEnergyDeci <= 0) {
+            stopHere = true;
+        }
+    }
+
+    return stopHere;
+}
+
+static void finalizeMove(AppState* app, int moveIndex, int x, int y) {
+    WBMoveState* move = &app->moves[moveIndex];
+    WBCell* cell = &app->map.cells[y][x];
+    cell->hasUnit = true;
+    cell->unitType = move->unitType;
+    cell->unitDirection = move->finalDirection;
+    cell->unitEnergyDeci = move->unitEnergyDeci;
+    cell->unitEnergy = (move->unitEnergyDeci + 9) / 10;
+    cell->unitCargo = move->unitCargo;
+    cell->unitCargoEnergyValue = move->unitCargoEnergyValue;
+    if (app->selectedMover == moveIndex) {
+        app->selectedMover = -1;
+        app->selectedX = x;
+        app->selectedY = y;
+    }
+    memset(move, 0, sizeof(*move));
+}
+
+static int beginMove(AppState* app, int goalX, int goalY) {
+    WBCell* cell = selectedCellMutable(app);
+    int moveIndex;
+    WBMoveState* move;
+    int pathLen = 0;
+
+    if (!cell || !cell->hasUnit) {
+        return -1;
+    }
+    if (cell->unitEnergyDeci <= 0) {
+        return -1;
+    }
+    if ((goalX != app->selectedX || goalY != app->selectedY) && inBounds(app, goalX, goalY) &&
+        (app->map.cells[goalY][goalX].hasUnit || cellHasActiveMover(app, goalX, goalY, -1))) {
+        return -1;
+    }
+    if (!findPath(app, app->selectedX, app->selectedY, goalX, goalY, cell->unitType, g_pathScratchX, g_pathScratchY, &pathLen)) {
+        return -1;
+    }
+    moveIndex = findFreeMoveSlot(app);
+    if (moveIndex < 0) {
+        return -1;
+    }
+    move = &app->moves[moveIndex];
+
+    memset(move, 0, sizeof(*move));
+    move->active = true;
+    move->unitType = cell->unitType;
+    move->unitEnergy = cell->unitEnergy;
+    move->unitEnergyDeci = cell->unitEnergyDeci;
+    move->unitCargo = cell->unitCargo;
+    move->unitCargoEnergyValue = cell->unitCargoEnergyValue;
+    move->goalX = goalX;
+    move->goalY = goalY;
+    move->pathLen = pathLen;
+    move->pathIndex = 0;
+    move->progress = 0.0f;
+    move->stepStartMs = osGetTime();
+    move->blockedWaiting = false;
+    move->resumeGoalAfterStop = false;
+    move->blockedRetryMs = 0;
+    move->blockedTryNum = 0;
+    move->direction = directionFromStep(g_pathScratchX[0], g_pathScratchY[0], g_pathScratchX[1], g_pathScratchY[1]);
+    move->finalDirection = move->direction;
+    memcpy(move->pathX, g_pathScratchX, sizeof(int) * pathLen);
+    memcpy(move->pathY, g_pathScratchY, sizeof(int) * pathLen);
+    /* Transfer any pending pick/drop action from app state into this move so it
+       executes when the unit arrives at its destination. */
+    if (app->pendingActionValid) {
+        move->pendingActionValid = true;
+        move->pendingActionX = app->pendingActionX;
+        move->pendingActionY = app->pendingActionY;
+        app->pendingActionValid = false;
+    }
+    app->selectedMover = moveIndex;
+    cell->hasUnit = false;
+    cell->unitType = WB_UNIT_NONE;
+    memset(&cell->unitCargo, 0, sizeof(cell->unitCargo));
+    playSfxClip(app, &app->sfxButton);
+    return moveIndex;
+}
+
+static int getTraversableNeighbors(const AppState* app, int fromX, int fromY, WBUnitType unitType, int* outX, int* outY) {
+    static const int offsets[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+    int count = 0;
+    int i;
+    for (i = 0; i < 4; ++i) {
+        int nx = fromX + offsets[i][0];
+        int ny = fromY + offsets[i][1];
+        if (!inBounds(app, nx, ny)) {
+            continue;
+        }
+        if (!wbUnitCanTraverse(unitType, app->map.cells[ny][nx].terrain)) {
+            continue;
+        }
+        if (app->map.cells[ny][nx].hasUnit) {
+            continue;
+        }
+        outX[count] = nx;
+        outY[count] = ny;
+        ++count;
+    }
+    return count;
+}
+
+static bool insertSidestepDetour(WBMoveState* move, int currentX, int currentY, int sidestepX, int sidestepY) {
+    int remainder;
+    int i;
+    int newLen;
+
+    if (move->pathLen <= move->pathIndex + 1) {
+        return false;
+    }
+    remainder = move->pathLen - (move->pathIndex + 1);
+    newLen = 3 + remainder;
+    if (newLen > (int) (sizeof(move->pathX) / sizeof(move->pathX[0]))) {
+        return false;
+    }
+
+    for (i = 0; i < remainder; ++i) {
+        move->pathX[newLen - 1 - i] = move->pathX[move->pathLen - 1 - i];
+        move->pathY[newLen - 1 - i] = move->pathY[move->pathLen - 1 - i];
+    }
+
+    move->pathLen = newLen;
+    move->pathIndex = 0;
+    move->pathX[0] = currentX;
+    move->pathY[0] = currentY;
+    move->pathX[1] = sidestepX;
+    move->pathY[1] = sidestepY;
+    move->pathX[2] = currentX;
+    move->pathY[2] = currentY;
+    move->direction = directionFromStep(currentX, currentY, sidestepX, sidestepY);
+    move->finalDirection = move->direction;
+    move->progress = 0.0f;
+    move->stepStartMs = osGetTime();
+    move->blockedWaiting = false;
+    move->blockedRetryMs = 0;
+    move->resumeGoalAfterStop = false;
+    return true;
+}
+
+static bool retargetMovePath(AppState* app, WBMoveState* move, int startX, int startY, int goalX, int goalY) {
+    int pathLen = 0;
+    if (!findPath(app, startX, startY, goalX, goalY, move->unitType, g_pathScratchX, g_pathScratchY, &pathLen)) {
+        return false;
+    }
+    move->goalX = goalX;
+    move->goalY = goalY;
+    move->pathLen = pathLen;
+    move->pathIndex = 0;
+    move->progress = 0.0f;
+    move->stepStartMs = osGetTime();
+    move->blockedWaiting = false;
+    move->resumeGoalAfterStop = false;
+    move->blockedRetryMs = 0;
+    move->blockedTryNum = 0;
+    move->direction = directionFromStep(g_pathScratchX[0], g_pathScratchY[0], g_pathScratchX[1], g_pathScratchY[1]);
+    move->finalDirection = move->direction;
+    memcpy(move->pathX, g_pathScratchX, sizeof(int) * pathLen);
+    memcpy(move->pathY, g_pathScratchY, sizeof(int) * pathLen);
+    return true;
+}
+
+static void updateMovement(AppState* app) {
+    int moveIndex;
+    for (moveIndex = 0; moveIndex < (int) (sizeof(app->moves) / sizeof(app->moves[0])); ++moveIndex) {
+    WBMoveState* move = &app->moves[moveIndex];
+    float stepDurationMs;
+    float elapsed;
+    int currentX;
+    int currentY;
+    if (!move->active) {
+        continue;
+    }
+
+    currentX = move->pathX[move->pathIndex];
+    currentY = move->pathY[move->pathIndex];
+
+    if (!move->blockedWaiting && move->pathIndex < move->pathLen - 1) {
+        int nextX = move->pathX[move->pathIndex + 1];
+        int nextY = move->pathY[move->pathIndex + 1];
+        if (app->map.cells[nextY][nextX].hasUnit || activeMonsterAt(NULL, nextY, nextX) ||
+                cellHasActiveMover(app, nextX, nextY, moveIndex)) {
+            move->progress = 0.0f;
+            move->blockedWaiting = true;
+            move->blockedRetryMs = (u64) osGetTime();
+            continue;
+        }
+    }
+
+    if (move->blockedWaiting) {
+        if ((u64) osGetTime() < move->blockedRetryMs) {
+            continue;
+        }
+        if (move->queuedMoveValid) {
+            move->goalX = move->queuedMoveX;
+            move->goalY = move->queuedMoveY;
+            move->queuedMoveValid = false;
+        }
+        if (!move->blockedTryNum) {
+            move->blockedTryNum = 2;
+            move->blockedRetryMs = (u64) osGetTime() + (u64) randRange(500, 1500);
+            continue;
+        }
+        {
+            int neiX[4];
+            int neiY[4];
+            int neiCount;
+            if ((move->blockedTryNum + 2) >= 6) {
+                if (retargetMovePath(app, move, currentX, currentY, move->goalX, move->goalY)) {
+                    continue;
+                }
+                move->blockedTryNum = 0;
+                move->blockedRetryMs = (u64) osGetTime() + (u64) randRange(750, 1250);
+                continue;
+            }
+            neiCount = getTraversableNeighbors(app, currentX, currentY, move->unitType, neiX, neiY);
+            move->blockedTryNum += 2;
+            if (neiCount == 0) {
+                move->blockedRetryMs = (u64) osGetTime() + (u64) randRange(1000, 3000);
+                continue;
+            }
+            {
+                int choice = rand() % neiCount;
+                int sidestepX = neiX[choice];
+                int sidestepY = neiY[choice];
+                if (insertSidestepDetour(move, currentX, currentY, sidestepX, sidestepY)) {
+                    continue;
+                }
+                move->blockedRetryMs = (u64) osGetTime() + (u64) randRange(750, 1250);
+                continue;
+            }
+        }
+    }
+
+    stepDurationMs = 1000.0f / unitMoveSpeed(move->unitType);
+    elapsed = (float) (osGetTime() - move->stepStartMs);
+    move->progress = elapsed / stepDurationMs;
+    if (move->progress < 1.0f) {
+        continue;
+    }
+
+    if (move->unitEnergyDeci <= 0) {
+        finalizeMove(app, moveIndex, move->pathX[move->pathIndex], move->pathY[move->pathIndex]);
+        continue;
+    }
+
+    move->progress = 0.0f;
+    move->stepStartMs = osGetTime();
+    move->pathIndex += 1;
+
+    {
+        int x = move->pathX[move->pathIndex];
+        int y = move->pathY[move->pathIndex];
+        int moveCost = unitMoveCostDeci(move->unitType);
+        bool warped = false;
+        int warpX = x;
+        int warpY = y;
+        if (app->map.cells[y][x].hasUnit || activeMonsterAt(NULL, y, x) || cellHasActiveMover(app, x, y, moveIndex)) {
+            /* Cell was vacated between the pre-check and our arrival — stay at new
+               pathIndex position and wait from here rather than snapping back, which
+               would cause a visible teleport. The unit occupies the contested cell
+               temporarily inside the moves array only (cell->hasUnit is never set
+               until finalizeMove). */
+            move->progress = 0.0f;
+            move->blockedWaiting = true;
+            move->blockedRetryMs = (u64) osGetTime();
+            continue;
+        }
+        if (moveCost > 0) {
+            move->unitEnergyDeci -= moveCost;
+            if (move->unitEnergyDeci < 0) {
+                move->unitEnergyDeci = 0;
+            }
+            move->unitEnergy = (move->unitEnergyDeci + 9) / 10;
+        }
+        if (app->map.cells[y][x].isWhirlpool && wbUnitCanTraverse(move->unitType, WB_TERRAIN_WATER_WHIRLPOOL)) {
+            int pairX;
+            int pairY;
+            if (findWhirlpoolPair(app, x, y, &pairX, &pairY) &&
+                !app->map.cells[pairY][pairX].hasUnit &&
+                !activeMonsterAt(NULL, pairY, pairX) &&
+                !cellHasActiveMover(app, pairX, pairY, moveIndex)) {
+                warpX = pairX;
+                warpY = pairY;
+                warped = true;
+            }
+        }
+        {
+            int arrivedX = warped ? warpX : x;
+            int arrivedY = warped ? warpY : y;
+            bool stopHere = handleUnitArrival(app, arrivedX, arrivedY, move->unitType);
+            if (stopHere || move->pathIndex >= move->pathLen - 1 || warped) {
+                bool hadPending = move->pendingActionValid;
+                int pendingX = move->pendingActionX;
+                int pendingY = move->pendingActionY;
+                bool resumeGoal = move->resumeGoalAfterStop && !stopHere && (arrivedX != move->goalX || arrivedY != move->goalY);
+                int nextGoalX = move->goalX;
+                int nextGoalY = move->goalY;
+                if (resumeGoal && retargetMovePath(app, move, arrivedX, arrivedY, nextGoalX, nextGoalY)) {
+                    continue;
+                }
+                finalizeMove(app, moveIndex, arrivedX, arrivedY);
+                if (hadPending && app->hasSelection && app->selectedMover < 0 && app->selectedX == arrivedX && app->selectedY == arrivedY) {
+                    app->pendingActionValid = true;
+                    app->pendingActionX = pendingX;
+                    app->pendingActionY = pendingY;
+                    resolvePendingAction(app);
+                }
+                continue;
+            }
+        }
+        if (move->queuedMoveValid && app->selectedMover == moveIndex) {
+            WBCell* cell = &app->map.cells[y][x];
+            int queuedX = move->queuedMoveX;
+            int queuedY = move->queuedMoveY;
+            cell->hasUnit = true;
+            cell->unitType = move->unitType;
+            cell->unitDirection = move->direction;
+            cell->unitEnergyDeci = move->unitEnergyDeci;
+            cell->unitEnergy = (move->unitEnergyDeci + 9) / 10;
+            cell->unitCargo = move->unitCargo;
+            app->selectedMover = -1;
+            app->selectedX = x;
+            app->selectedY = y;
+            memset(move, 0, sizeof(*move));
+            app->pendingActionValid = false;
+            beginMove(app, queuedX, queuedY);
+            continue;
+        }
+        move->direction = directionFromStep(
+            move->pathX[move->pathIndex],
+            move->pathY[move->pathIndex],
+            move->pathX[move->pathIndex + 1],
+            move->pathY[move->pathIndex + 1]);
+        move->finalDirection = move->direction;
+        if (app->selectedMover == moveIndex) {
+            app->selectedX = x;
+            app->selectedY = y;
+        }
+    }
+    }
+}
+
+static bool tileDiamondHit(const AppState* app, int tx, int ty, float px, float py) {
+    float cx;
+    float cy;
+    float dx;
+    float dy;
+    posToLoc(app, tx + 1, ty + 1, &cx, &cy);
+    dx = fabsf(px - cx);
+    dy = fabsf(py - cy - 6.0f);
+    return (dx / 15.0f) + (dy / 8.0f) <= 1.0f;
+}
+
+static bool screenToTile(const AppState* app, float px, float py, int* outX, int* outY) {
+    int y;
+    int x;
+    float bestScore = 1000000.0f;
+    bool found = false;
+    for (y = app->map.height - 1; y >= 0; --y) {
+        for (x = app->map.width - 1; x >= 0; --x) {
+            float cx;
+            float cy;
+            float score;
+            posToLoc(app, x + 1, y + 1, &cx, &cy);
+            score = (fabsf(px - cx) / 17.0f) + (fabsf(py - (cy + 6.0f)) / 10.0f);
+            if (score < bestScore) {
+                bestScore = score;
+                *outX = x;
+                *outY = y;
+                found = true;
+            }
+        }
+    }
+    if (!found) {
+        return false;
+    }
+    return bestScore <= 1.7f || tileDiamondHit(app, *outX, *outY, px, py);
+}
+
+static void drawSelectionHighlight(AppState* app, float locX, float locY, bool planMode, int trackedAssetId) {
+    float theta = 2.0f * 3.14159265f * ((osGetTime() / 1000.0f) * ((float) app->musicBpm / 60.0f));
+    float bob = 4.0f * sinf(theta);
+    int assetId = planMode ? ASSET_PLAN_HIGHLIGHT : ASSET_OBJECT_HIGHLIGHT;
+    if (!planMode && trackedAssetId >= 0) {
+        locX -= 5.0f;
+        locY -= imageHeight(getImage(app, trackedAssetId), DIRECTOR_SCALE) * 0.5f;
+        locY -= 11.0f;
+    }
+    drawAnchoredImage(getImage(app, assetId), locX, locY + bob, DIRECTOR_SCALE, g_objectAnchors[assetId].x, g_objectAnchors[assetId].y);
+}
+
+static void drawSkyBottom(const AppState* app) {
+    C2D_Image sky = getImage(app, worldSkyAssetId(app->activeWorld));
+    float baseScale = 1.25f;
+    float minScaleW;
+    float minScaleH;
+    float skyScale;
+    float skyW;
+    float skyH;
+    float tX;
+    float tY;
+    float maxPanX;
+    float maxPanY;
+    float drawX;
+    float drawY;
+    int camRangeX = app->map.width - VIEW_TILE_W;
+    int camRangeY = app->map.height - VIEW_TILE_H;
+
+    if (!sky.subtex) {
+        return;
+    }
+
+    minScaleW = (float) BOTTOM_W / sky.subtex->width;
+    minScaleH = (float) BOTTOM_H / sky.subtex->height;
+    skyScale = baseScale;
+    if (skyScale < minScaleW) skyScale = minScaleW;
+    if (skyScale < minScaleH) skyScale = minScaleH;
+    skyW = imageWidth(sky, skyScale);
+    skyH = imageHeight(sky, skyScale);
+
+    if (camRangeX < 1) camRangeX = 1;
+    if (camRangeY < 1) camRangeY = 1;
+    tX = (float) (app->cameraX - 1) / (float) camRangeX;
+    tY = (float) (app->cameraY - 1) / (float) camRangeY;
+    if (tX < 0.0f) tX = 0.0f;
+    if (tX > 1.0f) tX = 1.0f;
+    if (tY < 0.0f) tY = 0.0f;
+    if (tY > 1.0f) tY = 1.0f;
+
+    maxPanX = skyW - (float) BOTTOM_W;
+    maxPanY = skyH - (float) BOTTOM_H;
+    if (maxPanX < 0.0f) maxPanX = 0.0f;
+    if (maxPanY < 0.0f) maxPanY = 0.0f;
+    drawX = -maxPanX * tX;
+    drawY = -maxPanY * tY;
+
+    C2D_DrawImageAt(sky, drawX, drawY, 0.0f, NULL, skyScale, skyScale);
+}
+
+static void startPlanSwoop(AppState* app, WBPlanType planType, float fromX, float fromY) {
+    int assetId = planAssetId(planType);
+    if (assetId < 0) {
+        return;
+    }
+    app->planSwoop.active = true;
+    app->planSwoop.assetId = assetId;
+    app->planSwoop.fromX = fromX;
+    app->planSwoop.fromY = fromY;
+    app->planSwoop.toX = BOTTOM_W - 26.0f;
+    app->planSwoop.toY = BOTTOM_H - 20.0f;
+    app->planSwoop.startMs = osGetTime();
+    app->planSwoop.durationMs = 600;
+}
+
+static void drawPlanSwoop(AppState* app) {
+    u64 now;
+    float r;
+    float x;
+    float y;
+    float scale;
+    C2D_Image img;
+    if (!app->planSwoop.active) {
+        return;
+    }
+    now = osGetTime();
+    if (now <= app->planSwoop.startMs) {
+        r = 0.0f;
+    } else {
+        r = (float) (now - app->planSwoop.startMs) / (float) app->planSwoop.durationMs;
+    }
+    if (r >= 1.0f) {
+        app->planSwoop.active = false;
+        return;
+    }
+    x = app->planSwoop.fromX + ((app->planSwoop.toX - app->planSwoop.fromX) * r);
+    y = app->planSwoop.fromY + ((app->planSwoop.toY - app->planSwoop.fromY) * r);
+    scale = 0.84f - (0.24f * r);
+    img = getImage(app, app->planSwoop.assetId);
+    drawAnchoredImage(img, x, y, scale, g_objectAnchors[app->planSwoop.assetId].x, g_objectAnchors[app->planSwoop.assetId].y);
+}
+
+static void drawTerrainBottom(AppState* app) {
+    int j;
+    int i;
+    for (j = 1 - DRAW_PAD; j <= VIEW_TILE_H + DRAW_PAD; ++j) {
+        int worldY = app->cameraY + j - 2;
+        for (i = 1 - DRAW_PAD; i <= VIEW_TILE_W + DRAW_PAD; ++i) {
+            int worldX = app->cameraX + i - 5 + (j / 2);
+            float locX;
+            float locY;
+            int terrainId;
+            C2D_Image image;
+
+            if (!inBounds(app, worldX - 1, worldY - 1)) {
+                continue;
+            }
+
+            posToLoc(app, worldX, worldY, &locX, &locY);
+            terrainId = terrainAssetId(app->map.cells[worldY - 1][worldX - 1].terrain,
+                                       app->map.cells[worldY - 1][worldX - 1].terrainVariant);
+            if (terrainId < 0) {
+                continue;
+            }
+            image = getImage(app, terrainId);
+            if (!imageIntersectsScreen(image, locX, locY, DIRECTOR_SCALE, g_terrainAnchors[terrainId].x, g_terrainAnchors[terrainId].y, BOTTOM_W, BOTTOM_H)) {
+                continue;
+            }
+            if (app->map.cells[worldY - 1][worldX - 1].hasGoalTerrain) {
+                C2D_Image goalImage = getImage(app, ASSET_TERRAIN_GOALZONE);
+                drawAnchoredImage(goalImage, locX, locY, DIRECTOR_SCALE, g_terrainAnchors[ASSET_TERRAIN_GOALZONE].x, g_terrainAnchors[ASSET_TERRAIN_GOALZONE].y);
+            } else {
+                drawAnchoredImage(image, locX, locY, DIRECTOR_SCALE, g_terrainAnchors[terrainId].x, g_terrainAnchors[terrainId].y);
+            }
+        }
+    }
+}
+
+static void drawGreenPileVariant(AppState* app, int amount, float pileX, float pileY) {
+    int assetId = ordinaryResourceVariant(
+        amount,
+        ASSET_RESOURCE_GREEN_1,
+        ASSET_RESOURCE_GREEN_2,
+        ASSET_RESOURCE_GREEN_3,
+        ASSET_RESOURCE_GREEN_4);
+    if (assetId < 0) {
+        return;
+    }
+    drawAnchoredImage(getImage(app, assetId), pileX, pileY, RESOURCE_WORLD_SCALE,
+        g_objectAnchors[assetId].x, g_objectAnchors[assetId].y);
+}
+
+static void drawResourceOrPlan(AppState* app, const WBCell* cell, float locX, float locY) {
+    if (!cell->hasResource) {
+        return;
+    }
+    if (cell->resourceIsPlan) {
+        int assetId = worldPlanAssetId(cell->resourcePlanType);
+        if (assetId >= 0) {
+            drawAnchoredImage(getImage(app, assetId), locX, locY, PLAN_WORLD_SCALE, g_objectAnchors[assetId].x, g_objectAnchors[assetId].y);
+        }
+        return;
+    }
+
+    {
+        int kinds[6];
+        int count = 0;
+        int i;
+        float pileBaseY = locY;
+        if (terrainUsesWaterSprite(cell->terrain)) {
+            pileBaseY += 8.0f * DIRECTOR_SCALE;
+        }
+        sortPileKinds(&cell->pile, kinds, &count);
+        if (count > 4) {
+            count = 4;
+        }
+        for (i = 0; i < count; ++i) {
+            int assetId = kinds[i] == 5 ? energyAssetForValue(cell->pileEnergyValue) : pileEntryAssetId(&cell->pile, kinds[i]);
+            float pileX = locX + (g_pileRegPoints[i].x * DIRECTOR_SCALE);
+            float pileY = pileBaseY + (g_pileRegPoints[i].y * DIRECTOR_SCALE);
+            if (kinds[i] == 2) {
+                drawGreenPileVariant(app, cell->pile.green, pileX, pileY);
+                continue;
+            }
+            if (assetId < 0) {
+                continue;
+            }
+            drawAnchoredImage(getImage(app, assetId), pileX, pileY, RESOURCE_WORLD_SCALE, g_objectAnchors[assetId].x, g_objectAnchors[assetId].y);
+        }
+    }
+}
+
+static void drawGoal(AppState* app, const WBCell* cell, float locX, float locY) {
+    int assetId;
+    float phase;
+    float cycle;
+    float t;
+    float dy;
+    if (!cell->hasGoal || cell->goalSatisfied || (cell->bonusGoal && !app->map.bonusAvailable)) {
+        return;
+    }
+    assetId = cell->bonusGoal ? ASSET_GOAL_BONUS : ASSET_GOAL_MAIN;
+    phase = ((float) (((cell->rawSymbol ? cell->rawSymbol : 'a') + (cell->bonusGoal ? 7 : 0)) % 9)) / 9.0f;
+    cycle = ((float) (osGetTime() % 2200ULL)) / 2200.0f;
+    t = 2.0f * 3.14159265f * (phase + cycle);
+    dy = 2.25f * sinf(t);
+    drawAnchoredImage(getImage(app, assetId), locX, locY + dy, DIRECTOR_SCALE, g_objectAnchors[assetId].x, g_objectAnchors[assetId].y);
+}
+
+/* Forward declarations for cargo overlay helpers defined later (before drawObjectsBottom). */
+static void drawUnitCargoOverlay(AppState* app, const WBCell* cell, float unitX, float unitY);
+static void drawMovingUnitCargoOverlay(AppState* app, WBUnitType unitType, const WBResourcePile* cargo, float unitX, float unitY);
+
+static void drawMovingUnit(AppState* app, int moveIndex) {
+    const WBMoveState* move = &app->moves[moveIndex];
+    float fromX;
+    float fromY;
+    float toX;
+    float toY;
+    float baseX;
+    float baseY;
+    float locX;
+    float locY;
+    int assetId;
+    bool waterVersion;
+    float pixelOffsetX = 0.0f;
+    float pixelOffsetY = 0.0f;
+
+    if (!move->active) {
+        return;
+    }
+
+    posToLoc(app, move->pathX[move->pathIndex] + 1, move->pathY[move->pathIndex] + 1, &fromX, &fromY);
+    if (move->blockedWaiting || move->pathIndex >= move->pathLen - 1) {
+        toX = fromX;
+        toY = fromY;
+        pixelOffsetX = 2.0f * sinf((float) osGetTime() / 25.0f);
+    } else {
+        toX = 0.0f;
+        toY = 0.0f;
+        posToLoc(app, move->pathX[move->pathIndex + 1] + 1, move->pathY[move->pathIndex + 1] + 1, &toX, &toY);
+        if (unitUsesVisibleBob(move->unitType)) {
+            float stepTheta = move->progress * 3.14159265f;
+            // The Director bob is subtle and shadow-driven. On 3DS, use a
+            // per-step hump with the same "rise then settle" feel so animal
+            // movement reads clearly over each traversed tile.
+            pixelOffsetY = -sinf(stepTheta) * 7.0f;
+        }
+    }
+    baseX = roundf(fromX + ((toX - fromX) * move->progress) + (10.0f * DIRECTOR_SCALE));
+    baseY = roundf(fromY + ((toY - fromY) * move->progress) + (18.0f * DIRECTOR_SCALE));
+    locX = baseX + pixelOffsetX;
+    locY = baseY + pixelOffsetY;
+    waterVersion = terrainUsesWaterSprite(app->map.cells[move->pathY[move->pathIndex]][move->pathX[move->pathIndex]].terrain)
+        || (!move->blockedWaiting && move->progress > 0.5f && terrainUsesWaterSprite(app->map.cells[move->pathY[move->pathIndex + 1]][move->pathX[move->pathIndex + 1]].terrain));
+    assetId = unitAnimAssetId(move->unitType, move->direction, waterVersion, move->blockedWaiting ? 0.0f : move->progress, &move->unitCargo, WB_UNIT_ANIM_NONE);
+    if (assetId < 0) {
+        return;
+    }
+    if (!move->blockedWaiting && move->pathIndex < move->pathLen - 1 && unitUsesVisibleBob(move->unitType)) {
+        if (move->direction == WB_DIR_UP || move->direction == WB_DIR_DOWN) {
+            C2D_DrawRectSolid(baseX - 4.0f, baseY + 2.0f, 0.0f, 8.0f, 4.0f, C2D_Color32(0x00, 0x00, 0x00, 0x55));
+        } else {
+            C2D_DrawRectSolid(baseX - 6.0f, baseY + 2.0f, 0.0f, 12.0f, 3.0f, C2D_Color32(0x00, 0x00, 0x00, 0x55));
+        }
+    }
+    drawAnchoredImage(getImage(app, assetId), locX, locY, DIRECTOR_SCALE, g_objectAnchors[assetId].x, g_objectAnchors[assetId].y);
+    if (resourceTotal(&move->unitCargo) > 0) {
+        drawMovingUnitCargoOverlay(app, move->unitType, &move->unitCargo, locX, locY);
+    }
+    drawUnitEnergyBadge(app, move->unitEnergyDeci, locX, locY);
+    if (app->hasSelection && app->selectedMover == moveIndex) {
+        drawSelectionHighlight(app, locX, locY, false, assetId);
+    }
+}
+
+/* ─── Monster sheet layout constants ─── */
+/* monsters_a: crab=offset 0 (28), water_crab=28 (28), scorpion=56 (24), shark=80 (24), boulder=104 (5) */
+/* monsters_b: trex=offset 0 (52), gator_land=52 (20), gator_water=72 (20) */
+#define WB_MON_CRAB_BASE        (ASSET_MONSTERS_A_BASE + 0)
+#define WB_MON_WATER_CRAB_BASE  (ASSET_MONSTERS_A_BASE + 28)
+#define WB_MON_SCORPION_BASE    (ASSET_MONSTERS_A_BASE + 56)
+#define WB_MON_SHARK_BASE       (ASSET_MONSTERS_A_BASE + 80)
+#define WB_MON_BOULDER_BASE     (ASSET_MONSTERS_A_BASE + 104)
+#define WB_MON_TREX_BASE        (ASSET_MONSTERS_B_BASE + 0)
+#define WB_MON_GATOR_BASE       (ASSET_MONSTERS_B_BASE + 52)
+#define WB_MON_GATOR_WATER_BASE (ASSET_MONSTERS_B_BASE + 72)
+
+/* Within a 4-walk block (28 sprites):
+   [0-3] idle UP,DOWN,LEFT,RIGHT
+   [4..4+WALKS*4-1] walk: UP(walk1..N), DOWN(walk1..N), LEFT(walk1..N), RIGHT(walk1..N)
+   [4+WALKS*4..end] atk: UP(1,2), DOWN(1,2), LEFT(1,2), RIGHT(1,2) = 8 */
+static int monsterBlockFrame(int base, int walks, int dirIdx, int walkTick, bool attacking) {
+    if (attacking) {
+        return base + 4 + walks * 4 + dirIdx * 2 + (walkTick & 1);
+    }
+    if (walkTick > 0) {
+        return base + 4 + dirIdx * walks + ((walkTick - 1) % walks);
+    }
+    return base + dirIdx;
+}
+
+static int monsterAnimAssetId(WBMonsterType type, WBDirection dir, bool onWater, int walkTick, bool attacking) {
+    int dirIdx;
+    switch (dir) {
+        case WB_DIR_UP:    dirIdx = 0; break;
+        case WB_DIR_DOWN:  dirIdx = 1; break;
+        case WB_DIR_LEFT:  dirIdx = 2; break;
+        case WB_DIR_RIGHT: default: dirIdx = 3; break;
+    }
+    switch (type) {
+        case WB_MONSTER_CRAB:
+            return monsterBlockFrame(WB_MON_CRAB_BASE, 4, dirIdx, walkTick, attacking);
+        case WB_MONSTER_WATER_CRAB:
+            return monsterBlockFrame(WB_MON_WATER_CRAB_BASE, 4, dirIdx, walkTick, attacking);
+        case WB_MONSTER_SCORPION:
+            return monsterBlockFrame(WB_MON_SCORPION_BASE, 3, dirIdx, walkTick, attacking);
+        case WB_MONSTER_SHARK:
+            return monsterBlockFrame(WB_MON_SHARK_BASE, 3, dirIdx, walkTick, attacking);
+        case WB_MONSTER_BOULDER:
+            /* boulder: [0]=generic,[1]=UP,[2]=DOWN,[3]=LEFT,[4]=RIGHT */
+            return WB_MON_BOULDER_BASE + 1 + dirIdx;
+        case WB_MONSTER_TREX:
+            return monsterBlockFrame(WB_MON_TREX_BASE, 10, dirIdx, walkTick, attacking);
+        case WB_MONSTER_GATOR:
+            if (onWater) {
+                return monsterBlockFrame(WB_MON_GATOR_WATER_BASE, 2, dirIdx, walkTick, attacking);
+            }
+            return monsterBlockFrame(WB_MON_GATOR_BASE, 2, dirIdx, walkTick, attacking);
+        case WB_MONSTER_LION: {
+            /* Lion sprites in ASSET_WB2_MONSTERS_BASE sheet, per-direction blocks of 5:
+               [stand, walk1, walk2, atk1, atk2] each. Block offsets: DOWN+1, LEFT+6, RIGHT+11, UP+16 */
+            static const int lionDirOffset[4] = {16, 1, 6, 11}; /* UP=0, DOWN=1, LEFT=2, RIGHT=3 */
+            int base = ASSET_WB2_MONSTERS_BASE + lionDirOffset[dirIdx];
+            if (attacking) return base + 3 + (walkTick & 1);
+            if (walkTick > 0) return base + 1 + ((walkTick - 1) % 2);
+            return base;
+        }
+        default:
+            return -1;
+    }
+}
+
+static C2D_Image monsterSheetFallbackImage(const AppState* app, const WBMonsterState* ms, int walkTick, bool attacking) {
+    C2D_Image img;
+    int dirIdx;
+    int frame;
+    int sheetIndex = -1;
+    bool useSheetB = false;
+
+    img.subtex = NULL;
+    img.tex = NULL;
+    if (!app || !ms) {
+        return img;
+    }
+
+    switch (ms->dir) {
+        case WB_DIR_UP:    dirIdx = 0; break;
+        case WB_DIR_DOWN:  dirIdx = 1; break;
+        case WB_DIR_LEFT:  dirIdx = 2; break;
+        case WB_DIR_RIGHT: default: dirIdx = 3; break;
+    }
+
+    /* Lion uses wb2MonstersSheet - handle before the monstersA/B switch. */
+    if (ms->type == WB_MONSTER_LION) {
+        static const int lionDirOffset[4] = {16, 1, 6, 11};
+        int base = lionDirOffset[dirIdx];
+        int lframe;
+        if (attacking) lframe = base + 3 + (walkTick & 1);
+        else if (walkTick > 0) lframe = base + 1 + ((walkTick - 1) % 2);
+        else lframe = base;
+        if (app->wb2MonstersSheet) {
+            img = C2D_SpriteSheetGetImage(app->wb2MonstersSheet, lframe);
+        }
+        return img;
+    }
+
+    switch (ms->type) {
+        case WB_MONSTER_CRAB:
+            frame = monsterBlockFrame(0, 4, dirIdx, walkTick, attacking);
+            sheetIndex = frame;
+            break;
+        case WB_MONSTER_WATER_CRAB:
+            frame = monsterBlockFrame(28, 4, dirIdx, walkTick, attacking);
+            sheetIndex = frame;
+            break;
+        case WB_MONSTER_SCORPION:
+            frame = monsterBlockFrame(56, 3, dirIdx, walkTick, attacking);
+            sheetIndex = frame;
+            break;
+        case WB_MONSTER_SHARK:
+            frame = monsterBlockFrame(80, 3, dirIdx, walkTick, attacking);
+            sheetIndex = frame;
+            break;
+        case WB_MONSTER_BOULDER:
+            sheetIndex = 1 + dirIdx;
+            break;
+        case WB_MONSTER_TREX:
+            frame = monsterBlockFrame(0, 10, dirIdx, walkTick, attacking);
+            sheetIndex = frame;
+            useSheetB = true;
+            break;
+        case WB_MONSTER_GATOR:
+            if (ms->onWater) {
+                frame = monsterBlockFrame(72, 2, dirIdx, walkTick, attacking);
+            } else {
+                frame = monsterBlockFrame(52, 2, dirIdx, walkTick, attacking);
+            }
+            sheetIndex = frame;
+            useSheetB = true;
+            break;
+        default:
+            break;
+    }
+
+    if (sheetIndex >= 0) {
+        C2D_SpriteSheet sheet = useSheetB ? app->monstersBSheet : app->monstersASheet;
+        if (sheet) {
+            img = C2D_SpriteSheetGetImage(sheet, sheetIndex);
+        }
+    }
+    return img;
+}
+
+static int buildingAssetId(WBBuildingType btype, WBDirection dir, int factoryColor) {
+    switch (btype) {
+        case WB_BUILDING_GAS_STATION: return ASSET_BUILDING_GAS_STATION;
+        case WB_BUILDING_MARINA:      return ASSET_BUILDING_MARINA;
+        case WB_BUILDING_ROBOT_LAB:   return ASSET_BUILDING_ROBOT_LAB;
+        case WB_BUILDING_GUARD_TOWER:
+            switch (dir) {
+                case WB_DIR_UP:    return ASSET_BUILDING_GUARD_TOWER_UP;
+                case WB_DIR_DOWN:  return ASSET_BUILDING_GUARD_TOWER_DOWN;
+                case WB_DIR_LEFT:  return ASSET_BUILDING_GUARD_TOWER_LEFT;
+                case WB_DIR_RIGHT: return ASSET_BUILDING_GUARD_TOWER_RIGHT;
+                default:           return ASSET_BUILDING_GUARD_TOWER;
+            }
+        case WB_BUILDING_AIRPORT:     return -1; /* not in asset dump */
+        case WB_BUILDING_HOUSE:       return ASSET_BUILDING_HOUSE;
+        case WB_BUILDING_FACTORY: {
+            /* factoryColor 0-4: 0=RED, 1=YELLOW, 2=GREEN, 3=BLUE, 4=WHITE */
+            static const int colorOffsets[5] = {3, 5, 2, 1, 4};
+            int ci = (factoryColor < 0 || factoryColor > 4) ? 0 : factoryColor;
+            return ASSET_BUILDING_FACTORY + colorOffsets[ci];
+        }
+        case WB_BUILDING_WINDMILL:    return ASSET_BUILDING_WINDMILL_1;
+        case WB_BUILDING_GARAGE:      return ASSET_BUILDING_GARAGE;
+        case WB_BUILDING_NURSERY:     return ASSET_BUILDING_NURSERY;
+        default: return -1;
+    }
+}
+
+/* Returns a suitably-sized icon asset for showing a building in the sidebar plan-style panel. */
+static int buildingPanelIconAssetId(WBBuildingType buildingType) {
+    switch (buildingType) {
+        case WB_BUILDING_HOUSE:        return ASSET_PLAN_HOUSE;
+        case WB_BUILDING_FACTORY:      return ASSET_PLAN_FACTORY;
+        case WB_BUILDING_WINDMILL:     return ASSET_PLAN_WINDMILL;
+        case WB_BUILDING_GARAGE:       return ASSET_PLAN_GARAGE;
+        case WB_BUILDING_NURSERY:      return ASSET_PLAN_NURSERY;
+        case WB_BUILDING_GAS_STATION:  return ASSET_PLAN_GAS_STATION;
+        case WB_BUILDING_MARINA:       return ASSET_PLAN_MARINA;
+        case WB_BUILDING_ROBOT_LAB:    return ASSET_PLAN_ROBOT_LAB;
+        case WB_BUILDING_GUARD_TOWER:  return ASSET_PLAN_GUARD_TOWER;
+        default: return buildingAssetId(buildingType, WB_DIR_RIGHT, 0);
+    }
+}
+
+static void populateMonstersFromMap(WBMap* map) {
+    int row;
+    int col;
+    g_monsterCount = 0;
+    for (row = 0; row < map->height; ++row) {
+        for (col = 0; col < map->width; ++col) {
+            WBCell* cell = &map->cells[row][col];
+            if (cell->hasMonster && g_monsterCount < WB_MAX_MONSTERS) {
+                WBMonsterState* ms = &g_monsters[g_monsterCount++];
+                ms->active = true;
+                ms->row = row;
+                ms->col = col;
+                ms->destRow = row;
+                ms->destCol = col;
+                ms->type = cell->monsterType;
+                ms->dir = cell->monsterDirection;
+                ms->hp = 1000;
+                ms->wanderTimer = randRange(80, 120);
+                ms->onWater = (cell->terrain == WB_TERRAIN_WATER ||
+                               cell->terrain == WB_TERRAIN_WATER_UNFILLABLE);
+                ms->dying = false;
+                ms->breakResolveMs = 0;
+                ms->hasTarget = false;
+                ms->targetX = -1;
+                ms->targetY = -1;
+                ms->targetIsBuilding = false;
+                ms->nextAttackMs = 0;
+                ms->lastAttackMs = 0;
+                ms->swampDamageTickMs = 0;
+                ms->isMoving = false;
+                ms->moveProgress = 0.0f;
+                ms->moveStartMs = 0;
+                ms->moveDurationMs = 600;
+                ms->resting = true;
+                /* Original behavior: initial random rest before first wander. */
+                ms->nextWanderMs = osGetTime() + (u64)randRange(0, 2000);
+                cell->hasMonster = false;
+                cell->monsterType = WB_MONSTER_NONE;
+            }
+        }
+    }
+}
+
+/* Monster wander speed with per-monster variance from original behavior. */
+static u64 monsterMoveDurationMs(const WBMonsterState* ms) {
+    float speed;
+    float speedScale;
+    if (!ms) {
+        return 1000;
+    }
+    speed = wbMonsterSpeed(ms->type);
+    if (speed <= 0.0f) return 0;
+    speedScale = (float)ms->wanderTimer / 100.0f;
+    if (speedScale <= 0.0f) {
+        speedScale = 1.0f;
+    }
+    return (u64)(1500.0f / (speed * speedScale));
+}
+
+typedef struct WBAttackProfile {
+    int hitsPerMinute;
+    int chanceOfSuccess;
+    int damageMin;
+    int damageMax;
+    int searchRange;
+} WBAttackProfile;
+
+static bool activeMonsterAt(const WBMonsterState* self, int row, int col) {
+    int i;
+    for (i = 0; i < g_monsterCount; ++i) {
+        const WBMonsterState* other = &g_monsters[i];
+        if (other == self || !other->active || other->dying) {
+            continue;
+        }
+        if (other->row == row && other->col == col) {
+            return true;
+        }
+        if (other->isMoving && other->destRow == row && other->destCol == col) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static WBAttackProfile monsterAttackProfile(WBMonsterType type) {
+    /* damageMin/Max are in the 0-1000 deci-energy scale (×10 vs original 0-100 values). */
+    switch (type) {
+        case WB_MONSTER_CRAB:       return (WBAttackProfile){25, 100, 1000, 2000, 4};
+        case WB_MONSTER_WATER_CRAB: return (WBAttackProfile){25, 100, 1000, 2000, 4};
+        case WB_MONSTER_GATOR:      return (WBAttackProfile){25, 100, 1000, 2000, 4};
+        case WB_MONSTER_SCORPION:   return (WBAttackProfile){25, 100, 2000, 4000, 4};
+        case WB_MONSTER_SHARK:      return (WBAttackProfile){25, 100, 3000, 5000, 4};
+        case WB_MONSTER_TREX:       return (WBAttackProfile){25, 100, 4000, 6000, 4};
+        case WB_MONSTER_LION:       return (WBAttackProfile){30, 100, 2000, 4000, 4};
+        default:                    return (WBAttackProfile){0, 0, 0, 0, 0};
+    }
+}
+
+static bool defenseAttackProfileForUnit(WBUnitType unitType, WBMonsterType monsterType, WBAttackProfile* out) {
+    if (!out) {
+        return false;
+    }
+    if (unitType == WB_UNIT_SPEEDBOAT || unitType == WB_UNIT_DEFENDER || unitType == WB_UNIT_DEFENDER2) {
+        if (monsterType == WB_MONSTER_BOULDER) {
+            return false;
+        }
+        /* damageMin/Max ×10 to match 0-1000 deci-energy scale. */
+        *out = (WBAttackProfile){25, 75, 1500, 2500, 2};
+        return true;
+    }
+    if (unitType == WB_UNIT_FREEZEBOT) {
+        if (monsterType == WB_MONSTER_BOULDER) {
+            return false;
+        }
+        /* Freezebot: freeze range 2, fires every 3 seconds (20 hits/min) matching original freeze_recharge:3, freeze_range:2 */
+        *out = (WBAttackProfile){20, 100, 0, 0, 2};
+        return true;
+    }
+    return false;
+}
+
+static bool defenseAttackProfileForBuilding(WBBuildingType buildingType, WBMonsterType monsterType, WBAttackProfile* out) {
+    if (!out) {
+        return false;
+    }
+    if (buildingType != WB_BUILDING_GUARD_TOWER) {
+        return false;
+    }
+    if (monsterType == WB_MONSTER_BOULDER) {
+        return false;
+    }
+    /* damageMin/Max ×10 to match 0-1000 deci-energy scale. */
+    *out = (WBAttackProfile){25, 75, 2000, 3000, 2};
+    return true;
+}
+
+static void monsterDropRecipe(WBMonsterType type, WBResourcePile* out) {
+    if (!out) {
+        return;
+    }
+    memset(out, 0, sizeof(*out));
+    switch (type) {
+        case WB_MONSTER_CRAB:       out->red = 20; out->energy = 1; break;
+        case WB_MONSTER_WATER_CRAB: out->blue = 40; out->energy = 1; break;
+        case WB_MONSTER_GATOR:      out->green = 40; out->energy = 1; break;
+        case WB_MONSTER_SCORPION:   out->red = 40; out->energy = 1; break;
+        case WB_MONSTER_SHARK:      out->blue = 50; out->energy = 1; break;
+        case WB_MONSTER_TREX:       out->red = 60; out->energy = 1; break;
+        case WB_MONSTER_LION:       out->yellow = 40; out->energy = 1; break;
+        default: break;
+    }
+}
+
+static void createMonsterDrop(AppState* app, int x, int y, WBMonsterType type) {
+    WBResourcePile recipe;
+    WBCell* cell;
+
+    if (!inBounds(app, x, y)) {
+        return;
+    }
+
+    monsterDropRecipe(type, &recipe);
+    if (recipe.red == 0 && recipe.blue == 0 && recipe.green == 0 && recipe.yellow == 0 && recipe.wheel == 0 && recipe.energy == 0 && recipe.white == 0) {
+        return;
+    }
+
+    cell = &app->map.cells[y][x];
+    if (!cell->hasResource || cell->resourceIsPlan) {
+        cell->hasResource = true;
+        cell->resourceIsPlan = false;
+        memset(&cell->pile, 0, sizeof(cell->pile));
+    }
+    addPile(&cell->pile, &recipe);
+    if (recipe.energy > 0) {
+        cell->pileEnergyValue = 100;
+    }
+}
+
+static bool monsterCanTraverseForPursuit(const WBMonsterState* ms, WBTerrainType terrain) {
+    if (!ms) {
+        return false;
+    }
+    if (wbMonsterCanTraverse(ms->type, terrain)) {
+        return true;
+    }
+    /* Original attacking behavior lets monsters include swamp while engaged. */
+    return terrain == WB_TERRAIN_SWAMP;
+}
+
+static bool monsterPathStepTowardTarget(const AppState* app, const WBMonsterState* ms, int targetX, int targetY, int* outCol, int* outRow) {
+    static const int dx[4] = {1, -1, 0, 0};
+    static const int dy[4] = {0, 0, -1, 1};
+    int head = 0;
+    int tail = 0;
+    int i;
+    int y;
+    int x;
+
+    if (!app || !ms || !inBounds(app, targetX, targetY)) {
+        return false;
+    }
+
+    for (y = 0; y < app->map.height; ++y) {
+        for (x = 0; x < app->map.width; ++x) {
+            g_monVisited[y][x] = 0;
+            g_monFirstX[y][x] = -1;
+            g_monFirstY[y][x] = -1;
+        }
+    }
+
+    g_monVisited[ms->row][ms->col] = 1;
+    g_monQx[tail] = (s16)ms->col;
+    g_monQy[tail] = (s16)ms->row;
+    ++tail;
+
+    while (head < tail) {
+        int cx = g_monQx[head];
+        int cy = g_monQy[head];
+        int fx = g_monFirstX[cy][cx];
+        int fy = g_monFirstY[cy][cx];
+        ++head;
+
+        if (manhattanDistance(cx, cy, targetX, targetY) == 1) {
+            if (fx >= 0 && fy >= 0) {
+                *outCol = fx;
+                *outRow = fy;
+                return true;
+            }
+            return false;
+        }
+
+        for (i = 0; i < 4; ++i) {
+            int nx = cx + dx[i];
+            int ny = cy + dy[i];
+            int stepX;
+            int stepY;
+            if (!inBounds(app, nx, ny) || g_monVisited[ny][nx]) {
+                continue;
+            }
+            if (!monsterCanTraverseForPursuit(ms, app->map.cells[ny][nx].terrain)) {
+                continue;
+            }
+            if (app->map.cells[ny][nx].hasUnit) {
+                continue;
+            }
+            if (app->map.cells[ny][nx].hasBuilding) {
+                continue;
+            }
+            if (cellHasActiveMover(app, nx, ny, -1)) {
+                continue;
+            }
+            if (activeMonsterAt(ms, ny, nx)) {
+                continue;
+            }
+
+            g_monVisited[ny][nx] = 1;
+            if (cx == ms->col && cy == ms->row) {
+                stepX = nx;
+                stepY = ny;
+            } else {
+                stepX = fx;
+                stepY = fy;
+            }
+            g_monFirstX[ny][nx] = (s16)stepX;
+            g_monFirstY[ny][nx] = (s16)stepY;
+            g_monQx[tail] = (s16)nx;
+            g_monQy[tail] = (s16)ny;
+            ++tail;
+        }
+    }
+
+    return false;
+}
+
+static bool findClosestUnitTarget(const AppState* app, const WBMonsterState* seeker, int maxDist, int* outX, int* outY) {
+    int y;
+    int x;
+    int best = 0x7FFFFFFF;
+    bool found = false;
+
+    if (!app || !seeker) {
+        return false;
+    }
+
+    for (y = 0; y < app->map.height; ++y) {
+        for (x = 0; x < app->map.width; ++x) {
+            const WBCell* cell = &app->map.cells[y][x];
+            int dist;
+            int stepX;
+            int stepY;
+            if (!cell->hasUnit) {
+                continue;
+            }
+            dist = manhattanDistance(seeker->col, seeker->row, x, y);
+            if (dist > maxDist || dist >= best) {
+                continue;
+            }
+            if (dist > 1 && !monsterPathStepTowardTarget(app, seeker, x, y, &stepX, &stepY)) {
+                continue;
+            }
+            best = dist;
+            *outX = x;
+            *outY = y;
+            found = true;
+        }
+    }
+    return found;
+}
+
+static bool findClosestBuildingTarget(const AppState* app, const WBMonsterState* seeker, int maxDist, int* outX, int* outY) {
+    int y;
+    int x;
+    int best = 0x7FFFFFFF;
+    bool found = false;
+
+    if (!app || !seeker) {
+        return false;
+    }
+
+    for (y = 0; y < app->map.height; ++y) {
+        for (x = 0; x < app->map.width; ++x) {
+            const WBCell* cell = &app->map.cells[y][x];
+            int dist;
+            int stepX;
+            int stepY;
+            if (!cell->hasBuilding) {
+                continue;
+            }
+            dist = manhattanDistance(seeker->col, seeker->row, x, y);
+            if (dist > maxDist || dist >= best) {
+                continue;
+            }
+            if (dist > 1 && !monsterPathStepTowardTarget(app, seeker, x, y, &stepX, &stepY)) {
+                continue;
+            }
+            best = dist;
+            *outX = x;
+            *outY = y;
+            found = true;
+        }
+    }
+    return found;
+}
+
+static bool chooseMonsterStepToward(const AppState* app, const WBMonsterState* ms, int targetX, int targetY, int* outCol, int* outRow) {
+    return monsterPathStepTowardTarget(app, ms, targetX, targetY, outCol, outRow);
+}
+
+/* Autonomously move a unit at (fromX, fromY) toward (goalX, goalY) without
+   player selection.  Does not play SFX or set app->selectedMover. */
+static void beginMoveAuto(AppState* app, int fromX, int fromY, int goalX, int goalY) {
+    WBCell* cell = &app->map.cells[fromY][fromX];
+    int moveIndex;
+    WBMoveState* move;
+    int pathLen = 0;
+
+    if (!cell->hasUnit || cell->unitEnergyDeci <= 0) {
+        return;
+    }
+    if (!findPath(app, fromX, fromY, goalX, goalY, cell->unitType, g_pathScratchX, g_pathScratchY, &pathLen)) {
+        return;
+    }
+    moveIndex = findFreeMoveSlot(app);
+    if (moveIndex < 0) {
+        return;
+    }
+    move = &app->moves[moveIndex];
+
+    memset(move, 0, sizeof(*move));
+    move->active = true;
+    move->unitType = cell->unitType;
+    move->unitEnergy = cell->unitEnergy;
+    move->unitEnergyDeci = cell->unitEnergyDeci;
+    move->unitCargo = cell->unitCargo;
+    move->unitCargoEnergyValue = cell->unitCargoEnergyValue;
+    move->goalX = goalX;
+    move->goalY = goalY;
+    move->pathLen = pathLen;
+    move->pathIndex = 0;
+    move->progress = 0.0f;
+    move->stepStartMs = osGetTime();
+    move->blockedWaiting = false;
+    move->resumeGoalAfterStop = false;
+    move->blockedRetryMs = 0;
+    move->blockedTryNum = 0;
+    move->direction = directionFromStep(g_pathScratchX[0], g_pathScratchY[0], g_pathScratchX[1], g_pathScratchY[1]);
+    move->finalDirection = move->direction;
+    memcpy(move->pathX, g_pathScratchX, sizeof(int) * pathLen);
+    memcpy(move->pathY, g_pathScratchY, sizeof(int) * pathLen);
+    cell->hasUnit = false;
+    cell->unitType = WB_UNIT_NONE;
+    memset(&cell->unitCargo, 0, sizeof(cell->unitCargo));
+}
+
+#define WB_AUTO_INTERCEPT_RANGE 3
+
+/* Move idle DEFENDER / DEFENDER2 / SPEEDBOAT units toward approaching monsters
+   that are within WB_AUTO_INTERCEPT_RANGE tiles but not yet adjacent. */
+static void runAutoIntercept(AppState* app) {
+    static const int offsets[4][2] = {{-1, 0}, {0, -1}, {1, 0}, {0, 1}};
+    int y;
+    int x;
+
+    for (y = 0; y < app->map.height; ++y) {
+        for (x = 0; x < app->map.width; ++x) {
+            WBCell* cell = &app->map.cells[y][x];
+            int bestMi, bestDist, mi;
+            int goalX, goalY, goalDist;
+            bool foundGoal;
+            int adjOff;
+
+            if (!cell->hasUnit) {
+                continue;
+            }
+            if (cell->unitType != WB_UNIT_DEFENDER &&
+                cell->unitType != WB_UNIT_DEFENDER2 &&
+                cell->unitType != WB_UNIT_SPEEDBOAT) {
+                continue;
+            }
+            /* Don't override a unit the player currently has selected */
+            if (app->hasSelection && app->selectedX == x && app->selectedY == y && app->selectedMover < 0) {
+                continue;
+            }
+
+            /* Find the nearest active monster in intercept range but not adjacent.
+               Use the monster's destination tile when it is mid-step so we track
+               where it is actually going, not where it just was. */
+            bestMi = -1;
+            bestDist = 0x7FFFFFFF;
+            for (mi = 0; mi < g_monsterCount; ++mi) {
+                int mcol, mrow, dx, dy, dist;
+                if (!g_monsters[mi].active) {
+                    continue;
+                }
+                mcol = g_monsters[mi].isMoving ? g_monsters[mi].destCol : g_monsters[mi].col;
+                mrow = g_monsters[mi].isMoving ? g_monsters[mi].destRow : g_monsters[mi].row;
+                dx = mcol - x;
+                dy = mrow - y;
+                dist = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
+                if (dist <= 1) {
+                    /* Already adjacent — runDefenseAttacks handles this */
+                    bestMi = -1;
+                    break;
+                }
+                if (dist <= WB_AUTO_INTERCEPT_RANGE && dist < bestDist) {
+                    bestDist = dist;
+                    bestMi = mi;
+                }
+            }
+            if (bestMi < 0) {
+                continue;
+            }
+
+            /* Find the closest traversable, unoccupied tile adjacent to the monster's
+               effective position. Skip tiles that any monster is currently stepping
+               into so we never path into a space a monster is about to occupy. */
+            {
+                int mrefCol = g_monsters[bestMi].isMoving ? g_monsters[bestMi].destCol : g_monsters[bestMi].col;
+                int mrefRow = g_monsters[bestMi].isMoving ? g_monsters[bestMi].destRow : g_monsters[bestMi].row;
+                foundGoal = false;
+                goalX = 0;
+                goalY = 0;
+                goalDist = 0x7FFFFFFF;
+                for (adjOff = 0; adjOff < 4; ++adjOff) {
+                    int nx = mrefCol + offsets[adjOff][0];
+                    int ny = mrefRow + offsets[adjOff][1];
+                    int k, dx, dy, dist;
+                    bool monsterDest;
+                    if (!inBounds(app, nx, ny)) {
+                        continue;
+                    }
+                    if (!wbUnitCanTraverse(cell->unitType, app->map.cells[ny][nx].terrain)) {
+                        continue;
+                    }
+                    if (app->map.cells[ny][nx].hasUnit || cellHasActiveMover(app, nx, ny, -1)) {
+                        continue;
+                    }
+                    if (nx == x && ny == y) {
+                        continue;
+                    }
+                    /* Skip tiles a monster is currently stepping into */
+                    monsterDest = false;
+                    for (k = 0; k < g_monsterCount; ++k) {
+                        if (g_monsters[k].active && g_monsters[k].isMoving &&
+                            g_monsters[k].destCol == nx && g_monsters[k].destRow == ny) {
+                            monsterDest = true;
+                            break;
+                        }
+                    }
+                    if (monsterDest) {
+                        continue;
+                    }
+                    dx = nx - x;
+                    dy = ny - y;
+                    dist = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
+                    if (dist < goalDist) {
+                        goalDist = dist;
+                        goalX = nx;
+                        goalY = ny;
+                        foundGoal = true;
+                    }
+                }
+            }
+            if (!foundGoal) {
+                continue;
+            }
+            beginMoveAuto(app, x, y, goalX, goalY);
+        }
+    }
+}
+
+static void runDefenseAttacks(AppState* app) {
+    int y;
+    int x;
+    u64 now = osGetTime();
+
+    for (y = 0; y < app->map.height; ++y) {
+        for (x = 0; x < app->map.width; ++x) {
+            WBCell* cell = &app->map.cells[y][x];
+            WBAttackProfile profile;
+            int range;
+            int mi;
+            int bestMi = -1;
+            int bestDist = 0x7FFFFFFF;
+
+            if (now < app->cellAttackCooldownMs[y][x]) {
+                continue;
+            }
+
+            if (!cell->hasUnit && !cell->hasBuilding) {
+                continue;
+            }
+
+            range = 0;
+            if (cell->hasUnit) {
+                WBAttackProfile tmp;
+                if (defenseAttackProfileForUnit(cell->unitType, WB_MONSTER_CRAB, &tmp)) {
+                    profile = tmp;
+                    range = tmp.searchRange;
+                }
+            }
+            if (range == 0 && cell->hasBuilding) {
+                WBAttackProfile tmp;
+                if (defenseAttackProfileForBuilding(cell->buildingType, WB_MONSTER_CRAB, &tmp)) {
+                    profile = tmp;
+                    range = tmp.searchRange;
+                }
+            }
+            if (range == 0) {
+                continue;
+            }
+
+            for (mi = 0; mi < g_monsterCount; ++mi) {
+                WBMonsterState* ms = &g_monsters[mi];
+                WBAttackProfile perTarget;
+                int dist;
+                bool ok;
+                bool isFreezeUnit = cell->hasUnit && cell->unitType == WB_UNIT_FREEZEBOT;
+                if (!ms->active || ms->dying) {
+                    continue;
+                }
+                if (ms->type == WB_MONSTER_BOULDER) {
+                    continue;
+                }
+                /* Freezebot should not re-freeze already-frozen targets */
+                if (isFreezeUnit && app->map.cells[ms->row][ms->col].monsterFrozen) {
+                    continue;
+                }
+                dist = manhattanDistance(x, y, ms->col, ms->row);
+                /* Attack only fires at range 1 (adjacent); searchRange is used only for
+                   target acquisition / auto-movement via runAutoIntercept. */
+                if (dist != 1 || dist >= bestDist) {
+                    continue;
+                }
+                if (cell->hasUnit) {
+                    ok = defenseAttackProfileForUnit(cell->unitType, ms->type, &perTarget);
+                } else {
+                    ok = defenseAttackProfileForBuilding(cell->buildingType, ms->type, &perTarget);
+                }
+                if (!ok) {
+                    continue;
+                }
+                bestDist = dist;
+                bestMi = mi;
+                profile = perTarget;
+            }
+
+            if (bestMi < 0) {
+                continue;
+            }
+
+            {
+                WBMonsterState* target = &g_monsters[bestMi];
+                int damage = 0;
+                bool isFreezeAttack = cell->hasUnit && cell->unitType == WB_UNIT_FREEZEBOT;
+                if (cell->hasUnit) {
+                    cell->unitDirection = directionFromStep(x, y, target->col, target->row);
+                    /* Show attack animation for freezebot */
+                    if (isFreezeAttack) {
+                        app->unitActionAnim[y][x] = WB_UNIT_ANIM_REPAIR; /* reuse repair slot as generic attack anim */
+                        app->unitActionUntilMs[y][x] = now + 500;
+                    }
+                }
+                if (isFreezeAttack) {
+                    /* Apply freeze to the target monster */
+                    WBCell* targetCell = &app->map.cells[target->row][target->col];
+                    targetCell->monsterFrozen = true;
+                    targetCell->monsterFrozenUntilMs = (uint64_t)now + 25000;
+                    spawnWorldEffect(app, WB_WORLD_EFFECT_DAMAGE_SMALL, target->col, target->row);
+                    playSfxClipWorld(app, &app->sfxDamage);
+                } else {
+                    if (randRange(1, 100) <= profile.chanceOfSuccess) {
+                        damage = randRange(profile.damageMin, profile.damageMax);
+                    }
+                    if (damage > 0) {
+                        damageMonster(app, target, damage, true);
+                    } else {
+                        spawnWorldEffect(app, WB_WORLD_EFFECT_DAMAGE_SMALL, target->col, target->row);
+                        playSfxClipWorld(app, &app->sfxDamage);
+                    }
+                }
+                app->cellAttackCooldownMs[y][x] = now + (u64)(60000 / profile.hitsPerMinute);
+            }
+        }
+    }
+}
+
+static void tickSwampDamage(AppState* app) {
+    u64 now = osGetTime();
+    int y;
+    int x;
+    int mi;
+
+    /* Stationary units on swamp tiles */
+    for (y = 0; y < app->map.height; ++y) {
+        for (x = 0; x < app->map.width; ++x) {
+            WBCell* cell = &app->map.cells[y][x];
+            u64* tickMs = &app->unitSwampDamageTickMs[y][x];
+
+            if (!cell->hasUnit || cell->terrain != WB_TERRAIN_SWAMP) {
+                *tickMs = 0;
+                continue;
+            }
+
+            if (*tickMs == 0) {
+                *tickMs = now;
+                continue;
+            }
+
+            if ((now - *tickMs) >= WB_SWAMP_DAMAGE_PERIOD_MS) {
+                *tickMs = now;
+                applyUnitDamageAtCell(app, x, y, WB_SWAMP_DAMAGE_AMOUNT, false);
+            }
+        }
+    }
+
+    /* Moving units traversing swamp tiles */
+    for (mi = 0; mi < (int)(sizeof(app->moves) / sizeof(app->moves[0])); ++mi) {
+        WBMoveState* move = &app->moves[mi];
+        int cx, cy;
+        int nx, ny;
+        bool onSwamp = false;
+        int dmgX = -1;
+        int dmgY = -1;
+
+        if (!move->active) {
+            continue;
+        }
+        cx = move->pathX[move->pathIndex];
+        cy = move->pathY[move->pathIndex];
+        if (!inBounds(app, cx, cy)) {
+            continue;
+        }
+        if (app->map.cells[cy][cx].terrain == WB_TERRAIN_SWAMP) {
+            onSwamp = true;
+            dmgX = cx;
+            dmgY = cy;
+        }
+        if (!onSwamp && move->pathIndex < move->pathLen - 1 && move->progress > 0.0f) {
+            nx = move->pathX[move->pathIndex + 1];
+            ny = move->pathY[move->pathIndex + 1];
+            if (inBounds(app, nx, ny) && app->map.cells[ny][nx].terrain == WB_TERRAIN_SWAMP) {
+                onSwamp = true;
+                dmgX = nx;
+                dmgY = ny;
+            }
+        }
+
+        if (!onSwamp) {
+            move->swampDamageTickMs = 0;
+            continue;
+        }
+
+        if (move->swampDamageTickMs == 0) {
+            move->swampDamageTickMs = now;
+            continue;
+        }
+
+        if ((now - move->swampDamageTickMs) >= WB_SWAMP_DAMAGE_PERIOD_MS) {
+            move->swampDamageTickMs = now;
+            move->unitEnergyDeci -= WB_SWAMP_DAMAGE_AMOUNT;
+            if (move->unitEnergyDeci < 0) {
+                move->unitEnergyDeci = 0;
+            }
+            move->unitEnergy = (move->unitEnergyDeci + 9) / 10;
+            if (dmgX >= 0 && dmgY >= 0) {
+                spawnWorldEffect(app, WB_WORLD_EFFECT_DAMAGE_SMALL, dmgX, dmgY);
+            }
+        }
+    }
+
+    for (mi = 0; mi < g_monsterCount; ++mi) {
+        WBMonsterState* ms = &g_monsters[mi];
+        WBCell* cell;
+
+        if (!ms->active || ms->dying || !inBounds(app, ms->col, ms->row)) {
+            continue;
+        }
+
+        cell = &app->map.cells[ms->row][ms->col];
+        if (cell->terrain != WB_TERRAIN_SWAMP) {
+            ms->swampDamageTickMs = 0;
+            continue;
+        }
+
+        if (ms->swampDamageTickMs == 0) {
+            ms->swampDamageTickMs = now;
+            continue;
+        }
+
+        if ((now - ms->swampDamageTickMs) >= WB_SWAMP_DAMAGE_PERIOD_MS) {
+            ms->swampDamageTickMs = now;
+            damageMonster(app, ms, WB_SWAMP_DAMAGE_AMOUNT, false);
+        }
+    }
+}
+
+static void tickMonsters(AppState* app) {
+    int mi;
+    u64 now = osGetTime();
+    for (mi = 0; mi < g_monsterCount; ++mi) {
+        WBMonsterState* ms = &g_monsters[mi];
+        if (!ms->active) continue;
+        if (ms->dying) {
+            if (now >= ms->breakResolveMs) {
+                if (inBounds(app, ms->col, ms->row)) {
+                    WBCell* cell = &app->map.cells[ms->row][ms->col];
+                    cell->hasMonster = false;
+                    cell->monsterType = WB_MONSTER_NONE;
+                }
+                createMonsterDrop(app, ms->col, ms->row, ms->type);
+                spawnWorldEffect(app, WB_WORLD_EFFECT_TAKE_APART_CLOUD, ms->col, ms->row);
+                playSfxClipWorld(app, &app->sfxDisassemble);
+                ms->active = false;
+            }
+            continue;
+        }
+        /* boulders don't move */
+        if (ms->type == WB_MONSTER_BOULDER) continue;
+
+        /* frozen monsters don't move or attack; check if freeze has expired */
+        if (app->map.cells[ms->row][ms->col].monsterFrozen) {
+            if ((uint64_t)now >= app->map.cells[ms->row][ms->col].monsterFrozenUntilMs) {
+                app->map.cells[ms->row][ms->col].monsterFrozen = false;
+            } else {
+                continue;
+            }
+        }
+        /* update smooth movement progress */
+        if (ms->isMoving) {
+            u64 elapsed = now - ms->moveStartMs;
+            ms->moveProgress = (float)elapsed / (float)ms->moveDurationMs;
+            if (ms->moveProgress >= 1.0f) {
+                /* arrived */
+                ms->moveProgress = 1.0f;
+                ms->isMoving = false;
+                ms->row = ms->destRow;
+                ms->col = ms->destCol;
+                ms->onWater = (app->map.cells[ms->row][ms->col].terrain == WB_TERRAIN_WATER ||
+                               app->map.cells[ms->row][ms->col].terrain == WB_TERRAIN_WATER_UNFILLABLE);
+                if (ms->hasTarget) {
+                    ms->nextWanderMs = now;
+                } else if (randRange(1, wbMonsterRestEvery(ms->type)) == 1) {
+                    ms->resting = true;
+                    ms->nextWanderMs = now + (u64)(wbMonsterRestForMs(ms->type)) * (u64)(750 + randRange(0, 499)) / 1000ULL;
+                } else {
+                    ms->resting = false;
+                    ms->nextWanderMs = now + (u64)randRange(120, 280);
+                }
+                /* Check simple monster goals on arrival */
+                {
+                    WBCell* arrivedCell = &app->map.cells[ms->row][ms->col];
+                    if (arrivedCell->hasGoal && !arrivedCell->goalSatisfied &&
+                            !arrivedCell->goalIsCollect &&
+                            (!arrivedCell->bonusGoal || app->map.bonusAvailable) &&
+                            goalMatchesMonster(arrivedCell->goalType, ms->type)) {
+                        satisfyGoalAt(app, arrivedCell, ms->col, ms->row);
+                    }
+                }
+            }
+        }
+
+        if (ms->hasTarget && ms->targetIsBuilding) {
+            /* Re-evaluate: prefer unit targets over building targets */
+            WBAttackProfile atk = monsterAttackProfile(ms->type);
+            if (atk.searchRange > 0) {
+                int tx = ms->col;
+                int ty = ms->row;
+                if (findClosestUnitTarget(app, ms, atk.searchRange, &tx, &ty)) {
+                    ms->targetX = tx;
+                    ms->targetY = ty;
+                    ms->targetIsBuilding = false;
+                }
+            }
+        }
+
+        if (!ms->hasTarget) {
+            WBAttackProfile atk = monsterAttackProfile(ms->type);
+            if (atk.searchRange > 0) {
+                int tx = ms->col;
+                int ty = ms->row;
+                if (findClosestUnitTarget(app, ms, atk.searchRange, &tx, &ty)) {
+                    ms->hasTarget = true;
+                    ms->targetX = tx;
+                    ms->targetY = ty;
+                    ms->targetIsBuilding = false;
+                } else if (findClosestBuildingTarget(app, ms, atk.searchRange, &tx, &ty)) {
+                    ms->hasTarget = true;
+                    ms->targetX = tx;
+                    ms->targetY = ty;
+                    ms->targetIsBuilding = true;
+                }
+            }
+        }
+
+        if (ms->hasTarget) {
+            WBAttackProfile atk = monsterAttackProfile(ms->type);
+            if (!inBounds(app, ms->targetX, ms->targetY) ||
+                    (ms->targetIsBuilding ? !app->map.cells[ms->targetY][ms->targetX].hasBuilding
+                                         : !app->map.cells[ms->targetY][ms->targetX].hasUnit)) {
+                ms->hasTarget = false;
+            } else {
+                int dist = manhattanDistance(ms->col, ms->row, ms->targetX, ms->targetY);
+                if (dist > 7) {
+                    ms->hasTarget = false;
+                } else if (!ms->isMoving && dist == 1 && now >= ms->nextAttackMs) {
+                    int damage;
+                    ms->dir = directionFromStep(ms->col, ms->row, ms->targetX, ms->targetY);
+                    if (randRange(1, 100) <= atk.chanceOfSuccess) {
+                        damage = randRange(atk.damageMin, atk.damageMax);
+                    } else {
+                        damage = 0;
+                    }
+                    if (damage > 0) {
+                        if (ms->targetIsBuilding) {
+                            /* playSound=false: sfxMonsterAttack below is the monster's attack cue;
+                               suppress sfxDamage so defender/unit attacks stay distinct. */
+                            applyBuildingDamageAtCell(app, ms->targetX, ms->targetY, damage, false);
+                        } else {
+                            applyUnitDamageAtCell(app, ms->targetX, ms->targetY, damage, false);
+                        }
+                    } else {
+                        spawnWorldEffect(app, WB_WORLD_EFFECT_DAMAGE_SMALL, ms->targetX, ms->targetY);
+                        /* miss: only monster attack sound, no sfxDamage (matches original) */
+                    }
+                    ms->nextAttackMs = now + (u64)(60000 / atk.hitsPerMinute);
+                    ms->lastAttackMs = now;
+                    playSfxClipWorld(app, &app->sfxMonsterAttack);
+                }
+            }
+        }
+
+        /* start next step when timer expires and not moving */
+        if (!ms->isMoving && now >= ms->nextWanderMs) {
+            static const int dx[4] = {1, -1, 0, 0};
+            static const int dy[4] = {0, 0, -1, 1};
+            static const WBDirection ddir[4] = {WB_DIR_RIGHT, WB_DIR_LEFT, WB_DIR_UP, WB_DIR_DOWN};
+            int candidates[4];
+            int nCandidates = 0;
+            int di;
+
+            if (ms->hasTarget) {
+                int nextCol;
+                int nextRow;
+                if (chooseMonsterStepToward(app, ms, ms->targetX, ms->targetY, &nextCol, &nextRow)) {
+                    ms->destRow = nextRow;
+                    ms->destCol = nextCol;
+                    ms->dir = directionFromStep(ms->col, ms->row, nextCol, nextRow);
+                    ms->isMoving = true;
+                    ms->moveProgress = 0.0f;
+                    ms->moveStartMs = now;
+                    ms->moveDurationMs = monsterMoveDurationMs(ms);
+                    ms->resting = false;
+                } else {
+                    ms->nextWanderMs = now + 250;
+                }
+                continue;
+            }
+
+            for (di = 0; di < 4; ++di) {
+                int nr = ms->row + dy[di];
+                int nc = ms->col + dx[di];
+                if (nr < 0 || nr >= app->map.height || nc < 0 || nc >= app->map.width) continue;
+                if (!wbMonsterCanTraverse(ms->type, app->map.cells[nr][nc].terrain)) continue;
+                /* don't walk onto a cell that has a unit, building, or active mover */
+                if (app->map.cells[nr][nc].hasUnit) continue;
+                if (app->map.cells[nr][nc].hasBuilding) continue;
+                if (cellHasActiveMover(app, nc, nr, -1)) continue;
+                if (activeMonsterAt(ms, nr, nc)) continue;
+                candidates[nCandidates++] = di;
+            }
+            /* Original behavior: if stuck while standing on swamp, retry allowing swamp neighbors. */
+            if (nCandidates == 0 && app->map.cells[ms->row][ms->col].terrain == WB_TERRAIN_SWAMP) {
+                for (di = 0; di < 4; ++di) {
+                    int nr = ms->row + dy[di];
+                    int nc = ms->col + dx[di];
+                    if (nr < 0 || nr >= app->map.height || nc < 0 || nc >= app->map.width) continue;
+                    if (app->map.cells[nr][nc].terrain != WB_TERRAIN_SWAMP) continue;
+                    if (app->map.cells[nr][nc].hasUnit) continue;
+                    if (app->map.cells[nr][nc].hasBuilding) continue;
+                    if (cellHasActiveMover(app, nc, nr, -1)) continue;
+                    if (activeMonsterAt(ms, nr, nc)) continue;
+                    candidates[nCandidates++] = di;
+                }
+            }
+            if (nCandidates > 0) {
+                int pick = candidates[randRange(0, nCandidates - 1)];
+                ms->destRow = ms->row + dy[pick];
+                ms->destCol = ms->col + dx[pick];
+                ms->dir = ddir[pick];
+                ms->isMoving = true;
+                ms->moveProgress = 0.0f;
+                ms->moveStartMs = now;
+                ms->moveDurationMs = monsterMoveDurationMs(ms);
+                ms->resting = false;
+            } else {
+                /* blocked on all sides — rest briefly */
+                ms->nextWanderMs = now + 500;
+            }
+        }
+    }
+
+    runAutoIntercept(app);
+    runDefenseAttacks(app);
+    tickSwampDamage(app);
+}
+
+/*
+ * tickCollectGoals — check every collect-goal each frame.
+ * For each unsatisfied collect goal, flood-fill through adjacent ':' (hasGoalTerrain)
+ * cells to build the capture zone, then count matching monsters inside it.
+ * Reuses the global g_queueX/g_queueY/g_visited scratch buffers.
+ */
+static void tickCollectGoals(AppState* app) {
+    static const int dx[4] = { 1, -1,  0,  0 };
+    static const int dy[4] = { 0,  0, -1,  1 };
+    int gy, gx;
+    for (gy = 0; gy < app->map.height; ++gy) {
+        for (gx = 0; gx < app->map.width; ++gx) {
+            WBCell* goalCell = &app->map.cells[gy][gx];
+            int head, tail, matches, i;
+            if (!goalCell->hasGoal || goalCell->goalSatisfied || !goalCell->goalIsCollect) continue;
+            if (goalCell->bonusGoal && !app->map.bonusAvailable) continue;
+
+            /* Flood-fill to build zone: goal cell + adjacent hasGoalTerrain cells */
+            memset(g_visited, 0, sizeof(g_visited));
+            head = 0; tail = 0;
+            g_queueX[tail] = gx; g_queueY[tail] = gy; ++tail;
+            g_visited[gy][gx] = true;
+            while (head < tail) {
+                int cx = g_queueX[head];
+                int cy = g_queueY[head];
+                int d;
+                ++head;
+                for (d = 0; d < 4; ++d) {
+                    int nx = cx + dx[d];
+                    int ny = cy + dy[d];
+                    if (!inBounds(app, nx, ny) || g_visited[ny][nx]) continue;
+                    if (!app->map.cells[ny][nx].hasGoalTerrain) continue;
+                    g_visited[ny][nx] = true;
+                    g_queueX[tail] = nx; g_queueY[tail] = ny; ++tail;
+                }
+            }
+
+            /* Count monsters of the required type present in the zone */
+            matches = 0;
+            for (i = 0; i < tail; ++i) {
+                int cx = g_queueX[i];
+                int cy = g_queueY[i];
+                int mi;
+                for (mi = 0; mi < g_monsterCount; ++mi) {
+                    const WBMonsterState* ms = &g_monsters[mi];
+                    if (!ms->active || ms->dying || ms->isMoving) continue;
+                    if (ms->col != cx || ms->row != cy) continue;
+                    if (goalCell->goalCollectType == WB_MONSTER_NONE ||
+                            ms->type == goalCell->goalCollectType) {
+                        matches++;
+                    }
+                }
+            }
+            if (matches >= goalCell->goalCollectCount) {
+                satisfyGoalAt(app, goalCell, gx, gy);
+            }
+        }
+    }
+}
+
+/* Draw a small resource icon over a carry unit to show what it's carrying. */
+static void drawCargoIconAt(AppState* app, const WBResourcePile* cargo, float unitX, float unitY) {
+    int kinds[7];
+    int count = 0;
+    int topKind;
+    int assetId;
+    if (!cargo || pileEmpty(cargo)) {
+        return;
+    }
+    sortPileKinds(cargo, kinds, &count);
+    if (count <= 0) {
+        return;
+    }
+    topKind = kinds[0];
+    switch (topKind) {
+        case 0: assetId = ASSET_RESOURCE_RED_1; break;
+        case 1: assetId = ASSET_RESOURCE_BLUE_1; break;
+        case 2: {
+            C2D_Image greenImg = getWorldbuilderExtraImage(app, WB_EXTRA_CARRY_GREEN_IDX);
+            if (greenImg.subtex) {
+                drawAnchoredImage(greenImg,
+                    unitX,
+                    unitY - (12.0f * DIRECTOR_SCALE),
+                    0.75f * DIRECTOR_SCALE,
+                    greenImg.subtex->width * 0.5f,
+                    greenImg.subtex->height * 0.5f);
+                return;
+            }
+            assetId = ASSET_RESOURCE_YELLOW_1;
+            break;
+        }
+        case 3: assetId = ASSET_RESOURCE_YELLOW_1; break;
+        case 4: assetId = ASSET_RESOURCE_WHEEL_FULL; break;
+        case 5: assetId = energyAssetForValue(cargo->energy <= 0 ? 0 : 100); break;
+        case 6: assetId = ASSET_CARRY_WHITE; break;
+        default: assetId = -1; break;
+    }
+    if (assetId < 0) {
+        return;
+    }
+    drawAnchoredImage(getImage(app, assetId),
+        unitX,
+        unitY - (12.0f * DIRECTOR_SCALE),
+        0.75f * DIRECTOR_SCALE,
+        g_objectAnchors[assetId].x,
+        g_objectAnchors[assetId].y);
+}
+
+/* Called for idle (cell-bound) units — reads cargo from cell. */
+static void drawUnitCargoOverlay(AppState* app, const WBCell* cell, float unitX, float unitY) {
+    if (!cell || !unitSupportsPickDrop(cell->unitType)) {
+        return;
+    }
+    if (cell->unitType == WB_UNIT_TREEBOT && cell->unitCargo.green > 0) {
+        return;
+    }
+    if (cell->unitType == WB_UNIT_STEAMSHOVEL && (cell->unitCargo.red > 0 || cell->unitCargo.blue > 0)) {
+        return;
+    }
+    drawCargoIconAt(app, &cell->unitCargo, unitX, unitY);
+}
+
+/* Called for moving units — cargo is in the WBMoveState. */
+static void drawMovingUnitCargoOverlay(AppState* app, WBUnitType unitType, const WBResourcePile* cargo, float unitX, float unitY) {
+    if (unitType == WB_UNIT_TREEBOT && cargo && cargo->green > 0) {
+        return;
+    }
+    if (unitType == WB_UNIT_STEAMSHOVEL && cargo && (cargo->red > 0 || cargo->blue > 0)) {
+        return;
+    }
+    drawCargoIconAt(app, cargo, unitX, unitY);
+}
+
+static void drawObjectsBottom(AppState* app) {
+    int y;
+    int x;
+
+    /* Recover from partial sheet-load failures to avoid invisible monsters. */
+    if (!app->monstersASheet || !app->monstersBSheet) {
+        loadGameplaySheets(app);
+    }
+
+    /* whirlpool animation frame (4 frames @ ~2fps) */
+    int whirlFrame = (int)((osGetTime() / 500) % 4);
+    for (y = 0; y < app->map.height; ++y) {
+        for (x = 0; x < app->map.width; ++x) {
+            const WBCell* cell = &app->map.cells[y][x];
+            float locX;
+            float locY;
+            posToLoc(app, x + 1, y + 1, &locX, &locY);
+            drawGoal(app, cell, locX, locY);
+            drawResourceOrPlan(app, cell, locX, locY);
+            /* Draw whirlpools above terrain/resources but below units/buildings. */
+            if (cell->isWhirlpool) {
+                int wAssetId = (cell->hasUnit || cellHasActiveMover(app, x, y, -1))
+                    ? ASSET_WHIRLPOOL_STATIC
+                    : (ASSET_WHIRLPOOL_WHIRL1 + whirlFrame);
+                float wX = locX + (24.0f * DIRECTOR_SCALE);
+                float wY = locY + (24.0f * DIRECTOR_SCALE);
+                C2D_Image wImg = getImage(app, wAssetId);
+                if (wImg.subtex) {
+                    drawAnchoredImage(wImg, wX, wY, DIRECTOR_SCALE,
+                        wImg.subtex->width * 0.5f,
+                        wImg.subtex->height * 0.5f);
+                }
+            }
+            if (cell->hasUnit) {
+                u8 unitAction = WB_UNIT_ANIM_NONE;
+                if (app->unitActionUntilMs[y][x] > osGetTime()) {
+                    unitAction = app->unitActionAnim[y][x];
+                }
+                int assetId = unitAnimAssetId(cell->unitType, cell->unitDirection, terrainUsesWaterSprite(cell->terrain), 0.0f, &cell->unitCargo, unitAction);
+                if (assetId >= 0) {
+                    float unitX = locX + (10.0f * DIRECTOR_SCALE);
+                    float unitY = locY + (18.0f * DIRECTOR_SCALE);
+                    if (app->hasSelection && x == app->selectedX && y == app->selectedY &&
+                        app->selectedMover < 0 && app->selectedShudderUntilMs > osGetTime()) {
+                        unitX += 2.0f * sinf((float) osGetTime() / 25.0f);
+                    }
+                    C2D_Image image = getImage(app, assetId);
+                    if (imageIntersectsScreen(image, unitX, unitY, DIRECTOR_SCALE, g_objectAnchors[assetId].x, g_objectAnchors[assetId].y, BOTTOM_W, BOTTOM_H)) {
+                        drawAnchoredImage(image, unitX, unitY, DIRECTOR_SCALE, g_objectAnchors[assetId].x, g_objectAnchors[assetId].y);
+                        drawUnitCargoOverlay(app, cell, unitX, unitY);
+                        drawUnitEnergyBadgeAt(app, cell->unitEnergyDeci, unitX, unitY, x, y, cell->unitType);
+                        if (app->hasSelection && x == app->selectedX && y == app->selectedY) {
+                            drawSelectionHighlight(app, unitX, unitY, false, assetId);
+                        }
+                    }
+                }
+            }
+            /* ── buildings ── */
+            if (cell->hasBuilding) {
+                int bAssetId = buildingAssetId(cell->buildingType, cell->buildingDirection, cell->factoryColor);
+                if (bAssetId >= 0) {
+                    float bX = locX;
+                    float bY = locY;
+                    C2D_Image bImg = getImage(app, bAssetId);
+                    if (bImg.subtex) {
+                        WBAnchor anchor = (bAssetId < ASSET_BUILDINGS_BASE) ? g_objectAnchors[bAssetId] : g_objectAnchors[ASSET_BUILDING_GAS_STATION];
+                        if (bAssetId < (int)(sizeof(g_objectAnchors)/sizeof(g_objectAnchors[0]))) {
+                            anchor = g_objectAnchors[bAssetId];
+                        }
+                        drawAnchoredImage(bImg, bX, bY, DIRECTOR_SCALE, anchor.x, anchor.y);
+                        if (cell->buildingHp > 0 && cell->buildingHp <= 200) {
+                            drawUnitEnergyBadge(app, cell->buildingHp, bX, bY);
+                        }
+                        if (app->hasSelection && x == app->selectedX && y == app->selectedY) {
+                            drawSelectionHighlight(app, bX, bY, false, bAssetId);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    /* ── monsters (drawn after cells pass so they overlay resources/goals) ── */
+    {
+        int mi;
+        for (mi = 0; mi < g_monsterCount; ++mi) {
+            const WBMonsterState* ms = &g_monsters[mi];
+            float locX;
+            float locY;
+            C2D_Image mImg;
+            int mAssetId;
+            int walkTick;
+            bool attacking = false;
+            if (!ms->active) continue;
+            /* interpolated draw position when moving */
+            if (ms->isMoving) {
+                float srcX, srcY, dstX, dstY;
+                posToLoc(app, ms->col + 1, ms->row + 1, &srcX, &srcY);
+                posToLoc(app, ms->destCol + 1, ms->destRow + 1, &dstX, &dstY);
+                locX = srcX + (dstX - srcX) * ms->moveProgress;
+                locY = srcY + (dstY - srcY) * ms->moveProgress;
+                /* walk animation: cycle frames across the step (0-based for monsterAnimAssetId) */
+                {
+                    int nf = wbMonsterWalkFrames(ms->type);
+                    int ft = (int)(ms->moveProgress * nf * 2.0f);
+                    if (ft < 1) ft = 1;
+                    if (ft > nf) ft -= nf;
+                    walkTick = ft - 1;
+                }
+            } else {
+                posToLoc(app, ms->col + 1, ms->row + 1, &locX, &locY);
+                walkTick = 0; /* idle frame */
+            }
+            {
+                attacking = (osGetTime() - ms->lastAttackMs) < WB_DAMAGE_EFFECT_DURATION_MS;
+                if (attacking) {
+                    walkTick = (int) ((osGetTime() / 120) & 1);
+                }
+            }
+            mAssetId = monsterAnimAssetId(ms->type, ms->dir, ms->onWater, walkTick, attacking);
+            if (mAssetId < 0) {
+                continue;
+            }
+            mImg = getImage(app, mAssetId);
+            if (!mImg.subtex) {
+                loadGameplaySheets(app);
+                mImg = getImage(app, mAssetId);
+            }
+            if (!mImg.subtex) {
+                mImg = monsterSheetFallbackImage(app, ms, walkTick, attacking);
+            }
+            if (mImg.subtex) {
+                float mX = locX + (10.0f * DIRECTOR_SCALE);
+                float mY = locY + (18.0f * DIRECTOR_SCALE);
+                bool isFrozen = app->map.cells[ms->row][ms->col].monsterFrozen;
+                /* When frozen the ice-block sprite replaces the animated monster entirely. */
+                if (!isFrozen) {
+                    /* Known-good render math: center X, bottom-align Y. */
+                    C2D_DrawImageAt(mImg,
+                        mX - mImg.subtex->width * DIRECTOR_SCALE * 0.5f,
+                        mY - mImg.subtex->height * DIRECTOR_SCALE,
+                        0.0f, NULL, DIRECTOR_SCALE, DIRECTOR_SCALE);
+                }
+                /* Draw frozen overlay (replaces normal sprite) when frozen */
+                if (isFrozen) {
+                    int frozenAsset = -1;
+                    switch (ms->type) {
+                        case WB_MONSTER_CRAB:       frozenAsset = ASSET_MONSTER_CRAB_FROZEN;       break;
+                        case WB_MONSTER_WATER_CRAB: frozenAsset = ASSET_MONSTER_WATER_CRAB_FROZEN; break;
+                        case WB_MONSTER_GATOR:      frozenAsset = ASSET_MONSTER_GATOR_FROZEN;      break;
+                        case WB_MONSTER_SCORPION:   frozenAsset = ASSET_MONSTER_SCORPION_FROZEN;   break;
+                        case WB_MONSTER_SHARK:      frozenAsset = ASSET_MONSTER_SHARK_FROZEN;      break;
+                        case WB_MONSTER_TREX:       frozenAsset = ASSET_MONSTER_TREX_FROZEN;       break;
+                        case WB_MONSTER_LION:       frozenAsset = ASSET_MONSTER_LION_FROZEN;       break;
+                        default: break;
+                    }
+                    if (frozenAsset >= 0) {
+                        C2D_Image frozenImg = getImage(app, frozenAsset);
+                        if (frozenImg.subtex) {
+                            drawAnchoredImage(frozenImg, mX, mY, DIRECTOR_SCALE,
+                                g_objectAnchors[frozenAsset].x,
+                                g_objectAnchors[frozenAsset].y);
+                        }
+                    }
+                } /* end if (isFrozen) */
+                /* Low-HP badge when monster is badly damaged */
+                if (ms->hp <= 200) {
+                    drawUnitEnergyBadge(app, ms->hp, mX, mY);
+                }
+            } else {
+                float mX = locX + (10.0f * DIRECTOR_SCALE);
+                float mY = locY + (18.0f * DIRECTOR_SCALE);
+                C2D_DrawRectSolid(mX - 2.0f, mY - 2.0f, 0.0f, 4.0f, 4.0f, C2D_Color32(0xFF, 0x30, 0x30, 0xFF));
+            }
+        }
+    }
+    for (y = 0; y < (int) (sizeof(app->moves) / sizeof(app->moves[0])); ++y) {
+        drawMovingUnit(app, y);
+    }
+    drawWorldEffectsBottom(app);
+}
+
+static void drawBuildPreview(AppState* app) {
+    static const int outlineAssets[6] = {
+        ASSET_BUILD_OUTLINE,
+        ASSET_BUILD_OUTLINE_FRONT,
+        ASSET_BUILD_OUTLINE_REAR,
+        ASSET_BUILD_OUTLINE_L1,
+        ASSET_BUILD_OUTLINE_L2,
+        ASSET_BUILD_OUTLINE_R1
+    };
+    float outlineX;
+    float outlineY;
+    float ghostX;
+    float ghostY;
+    int iconAsset;
+    int ghostAsset;
+    C2D_ImageTint ghostTint;
+    int i;
+    if (!app->buildPreviewValid || app->armedPlan == WB_PLAN_NONE) {
+        return;
+    }
+    {
+        WBBuildingType buildBuilding = planTypeToBuilding(app->armedPlan);
+        WBUnitType buildUnit = planTypeToUnit(app->armedPlan);
+        if (buildBuilding != WB_BUILDING_NONE) {
+            ghostAsset = buildingAssetId(buildBuilding, WB_DIR_RIGHT, 0);
+        } else {
+            WBResourcePile emptyPile;
+            memset(&emptyPile, 0, sizeof(emptyPile));
+            ghostAsset = unitAnimAssetId(buildUnit, WB_DIR_RIGHT, false, 0.0f, &emptyPile, WB_UNIT_ANIM_NONE);
+        }
+        if (ghostAsset < 0) {
+            ghostAsset = ASSET_VEHICLE_BUGGY_RIGHT;
+        }
+    }
+    posToLoc(app, app->buildPreviewX, app->buildPreviewY, &ghostX, &ghostY);
+    posToLoc(app, app->buildPreviewX - 1, app->buildPreviewY - 1, &outlineX, &outlineY);
+    ghostX += 10.0f * DIRECTOR_SCALE;
+    ghostY += 18.0f * DIRECTOR_SCALE;
+    iconAsset = app->buildPreviewAllowed ? ASSET_BUILD_YES : ASSET_BUILD_NO;
+    for (i = 0; i < 6; ++i) {
+        int assetId = outlineAssets[i];
+        drawAnchoredImage(getImage(app, assetId), outlineX, outlineY, DIRECTOR_SCALE, g_objectAnchors[assetId].x, g_objectAnchors[assetId].y);
+    }
+    drawAnchoredImage(getImage(app, ASSET_BUILD_OUTLINE_R2), outlineX, outlineY, DIRECTOR_SCALE, g_objectAnchors[ASSET_BUILD_OUTLINE_R2].x, g_objectAnchors[ASSET_BUILD_OUTLINE_R2].y);
+    C2D_PlainImageTint(&ghostTint, C2D_Color32(0xFF, 0xFF, 0xFF, app->buildPreviewAllowed ? 0xBF : 0x66), 1.0f);
+    C2D_DrawImageAt(getImage(app, ghostAsset), ghostX - (g_objectAnchors[ghostAsset].x * DIRECTOR_SCALE), ghostY - (g_objectAnchors[ghostAsset].y * DIRECTOR_SCALE), 0.0f, &ghostTint, DIRECTOR_SCALE, DIRECTOR_SCALE);
+    drawAnchoredImage(getImage(app, iconAsset), outlineX + (40.0f * DIRECTOR_SCALE), outlineY + (75.0f * DIRECTOR_SCALE), DIRECTOR_SCALE, g_objectAnchors[iconAsset].x, g_objectAnchors[iconAsset].y);
+}
+
+static void drawMinimap(AppState* app, float centerX, float centerY, float scale) {
+    float miniX = roundf(centerX - ((app->map.width * scale) * 0.5f));
+    float miniY = roundf(centerY - ((app->map.height * scale) * 0.5f));
+    int x;
+    int y;
+    for (y = 0; y < app->map.height; ++y) {
+        for (x = 0; x < app->map.width; ++x) {
+            const WBCell* cell = &app->map.cells[y][x];
+            float px = miniX + (x * scale);
+            float py = miniY + (y * scale);
+            int miniTerrainAsset = minimapTerrainAssetId(cell->terrain, cell->terrainVariant);
+            if (miniTerrainAsset >= 0) {
+                C2D_DrawImageAt(getImage(app, miniTerrainAsset), px, py, 0.0f, NULL, scale / 3.0f, scale / 3.0f);
+            }
+            if (cell->hasGoal && (!cell->bonusGoal || app->map.bonusAvailable) && !cell->goalSatisfied) {
+                C2D_DrawRectSolid(px, py, 0.0f, scale, scale, C2D_Color32(0xFF, 0xE0, 0x45, 0xFF));
+            } else if (cell->hasUnit || cellHasActiveMover(app, x, y, -1)) {
+                C2D_DrawImageAt(getImage(app, ASSET_MINI_VEHICLE), px, py, 0.0f, NULL, scale / 3.0f, scale / 3.0f);
+            } else if (cell->hasResource) {
+                C2D_DrawImageAt(getImage(app, cell->resourceIsPlan ? ASSET_MINI_PLAN : ASSET_MINI_RESOURCE), px, py, 0.0f, NULL, scale / 3.0f, scale / 3.0f);
+            }
+        }
+    }
+
+    for (y = 0; y < g_monsterCount; ++y) {
+        const WBMonsterState* ms = &g_monsters[y];
+        float px;
+        float py;
+        float dot = scale < 3.0f ? 1.0f : (scale * 0.35f);
+
+        if (!ms->active || ms->dying || !inBounds(app, ms->col, ms->row)) {
+            continue;
+        }
+
+        px = miniX + (ms->col * scale) + ((scale - dot) * 0.5f);
+        py = miniY + (ms->row * scale) + ((scale - dot) * 0.5f);
+        if (ms->type == WB_MONSTER_BOULDER) {
+            C2D_DrawRectSolid(px, py, 0.0f, dot, dot, C2D_Color32(0x90, 0x90, 0x90, 0xFF));
+        } else {
+            C2D_DrawRectSolid(px, py, 0.0f, dot, dot, C2D_Color32(0xFF, 0x35, 0x35, 0xFF));
+        }
+    }
+
+    C2D_DrawRectSolid(miniX + ((app->cameraX - 1) * scale), miniY + ((app->cameraY - 1) * scale), 0.0f, VIEW_TILE_W * scale, 1.0f, C2D_Color32(0xFF, 0xF2, 0x55, 0xFF));
+    C2D_DrawRectSolid(miniX + ((app->cameraX - 1) * scale), miniY + ((app->cameraY - 1) * scale), 0.0f, 1.0f, VIEW_TILE_H * scale, C2D_Color32(0xFF, 0xF2, 0x55, 0xFF));
+    C2D_DrawRectSolid(miniX + (((app->cameraX - 1) + VIEW_TILE_W) * scale) - 1.0f, miniY + ((app->cameraY - 1) * scale), 0.0f, 1.0f, VIEW_TILE_H * scale, C2D_Color32(0xFF, 0xF2, 0x55, 0xFF));
+    C2D_DrawRectSolid(miniX + ((app->cameraX - 1) * scale), miniY + (((app->cameraY - 1) + VIEW_TILE_H) * scale) - 1.0f, 0.0f, VIEW_TILE_W * scale, 1.0f, C2D_Color32(0xFF, 0xF2, 0x55, 0xFF));
+}
+
+static float minimapScaleForMap(const AppState* app) {
+    float preferred = 8.0f / 1.5f;
+    float maxWidth = 132.0f;
+    float maxHeight = 90.0f;
+    float sx = maxWidth / (float) app->map.width;
+    float sy = maxHeight / (float) app->map.height;
+    float fit = sx < sy ? sx : sy;
+    return fit < preferred ? fit : preferred;
+}
+
+/* Count how many lines drawWrappedText would produce for a given maxChars limit. */
+static int countWrappedLines(const char* text, int maxChars) {
+    int i = 0;
+    int lineLen = 0;
+    int lines = 0;
+    if (text[0] == '\0') return 0;
+    while (text[i] != '\0') {
+        char word[64];
+        int w = 0;
+        while (text[i] == ' ') { ++i; }
+        if (text[i] == '\n') {
+            ++lines;
+            lineLen = 0;
+            ++i;
+            continue;
+        }
+        while (text[i] != '\0' && text[i] != ' ' && text[i] != '\n' && w < (int)sizeof(word)-1) {
+            word[w++] = text[i++];
+        }
+        word[w] = '\0';
+        if (w == 0) continue;
+        if (lineLen > 0 && (lineLen + 1 + w) > maxChars) {
+            ++lines;
+            lineLen = 0;
+        }
+        lineLen += (lineLen > 0 ? 1 : 0) + w;
+    }
+    if (lineLen > 0) ++lines;
+    return lines;
+}
+
+static void drawWrappedText(C2D_TextBuf buf, float x, float y, float scale, const char* text, float lineStep, int maxChars) {
+    char line[256];
+    int i = 0;
+    int lineLen = 0;
+    line[0] = '\0';
+    while (text[i] != '\0') {
+        char word[64];
+        int w = 0;
+        while (text[i] == ' ') {
+            ++i;
+        }
+        if (text[i] == '\n') {
+            if (lineLen > 0) {
+                drawTextLine(buf, x, y, scale, line);
+                y += lineStep;
+                line[0] = '\0';
+                lineLen = 0;
+            } else {
+                y += lineStep;
+            }
+            ++i;
+            continue;
+        }
+        while (text[i] != '\0' && text[i] != ' ' && text[i] != '\n' && w < (int) sizeof(word) - 1) {
+            word[w++] = text[i++];
+        }
+        word[w] = '\0';
+        if (w == 0) {
+            continue;
+        }
+        if (lineLen > 0 && (lineLen + 1 + w) > maxChars) {
+            drawTextLine(buf, x, y, scale, line);
+            y += lineStep;
+            line[0] = '\0';
+            lineLen = 0;
+        }
+        if (lineLen > 0) {
+            strncat(line, " ", sizeof(line) - strlen(line) - 1);
+            lineLen += 1;
+        }
+        strncat(line, word, sizeof(line) - strlen(line) - 1);
+        lineLen += w;
+    }
+    if (lineLen > 0) {
+        drawTextLine(buf, x, y, scale, line);
+    }
+}
+
+static void loadGameplaySheets(AppState* app) {
+    if (!app->vehiclesLandSheet)   app->vehiclesLandSheet   = C2D_SpriteSheetLoad("romfs:/gfx/vehicles_land.t3x");
+    if (!app->vehiclesWaterSheet)  app->vehiclesWaterSheet  = C2D_SpriteSheetLoad("romfs:/gfx/vehicles_water.t3x");
+    if (!app->vehiclesAnimalSheet) app->vehiclesAnimalSheet = C2D_SpriteSheetLoad("romfs:/gfx/vehicles_animal.t3x");
+    if (!app->vehiclesRobotSheet)  app->vehiclesRobotSheet  = C2D_SpriteSheetLoad("romfs:/gfx/vehicles_robot.t3x");
+    if (!app->monstersASheet)      app->monstersASheet      = C2D_SpriteSheetLoad("romfs:/gfx/monsters_a.t3x");
+    if (!app->monstersBSheet)      app->monstersBSheet      = C2D_SpriteSheetLoad("romfs:/gfx/monsters_b.t3x");
+    if (!app->buildingsSheet)      app->buildingsSheet      = C2D_SpriteSheetLoad("romfs:/gfx/buildings.t3x");
+    if (!app->whirlpoolSheet)      app->whirlpoolSheet      = C2D_SpriteSheetLoad("romfs:/gfx/whirlpool.t3x");
+    if (!app->wb2MonstersSheet)    app->wb2MonstersSheet    = C2D_SpriteSheetLoad("romfs:/gfx/wb2_monsters.t3x");
+    if (!app->wb2VehiclesSheet)    app->wb2VehiclesSheet    = C2D_SpriteSheetLoad("romfs:/gfx/wb2_vehicles.t3x");
+    if (!app->wb2BuildingsSheet)   app->wb2BuildingsSheet   = C2D_SpriteSheetLoad("romfs:/gfx/wb2_buildings.t3x");
+    if (!app->wb2TerrainSheet)     app->wb2TerrainSheet     = C2D_SpriteSheetLoad("romfs:/gfx/wb2_terrain.t3x");
+    if (!app->wb2ResourcesSheet)   app->wb2ResourcesSheet   = C2D_SpriteSheetLoad("romfs:/gfx/wb2_resources.t3x");
+}
+
+static void freeGameplaySheets(AppState* app) {
+    if (app->vehiclesLandSheet)   { C2D_SpriteSheetFree(app->vehiclesLandSheet);   app->vehiclesLandSheet   = NULL; }
+    if (app->vehiclesWaterSheet)  { C2D_SpriteSheetFree(app->vehiclesWaterSheet);  app->vehiclesWaterSheet  = NULL; }
+    if (app->vehiclesAnimalSheet) { C2D_SpriteSheetFree(app->vehiclesAnimalSheet); app->vehiclesAnimalSheet = NULL; }
+    if (app->vehiclesRobotSheet)  { C2D_SpriteSheetFree(app->vehiclesRobotSheet);  app->vehiclesRobotSheet  = NULL; }
+    if (app->monstersASheet)      { C2D_SpriteSheetFree(app->monstersASheet);      app->monstersASheet      = NULL; }
+    if (app->monstersBSheet)      { C2D_SpriteSheetFree(app->monstersBSheet);      app->monstersBSheet      = NULL; }
+    if (app->buildingsSheet)      { C2D_SpriteSheetFree(app->buildingsSheet);      app->buildingsSheet      = NULL; }
+    if (app->whirlpoolSheet)      { C2D_SpriteSheetFree(app->whirlpoolSheet);      app->whirlpoolSheet      = NULL; }
+    if (app->wb2MonstersSheet)    { C2D_SpriteSheetFree(app->wb2MonstersSheet);    app->wb2MonstersSheet    = NULL; }
+    if (app->wb2VehiclesSheet)    { C2D_SpriteSheetFree(app->wb2VehiclesSheet);    app->wb2VehiclesSheet    = NULL; }
+    if (app->wb2BuildingsSheet)   { C2D_SpriteSheetFree(app->wb2BuildingsSheet);   app->wb2BuildingsSheet   = NULL; }
+    if (app->wb2TerrainSheet)     { C2D_SpriteSheetFree(app->wb2TerrainSheet);     app->wb2TerrainSheet     = NULL; }
+    if (app->wb2ResourcesSheet)   { C2D_SpriteSheetFree(app->wb2ResourcesSheet);   app->wb2ResourcesSheet   = NULL; }
+}
+
+/* ---------------------------------------------------------------------------
+   Per-level audio: scan the map and load only what the level actually needs.
+   --------------------------------------------------------------------------- */
+
+/* Bitmask of per-level audio requirements */
+#define WBAUDIO_NEED_MONSTER_ATTACK   (1u <<  0)   /* any monster present */
+#define WBAUDIO_NEED_VEHICLE          (1u <<  1)   /* buggy/dirtbuggy/speedboat/tugboat/freighter */
+#define WBAUDIO_NEED_ANIMAL           (1u <<  2)   /* duck/frog/fish/snail */
+#define WBAUDIO_NEED_BLDG_UNIT        (1u <<  3)   /* steamshovel/dumptruck/forklift/dozer selection sound */
+#define WBAUDIO_NEED_DIG_GROUND       (1u <<  4)   /* steamshovel digs ground */
+#define WBAUDIO_NEED_FILL_GROUND      (1u <<  5)   /* steamshovel fills ground */
+#define WBAUDIO_NEED_DIG_TREE         (1u <<  6)   /* treebot uproots tree */
+#define WBAUDIO_NEED_PLANT_TREE       (1u <<  7)   /* treebot plants tree */
+#define WBAUDIO_NEED_ROBOT            (1u <<  8)   /* treebot/repairbot/defender/freezebot */
+#define WBAUDIO_NEED_BLDG_GENERIC     (1u <<  9)   /* any building present */
+#define WBAUDIO_NEED_BLDG_GUARD_TOWER (1u << 10)   /* guard tower */
+#define WBAUDIO_NEED_BLDG_FACTORY     (1u << 11)   /* factory */
+#define WBAUDIO_NEED_BLDG_GASMAR      (1u << 12)   /* gas station or marina */
+#define WBAUDIO_NEED_BLDG_ROBOT_LAB   (1u << 13)   /* robot lab */
+
+/* Return audio need bits for a single plan type. */
+static unsigned int scanPlanAudioNeeds(WBPlanType planType) {
+    switch (planType) {
+        case WB_PLAN_DUCK:
+        case WB_PLAN_FROG:
+        case WB_PLAN_FISH:
+        case WB_PLAN_SNAIL:
+            return WBAUDIO_NEED_ANIMAL;
+        case WB_PLAN_TREEBOT:
+            return WBAUDIO_NEED_ROBOT | WBAUDIO_NEED_DIG_TREE | WBAUDIO_NEED_PLANT_TREE;
+        case WB_PLAN_REPAIRBOT:
+        case WB_PLAN_DEFENDER:
+        case WB_PLAN_FREEZEBOT:
+            return WBAUDIO_NEED_ROBOT;
+        case WB_PLAN_STEAMSHOVEL:
+            return WBAUDIO_NEED_VEHICLE | WBAUDIO_NEED_DIG_GROUND | WBAUDIO_NEED_FILL_GROUND;
+        case WB_PLAN_DUMPTRUCK:
+        case WB_PLAN_FORKLIFT:
+        case WB_PLAN_DOZER:
+            return WBAUDIO_NEED_VEHICLE;
+        case WB_PLAN_FACTORY:
+            return WBAUDIO_NEED_BLDG_GENERIC | WBAUDIO_NEED_BLDG_FACTORY;
+        case WB_PLAN_GAS_STATION:
+        case WB_PLAN_MARINA:
+            return WBAUDIO_NEED_BLDG_GENERIC | WBAUDIO_NEED_BLDG_GASMAR;
+        case WB_PLAN_GUARD_TOWER:
+            return WBAUDIO_NEED_BLDG_GENERIC | WBAUDIO_NEED_BLDG_GUARD_TOWER;
+        case WB_PLAN_ROBOT_LAB:
+            return WBAUDIO_NEED_BLDG_GENERIC | WBAUDIO_NEED_BLDG_ROBOT_LAB;
+        case WB_PLAN_HOUSE:
+        case WB_PLAN_WINDMILL:
+        case WB_PLAN_GARAGE:
+        case WB_PLAN_NURSERY:
+        case WB_PLAN_AIRPORT:
+            return WBAUDIO_NEED_BLDG_GENERIC;
+        default: /* all remaining are land/water vehicles */
+            return WBAUDIO_NEED_VEHICLE;
+    }
+}
+
+/* Walk every cell and inventory slot to determine which per-level SFX are needed. */
+static unsigned int scanLevelAudioNeeds(const WBMap* map) {
+    unsigned int needs = 0;
+    int x, y, p;
+
+    for (y = 0; y < map->height; ++y) {
+        for (x = 0; x < map->width; ++x) {
+            const WBCell* cell = &map->cells[y][x];
+
+            if (cell->hasMonster) {
+                needs |= WBAUDIO_NEED_MONSTER_ATTACK;
+            }
+
+            if (cell->hasUnit) {
+                switch (cell->unitType) {
+                    case WB_UNIT_DUCK:
+                    case WB_UNIT_FROG:
+                    case WB_UNIT_FISH:
+                    case WB_UNIT_SNAIL:
+                        needs |= WBAUDIO_NEED_ANIMAL;
+                        break;
+                    case WB_UNIT_TREEBOT:
+                        needs |= WBAUDIO_NEED_ROBOT | WBAUDIO_NEED_DIG_TREE | WBAUDIO_NEED_PLANT_TREE;
+                        break;
+                    case WB_UNIT_REPAIRBOT:
+                    case WB_UNIT_DEFENDER:
+                    case WB_UNIT_DEFENDER2:
+                    case WB_UNIT_FREEZEBOT:
+                        needs |= WBAUDIO_NEED_ROBOT;
+                        break;
+                    case WB_UNIT_STEAMSHOVEL:
+                        needs |= WBAUDIO_NEED_VEHICLE | WBAUDIO_NEED_DIG_GROUND | WBAUDIO_NEED_FILL_GROUND;
+                        break;
+                    case WB_UNIT_DUMPTRUCK:
+                    case WB_UNIT_FORKLIFT:
+                    case WB_UNIT_DOZER:
+                        needs |= WBAUDIO_NEED_VEHICLE;
+                        break;
+                    default:
+                        needs |= WBAUDIO_NEED_VEHICLE;
+                        break;
+                }
+            }
+
+            if (cell->hasBuilding) {
+                needs |= WBAUDIO_NEED_BLDG_GENERIC;
+                switch (cell->buildingType) {
+                    case WB_BUILDING_FACTORY:
+                        needs |= WBAUDIO_NEED_BLDG_FACTORY;
+                        break;
+                    case WB_BUILDING_GAS_STATION:
+                    case WB_BUILDING_MARINA:
+                        needs |= WBAUDIO_NEED_BLDG_GASMAR;
+                        break;
+                    case WB_BUILDING_GUARD_TOWER:
+                        needs |= WBAUDIO_NEED_BLDG_GUARD_TOWER;
+                        break;
+                    case WB_BUILDING_ROBOT_LAB:
+                        needs |= WBAUDIO_NEED_BLDG_ROBOT_LAB;
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            if (cell->resourceIsPlan) {
+                needs |= scanPlanAudioNeeds(cell->resourcePlanType);
+            }
+        }
+    }
+
+    /* Plans in player's starting inventory */
+    for (p = 0; p < WB_PLAN_COUNT; ++p) {
+        if (map->planInventory[p] > 0) {
+            needs |= scanPlanAudioNeeds((WBPlanType) p);
+        }
+    }
+
+    return needs;
+}
+
+/* Free all per-level audio: unit/building SFX and game music variants. */
+static void freeLevelAudio(AppState* app) {
+    int i;
+    /* Stop the SFX channel before freeing to avoid use-after-free in the DSP */
+    if (app->audioReady) {
+        ndspChnReset(SFX_CHANNEL);
+        ndspChnWaveBufClear(SFX_CHANNEL);
+    }
+    freeWavClip(&app->sfxMonsterAttack);
+    freeWavClip(&app->sfxUnitVehicle);
+    freeWavClip(&app->sfxUnitAnimal);
+    freeWavClip(&app->sfxDigGround);
+    freeWavClip(&app->sfxFillGround);
+    freeWavClip(&app->sfxDigTree);
+    freeWavClip(&app->sfxPlantTree);
+    freeWavClip(&app->sfxUnitRobot);
+    freeWavClip(&app->sfxBldgGeneric);
+    freeWavClip(&app->sfxBldgGuardTower);
+    freeWavClip(&app->sfxBldgFactory);
+    freeWavClip(&app->sfxBldgGasStationMarina);
+    freeWavClip(&app->sfxBldgRobotLab);
+    for (i = 0; i < WB_MUSIC_GAME6_VARIANTS; ++i) { freeWavClip(&app->musicGame6Variants[i]); }
+    for (i = 0; i < WB_MUSIC_GAME8_VARIANTS; ++i) { freeWavClip(&app->musicGame8Variants[i]); }
+    for (i = 0; i < WB_MUSIC_GAMEA_VARIANTS; ++i) { freeWavClip(&app->musicGameAVariants[i]); }
+    for (i = 0; i < WB_MUSIC_GAMEI_VARIANTS; ++i) { freeWavClip(&app->musicGameIVariants[i]); }
+}
+
+/* Load per-level SFX based on need flags, then attempt music variants with remaining budget. */
+static void loadLevelAudio(AppState* app, unsigned int needs) {
+    /* Unit / entity SFX — in priority order (smallest files first within tier) */
+    if (needs & WBAUDIO_NEED_MONSTER_ATTACK) {
+        app->loadedClipCount += loadWavClip("romfs:/audio/sfx_monster_attack.wav", &app->sfxMonsterAttack) ? 1 : 0;
+    }
+    if (needs & WBAUDIO_NEED_VEHICLE) {
+        app->loadedClipCount += loadWavClip("romfs:/audio/sfx_unit_vehicle.wav", &app->sfxUnitVehicle) ? 1 : 0;
+    }
+    if (needs & WBAUDIO_NEED_ANIMAL) {
+        app->loadedClipCount += loadWavClip("romfs:/audio/sfx_unit_animal.wav", &app->sfxUnitAnimal) ? 1 : 0;
+    }
+    /* Terrain action SFX */
+    if (needs & WBAUDIO_NEED_DIG_GROUND) {
+        app->loadedClipCount += loadWavClip("romfs:/audio/sfx_dig_ground.wav", &app->sfxDigGround) ? 1 : 0;
+    }
+    if (needs & WBAUDIO_NEED_FILL_GROUND) {
+        app->loadedClipCount += loadWavClip("romfs:/audio/sfx_fill_ground.wav", &app->sfxFillGround) ? 1 : 0;
+    }
+    if (needs & WBAUDIO_NEED_DIG_TREE) {
+        app->loadedClipCount += loadWavClip("romfs:/audio/sfx_dig_tree.wav", &app->sfxDigTree) ? 1 : 0;
+    }
+    if (needs & WBAUDIO_NEED_PLANT_TREE) {
+        app->loadedClipCount += loadWavClip("romfs:/audio/sfx_plant_tree.wav", &app->sfxPlantTree) ? 1 : 0;
+    }
+    /* Robot selection SFX */
+    if (needs & WBAUDIO_NEED_ROBOT) {
+        app->loadedClipCount += loadWavClip("romfs:/audio/sfx_unit_robot.wav", &app->sfxUnitRobot) ? 1 : 0;
+    }
+    /* Building SFX — generic loaded first (budget fallback), then specific sounds */
+    if (needs & WBAUDIO_NEED_BLDG_GENERIC) {
+        app->loadedClipCount += loadWavClip("romfs:/audio/sfx_bldg_generic.wav", &app->sfxBldgGeneric) ? 1 : 0;
+        app->sfxBldgGeneric.volume = 0.55f;
+    }
+    if (needs & WBAUDIO_NEED_BLDG_GUARD_TOWER) {
+        app->loadedClipCount += loadWavClip("romfs:/audio/sfx_bldg_guard_tower.wav", &app->sfxBldgGuardTower) ? 1 : 0;
+        app->sfxBldgGuardTower.volume = 0.55f;
+    }
+    if (needs & WBAUDIO_NEED_BLDG_FACTORY) {
+        app->loadedClipCount += loadWavClip("romfs:/audio/sfx_bldg_factory.wav", &app->sfxBldgFactory) ? 1 : 0;
+        app->sfxBldgFactory.volume = 0.55f;
+    }
+    if (needs & WBAUDIO_NEED_BLDG_GASMAR) {
+        app->loadedClipCount += loadWavClip("romfs:/audio/sfx_bldg_gas_station_marina.wav", &app->sfxBldgGasStationMarina) ? 1 : 0;
+        app->sfxBldgGasStationMarina.volume = 0.55f;
+    }
+    if (needs & WBAUDIO_NEED_BLDG_ROBOT_LAB) {
+        app->loadedClipCount += loadWavClip("romfs:/audio/sfx_bldg_robot_lab.wav", &app->sfxBldgRobotLab) ? 1 : 0;
+        app->sfxBldgRobotLab.volume = 0.55f;
+    }
+    /* Music variants — attempted after all SFX; gracefully skipped if heap is full.
+       Ordered smallest variant first so partial loads remain musically useful. */
+    app->loadedClipCount += loadWavClip("romfs:/audio/music_game_8_1.wav", &app->musicGame8Variants[0]) ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/music_game_8_4.wav", &app->musicGame8Variants[2]) ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/music_game_8_3.wav", &app->musicGame8Variants[1]) ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/music_game_a_1.wav", &app->musicGameAVariants[0]) ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/music_game_a_2.wav", &app->musicGameAVariants[1]) ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/music_game_a_3.wav", &app->musicGameAVariants[2]) ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/music_game_6_1.wav", &app->musicGame6Variants[0]) ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/music_game_6_3.wav", &app->musicGame6Variants[1]) ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/music_game_6_4.wav", &app->musicGame6Variants[2]) ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/music_game_6_5.wav", &app->musicGame6Variants[3]) ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/music_game_i_1.wav", &app->musicGameIVariants[0]) ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/music_game_i_2.wav", &app->musicGameIVariants[1]) ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/music_game_i_3.wav", &app->musicGameIVariants[2]) ? 1 : 0;
+    app->linearFreeKB = (int)(linearSpaceFree() / 1024);
+}
+
+static void loadMissionIntoGame(AppState* app, int world, int mission) {
+    char path[64];
+    snprintf(path, sizeof(path), "romfs:/maps/map%d_%d.txt", world, mission);
+    if (!wbMapLoad(path, &app->map)) {
+        appendDebugLog("  wbMapLoad FAILED");
+        return;
+    }
+    {
+        char _dbg[96];
+        snprintf(_dbg, sizeof(_dbg), "  wbMapLoad OK world=%d mission=%d w=%d h=%d",
+            world, mission, app->map.width, app->map.height);
+        appendDebugLog(_dbg);
+    }
+    trimMenuSheetsForGameplay(app, world);
+    loadGameplaySheets(app);
+    app->screenMode = WB_SCREEN_GAME;
+    app->activeWorld = world;
+    app->activeMission = mission;
+    app->cameraX = 1;
+    app->cameraY = 1;
+    app->hasSelection = false;
+    app->selectedMover = -1;
+    app->infoOverlayOpen = false;
+    app->planMenuOpen = false;
+    app->startMenuOpen = false;
+    app->armedPlan = WB_PLAN_NONE;
+    app->goalPopupVisible = false;
+    app->goalPopupComplete = false;
+    app->goalPopupBonus = false;
+    app->planSwoop.active = false;
+    app->pendingActionValid = false;
+    app->actionMode = WB_ACTION_MOVE;
+    memset(app->worldEffects, 0, sizeof(app->worldEffects));
+    memset(app->pendingUnitBreaks, 0, sizeof(app->pendingUnitBreaks));
+    memset(app->cellAttackCooldownMs, 0, sizeof(app->cellAttackCooldownMs));
+    memset(app->unitSwampDamageTickMs, 0, sizeof(app->unitSwampDamageTickMs));
+    memset(app->unitRechargeTickMs, 0, sizeof(app->unitRechargeTickMs));
+    memset(app->buildingTickMs, 0, sizeof(app->buildingTickMs));
+    memset(app->unitActionUntilMs, 0, sizeof(app->unitActionUntilMs));
+    memset(app->unitActionAnim, 0, sizeof(app->unitActionAnim));
+    memset(app->moves, 0, sizeof(app->moves));
+    /* Scan audio needs BEFORE populateMonstersFromMap clears cell->hasMonster flags. */
+    {
+        unsigned int needs = scanLevelAudioNeeds(&app->map);
+        populateMonstersFromMap(&app->map);
+        app->map.isWB2Level = (world >= 6);
+        clampCamera(app);
+        freeLevelAudio(app);
+        loadLevelAudio(app, needs);
+    }
+    startGameMusic(app);
+}
+
+static void worldMapLayout(const AppState* app, int world, float* outX, float* outY, float* outScale) {
+    C2D_Image mapImage = getImage(app, worldMapAssetId(world));
+    float imageW = g_worldMapSourceSize[world].x > 0.0f ? g_worldMapSourceSize[world].x : imageWidth(mapImage, 1.0f);
+    float imageH = g_worldMapSourceSize[world].y > 0.0f ? g_worldMapSourceSize[world].y : imageHeight(mapImage, 1.0f);
+    if (world == 1) {
+        float scale = BOTTOM_W / imageW;
+        float mapH = imageH * scale;
+        *outScale = scale;
+        *outX = 0.0f;
+        *outY = BOTTOM_H - mapH;
+    } else {
+        float scaleX = BOTTOM_W / imageW;
+        float scaleY = BOTTOM_H / imageH;
+        float scale = scaleX > scaleY ? scaleX : scaleY;
+        *outScale = scale;
+        *outX = (BOTTOM_W - (imageW * scale)) * 0.5f;
+        *outY = (BOTTOM_H - (imageH * scale)) * 0.5f;
+    }
+    (void) app;
+}
+
+static void missionPointToBottom(const AppState* app, int world, int mission, float* outX, float* outY) {
+    float mapX;
+    float mapY;
+    float scale;
+    worldMapLayout(app, world, &mapX, &mapY, &scale);
+    *outX = mapX + (g_worldMissionPoints[world][mission].x * scale);
+    *outY = mapY + (g_worldMissionPoints[world][mission].y * scale);
+}
+
+static int missionFlagAsset(int world, int frame, bool bonus) {
+    static const int landFlags[6] = {0, ASSET_WORLD_FLAG1, ASSET_WORLD_FLAG2, ASSET_WORLD_FLAG3, ASSET_WORLD_FLAG4, ASSET_WORLD_FLAG5};
+    static const int landFlags2[7] = {0, ASSET_WORLD_FLAG1, ASSET_WORLD_FLAG2, ASSET_WORLD_FLAG3, ASSET_WORLD_FLAG4, ASSET_WORLD_FLAG5, ASSET_WORLD_FLAG6};
+    static const int landBonus[7] = {0, ASSET_WORLD_BONUS_FLAG1, ASSET_WORLD_BONUS_FLAG2, ASSET_WORLD_BONUS_FLAG3, ASSET_WORLD_BONUS_FLAG4, ASSET_WORLD_BONUS_FLAG5, ASSET_WORLD_BONUS_FLAG6};
+    static const int oceanFlags[7] = {0, ASSET_OCEAN_FLAG1, ASSET_OCEAN_FLAG2, ASSET_OCEAN_FLAG3, ASSET_OCEAN_FLAG4, ASSET_OCEAN_FLAG5, ASSET_OCEAN_FLAG6};
+    static const int oceanBonus[7] = {0, ASSET_OCEAN_BONUS_FLAG1, ASSET_OCEAN_BONUS_FLAG2, ASSET_OCEAN_BONUS_FLAG3, ASSET_OCEAN_BONUS_FLAG4, ASSET_OCEAN_BONUS_FLAG5, ASSET_OCEAN_BONUS_FLAG6};
+    (void) landFlags;
+    if (frame < 1) {
+        frame = 1;
+    }
+    if (frame > 6) {
+        frame = 6;
+    }
+    if (world == 4) {
+        return bonus ? oceanBonus[frame] : oceanFlags[frame];
+    }
+    return bonus ? landBonus[frame] : landFlags2[frame];
+}
+
+static void initWorldMiniWalkers(AppState* app, int world) {
+    int i;
+    memset(app->miniWalkers, 0, sizeof(app->miniWalkers));
+    for (i = 0; i < (int) (sizeof(g_worldMiniSeeds) / sizeof(g_worldMiniSeeds[0])); ++i) {
+        if (g_worldMiniSeeds[i].world == world) {
+            WBMiniWalker* walker = &app->miniWalkers[i];
+            float x;
+            float y;
+            missionPointToBottom(app, world, g_worldMiniSeeds[i].mission, &x, &y);
+            walker->active = true;
+            walker->world = world;
+            walker->mission = g_worldMiniSeeds[i].mission;
+            walker->bonus = g_worldMiniSeeds[i].bonus;
+            walker->lake = g_worldMiniSeeds[i].lake;
+            walker->spriteAssetId = g_worldMiniSeeds[i].assetId;
+            walker->homeX = x;
+            walker->homeY = y;
+            walker->x = x;
+            walker->y = y;
+            walker->dirX = 1.0f;
+            walker->dirY = 0.0f;
+            walker->nextDecisionMs = osGetTime() + (u64) randRange(250, 900);
+        }
+    }
+}
+
+static void ensureWorldMiniWalkers(AppState* app) {
+    if (app->screenMode != WB_SCREEN_WORLD_SELECT) {
+        return;
+    }
+    if (!app->miniWalkers[0].active || app->miniWalkers[0].world != app->worldSelectWorld) {
+        initWorldMiniWalkers(app, app->worldSelectWorld);
+    }
+}
+
+static void updateWorldMiniWalkers(AppState* app) {
+    int i;
+    u64 now = osGetTime();
+    ensureWorldMiniWalkers(app);
+    for (i = 0; i < (int) (sizeof(app->miniWalkers) / sizeof(app->miniWalkers[0])); ++i) {
+        WBMiniWalker* walker = &app->miniWalkers[i];
+        float radius;
+        if (!walker->active) {
+            continue;
+        }
+        if (worldMissionState(app, walker->world, walker->mission) < 1 || (walker->bonus && worldMissionState(app, walker->world, walker->mission) < 3)) {
+            continue;
+        }
+        radius = walker->world == 4 ? 19.0f : 55.0f;
+        if (now >= walker->nextDecisionMs) {
+            if (walker->stopped) {
+                walker->stopped = false;
+                switch (randRange(0, 3)) {
+                    case 0: walker->dirX = -1.0f; walker->dirY = 0.0f; break;
+                    case 1: walker->dirX = 1.0f; walker->dirY = 0.0f; break;
+                    case 2: walker->dirX = 0.0f; walker->dirY = -1.0f; break;
+                    default: walker->dirX = 0.0f; walker->dirY = 1.0f; break;
+                }
+                walker->nextDecisionMs = now + (u64) randRange(60, 110);
+            } else if (randRange(1, 80) == 1) {
+                walker->stopped = true;
+                walker->nextDecisionMs = now + (u64) randRange(300, 1000);
+            } else {
+                float skewX = (29.0f * walker->dirX) + (-35.0f * walker->dirY);
+                float skewY = (-25.0f * walker->dirX) + (-13.0f * walker->dirY);
+                float nextX = walker->x + (skewX / 40.0f);
+                float nextY = walker->y + (skewY / 40.0f);
+                float dx = nextX - walker->homeX;
+                float dy = nextY - walker->homeY;
+                if ((dx * dx) + (dy * dy) <= (radius * radius)) {
+                    walker->x = nextX;
+                    walker->y = nextY;
+                } else {
+                    switch (randRange(0, 3)) {
+                        case 0: walker->dirX = -1.0f; walker->dirY = 0.0f; break;
+                        case 1: walker->dirX = 1.0f; walker->dirY = 0.0f; break;
+                        case 2: walker->dirX = 0.0f; walker->dirY = -1.0f; break;
+                        default: walker->dirX = 0.0f; walker->dirY = 1.0f; break;
+                    }
+                }
+                walker->nextDecisionMs = now + (u64) randRange(60, 110);
+            }
+        }
+    }
+}
+
+static void drawDebugMenu(AppState* app) {
+    static const char* items[] = {
+        "Clear Save Data",
+        "Unlock All Levels",
+        "Toggle Debug Info",
+        "Close Menu"
+    };
+    int i;
+    int count = 4;
+    float bx = 60.0f, by = 60.0f, bw = 280.0f, bh = 130.0f;
+    C2D_DrawRectSolid(bx, by, 0.2f, bw, bh, C2D_Color32(0x00, 0x00, 0x00, 0xCC));
+    C2D_DrawRectSolid(bx, by, 0.2f, bw, 2.0f, C2D_Color32(0xF0, 0xD2, 0x38, 0xFF));
+    C2D_DrawRectSolid(bx, by + bh - 2.0f, 0.2f, bw, 2.0f, C2D_Color32(0xF0, 0xD2, 0x38, 0xFF));
+    C2D_DrawRectSolid(bx, by, 0.2f, 2.0f, bh, C2D_Color32(0xF0, 0xD2, 0x38, 0xFF));
+    C2D_DrawRectSolid(bx + bw - 2.0f, by, 0.2f, 2.0f, bh, C2D_Color32(0xF0, 0xD2, 0x38, 0xFF));
+    drawTextLine(app->dynamicBuf, bx + 8.0f, by + 6.0f, 0.38f, "Debug Menu  (A=select  B=close)");
+    for (i = 0; i < count; ++i) {
+        float iy = by + 30.0f + (i * 22.0f);
+        if (i == app->debugMenuCursor) {
+            C2D_DrawRectSolid(bx + 4.0f, iy - 2.0f, 0.2f, bw - 8.0f, 18.0f, C2D_Color32(0xDA, 0x7D, 0x00, 0xCC));
+            drawTextLine(app->dynamicBuf, bx + 14.0f, iy, 0.38f, items[i]);
+        } else {
+            drawTextLine(app->dynamicBuf, bx + 14.0f, iy, 0.38f, items[i]);
+        }
+    }
+}
+
+static void drawTitleBottom(AppState* app) {
+    u64 now = osGetTime();
+    u64 halfCycle = 15000ULL;   /* 15 s per title */
+    u64 fadeMs    = 500ULL;     /* 0.5 s fade-through-black at each transition */
+    u64 elapsed   = (app->titleCycleStartMs != 0) ? (now - app->titleCycleStartMs) : 0ULL;
+    u64 which     = (elapsed / halfCycle) % 2; /* 0 = WB1, 1 = WB2 */
+    u64 phase     = elapsed % halfCycle;
+    u8  blackAlpha = 0;
+
+    if (phase >= halfCycle - fadeMs) {
+        /* Fading out current image towards black */
+        blackAlpha = (u8)((phase - (halfCycle - fadeMs)) * 255ULL / fadeMs);
+    } else if (phase < fadeMs) {
+        /* Fading in from black */
+        blackAlpha = (u8)((fadeMs - phase) * 255ULL / fadeMs);
+    }
+
+    if (which == 0) {
+        /* WB1 title */
+        C2D_Image splash = getImage(app, ASSET_TITLE_FINAL_IMAGE);
+        C2D_Image logo   = getImage(app, ASSET_TITLE_LOGO);
+        float splashScale = 0.50f;
+        float logoScale   = 0.88f;
+        drawAnchoredImage(splash, 160.0f, 154.0f, splashScale, 302.0f, 178.0f);
+        drawAnchoredImage(logo,   160.0f,  36.0f, logoScale,   168.0f,  28.0f);
+        C2D_DrawRectSolid(214.0f, 102.0f, 0.0f, 64.0f, 14.0f, C2D_Color32(0xDA, 0x7D, 0x00, 0xFF));
+        C2D_DrawRectSolid(214.0f, 102.0f, 0.0f, 64.0f,  2.0f, C2D_Color32(0xF0, 0xD2, 0x38, 0xFF));
+        drawTextLine(app->dynamicBuf, 220.0f, 105.0f, 0.31f, "Touch to Start");
+    } else {
+        /* WB2 title — logo and START button are baked into the sprite; stretch to fill screen */
+        C2D_Image splash2 = getImage(app, ASSET_TITLE_WB2_IMAGE);
+        if (splash2.subtex) {
+            float scaleX = BOTTOM_W / (float)splash2.subtex->width;
+            float scaleY = BOTTOM_H / (float)splash2.subtex->height;
+            C2D_DrawImageAt(splash2, 0.0f, 0.0f, 0.0f, NULL, scaleX, scaleY);
+        }
+    }
+
+    /* Fade-through-black overlay */
+    if (blackAlpha > 0) {
+        C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 240.0f, C2D_Color32(0, 0, 0, blackAlpha));
+    }
+}
+
+/* Returns true if all missions in the given world have been completed (at least one must exist). */
+static bool worldCompleteP(const AppState* app, int world) {
+    bool hasAny = false;
+    int m;
+    for (m = 1; m <= 12; ++m) {
+        int st = app->levelState[world][m];
+        if (st < 0) continue;
+        hasAny = true;
+        if (st < 1) return false;
+    }
+    return hasAny;
+}
+
+/* Returns true if the Builder's License is accessible.
+   Original requirement: worldCompleteP(3) — all missions in WB1 world 3 done. */
+static bool licenseUnlocked(const AppState* app) {
+    return worldCompleteP(app, 3);
+}
+
+/* Returns true if the WB2 Builder's License is accessible.
+   WB2 original: all missions in WB2 world 1 (our world 6) done. */
+static bool wb2LicenseUnlocked(const AppState* app) {
+    return worldCompleteP(app, 6);
+}
+
+/* Returns WB2 license class 1-3 (A/B/C) based on bonus missions completed in worlds 6-7.
+   Original thresholds (countBonuses over WB2 worlds): 0-11=A(1), 12-23=B(2), 24+=C(3).
+   Note: WB2 class A is the best (most bonuses), C is the minimum (all missions done). */
+static int wb2LicenseClass(const AppState* app) {
+    int count = 0;
+    int w, m;
+    for (w = 6; w <= 7; ++w) {
+        for (m = 1; m <= 12; ++m) {
+            if (app->levelState[w][m] >= 2) ++count;
+        }
+    }
+    if (count < 12) return 1;  /* Class A */
+    if (count < 24) return 2;  /* Class B */
+    return 3;                  /* Class C */
+}
+
+/* Returns license class 1-4 based on bonus missions completed.
+   Original thresholds: 0-11 = class1, 12-23 = class2, 24-35 = class3, 36+ = class4.
+   Only WB1 worlds (1-5) count, matching the original worlds_manager.countBonuses(). */
+static int licenseClass(const AppState* app) {
+    int count = 0;
+    int w, m;
+    for (w = 1; w <= 5; ++w) {
+        for (m = 1; m <= 12; ++m) {
+            if (app->levelState[w][m] >= 2) ++count;
+        }
+    }
+    if (count < 12) return 1;
+    if (count < 24) return 2;
+    if (count < 36) return 3;
+    return 4;
+}
+
+static void drawWorldSelectTop(AppState* app) {
+    /* Ensure license sheet is loaded regardless of how world-select was entered */
+    if (!app->licenseSheet)
+        app->licenseSheet = C2D_SpriteSheetLoad("romfs:/gfx/license.t3x");
+    C2D_Image sky = getImage(app, worldSkyAssetId(app->worldSelectWorld));
+    float scale = app->worldSelectWorld == 1 ? 0.66f : 0.72f;
+    float skyW = imageWidth(sky, scale);
+    float skyH = imageHeight(sky, scale);
+    float y;
+    float x;
+    for (y = 0.0f; y < TOP_H + skyH; y += skyH) {
+        for (x = 0.0f; x < TOP_W + skyW; x += skyW) {
+            C2D_DrawImageAt(sky, x, y, 0.0f, NULL, scale, scale);
+        }
+    }
+
+    if (app->showDiagnostics) {
+        C2D_Image mapImage = getImage(app, worldMapAssetId(app->worldSelectWorld));
+        float mapX, mapY, mapScale;
+        char hdr[80];
+        int m;
+        float lineY = 4.0f;
+        float lineH = 12.0f;
+        float panelW = 396.0f;
+
+        worldMapLayout(app, app->worldSelectWorld, &mapX, &mapY, &mapScale);
+
+        /* semi-transparent dark panel behind text */
+        C2D_DrawRectSolid(2.0f, 2.0f, 0.1f, panelW, TOP_H - 4.0f,
+            C2D_Color32(0x00, 0x00, 0x00, 0xB0));
+
+        /* Header: world, image size, layout */
+        snprintf(hdr, sizeof(hdr),
+            "World %d  imgW=%.0f imgH=%.0f  scale=%.3f  mapX=%.1f mapY=%.1f",
+            app->worldSelectWorld,
+            imageWidth(mapImage, 1.0f), imageHeight(mapImage, 1.0f),
+            mapScale, mapX, mapY);
+        drawTextLineWhite(app->dynamicBuf, 6.0f, lineY, 0.35f, hdr);
+        lineY += lineH;
+
+        /* Two columns of 6 missions each */
+        for (m = 1; m <= 12; ++m) {
+            int st = worldMissionState(app, app->worldSelectWorld, m);
+            float px, py;
+            char mline[80];
+            const char* stStr =
+                st < -1  ? "???" :
+                st == -1 ? "locked" :
+                st == 0  ? "open" :
+                st == 1  ? "done" :
+                st == 3  ? "bonus" : "?";
+            missionPointToBottom(app, app->worldSelectWorld, m, &px, &py);
+            snprintf(mline, sizeof(mline),
+                "M%02d [%s] pt=(%.0f,%.0f)  %s",
+                m, stStr, px, py,
+                app->missionNames[app->worldSelectWorld][m][0]
+                    ? app->missionNames[app->worldSelectWorld][m]
+                    : "-");
+            {
+                float col = (m <= 6) ? 6.0f : 200.0f;
+                float row = ((m - 1) % 6) * lineH + lineY;
+                drawTextLineWhite(app->dynamicBuf, col, row, 0.32f, mline);
+            }
+        }
+    }
+
+    /* Builder's License overlay — shown when SELECT is toggled and license is unlocked.
+       WB1 card shown for worlds 1-5; WB2 card shown for worlds 6-7. */
+    if (app->licenseVisible && app->worldSelectWorld < 6 && licenseUnlocked(app) && app->licenseSheet) {
+        int cls = licenseClass(app);
+        C2D_Image card = getImage(app, ASSET_LICENSE_CLASS1 + (cls - 1));
+        float cardW = imageWidth(card, 1.0f);
+        float cardH = imageHeight(card, 1.0f);
+        /* Centre on the 400x240 top screen with a slight scale-up (1.25x) */
+        float scale = 1.25f;
+        float drawW = cardW * scale;
+        float drawH = cardH * scale;
+        float cx = (TOP_W - drawW) * 0.5f;
+        float cy = (TOP_H - drawH) * 0.5f;
+        /* Semi-transparent dark backdrop */
+        C2D_DrawRectSolid(0.0f, 0.0f, 0.15f, (float)TOP_W, (float)TOP_H,
+            C2D_Color32(0x00, 0x00, 0x00, 0xA0));
+        C2D_DrawImageAt(card, cx, cy, 0.2f, NULL, scale, scale);
+        /* World-completion stickers (ocean=world4, prehistoric=world5).
+           The card PNGs are pre-downscaled by 192/275 ≈ 0.698 from the original
+           275×175 Director art; the sticker PNGs are still at original resolution
+           (47×47).  Apply the same pre-scale factor so the stickers are proportional
+           to the displayed card.
+           Positions are sticker-centre offsets into the 192×122 card image space,
+           matching the lower-left area where the class-colour blocks appear.
+           world4 (ocean) ≈ block 2, world5 (prehistoric) ≈ block 4. */
+        {
+            /* stickerScale: card PNGs are pre-downscaled to 192/275 of the original;
+               sticker PNGs are at original resolution.  Apply only the downscale
+               factor so the sticker is proportional to the card's source artwork.
+               The screen-space 1.25× display zoom is already baked into cx/cy offsets. */
+            float stickerScale = 192.0f / 275.0f;  /* ≈ 0.698 */
+            if (worldCompleteP(app, 4)) {
+                C2D_Image s = getImage(app, ASSET_LICENSE_STICKER_W4);
+                if (s.subtex) {
+                    float sw = imageWidth(s, stickerScale);
+                    float sh = imageHeight(s, stickerScale);
+                    float sx = cx + 28.0f * scale - sw * 0.5f;
+                    float sy = cy + 88.0f * scale - sh * 0.5f;
+                    C2D_DrawImageAt(s, sx, sy, 0.25f, NULL, stickerScale, stickerScale);
+                }
+            }
+            if (worldCompleteP(app, 5)) {
+                C2D_Image s = getImage(app, ASSET_LICENSE_STICKER_W5);
+                if (s.subtex) {
+                    float sw = imageWidth(s, stickerScale);
+                    float sh = imageHeight(s, stickerScale);
+                    float sx = cx + 63.0f * scale - sw * 0.5f;
+                    float sy = cy + 88.0f * scale - sh * 0.5f;
+                    C2D_DrawImageAt(s, sx, sy, 0.25f, NULL, stickerScale, stickerScale);
+                }
+            }
+        }
+        /* Hint label */
+        drawTextLine(app->dynamicBuf, 6.0f, 228.0f, 0.34f, "SELECT: hide license");
+    } else if (app->licenseVisible && app->worldSelectWorld >= 6 && wb2LicenseUnlocked(app) && app->licenseSheet) {
+        /* WB2 Builder's License card — front only, no class art variants on the card image. */
+        C2D_Image card = getImage(app, ASSET_WB2_LICENSE_FRONT);
+        float cardW = imageWidth(card, 1.0f);
+        float cardH = imageHeight(card, 1.0f);
+        float scale = 1.25f;
+        float drawW = cardW * scale;
+        float drawH = cardH * scale;
+        float cx = (TOP_W - drawW) * 0.5f;
+        float cy = (TOP_H - drawH) * 0.5f;
+        /* Semi-transparent dark backdrop */
+        C2D_DrawRectSolid(0.0f, 0.0f, 0.15f, (float)TOP_W, (float)TOP_H,
+            C2D_Color32(0x00, 0x00, 0x00, 0xA0));
+        C2D_DrawImageAt(card, cx, cy, 0.2f, NULL, scale, scale);
+        /* Reward class label overlay (wb2_reward_class1/2/3) centred near the card bottom. */
+        {
+            int cls = wb2LicenseClass(app);
+            C2D_Image lbl = getImage(app, ASSET_WB2_REWARD_CLASS1 + (cls - 1));
+            if (lbl.subtex) {
+                float lblW = imageWidth(lbl, scale);
+                float lblH = imageHeight(lbl, scale);
+                float lx = cx + (drawW - lblW) * 0.5f;
+                float ly = cy + drawH - lblH - 4.0f * scale;
+                C2D_DrawImageAt(lbl, lx, ly, 0.25f, NULL, scale, scale);
+            }
+        }
+        drawTextLine(app->dynamicBuf, 6.0f, 228.0f, 0.34f, "SELECT: hide license");
+    }
+}
+
+static void drawWorldSelectSkyBackdrop(AppState* app, float surfaceW, float surfaceH) {
+    C2D_Image sky = getImage(app, worldSkyAssetId(app->worldSelectWorld));
+    float scale = app->worldSelectWorld == 1 ? 0.66f : 0.72f;
+    float skyW = imageWidth(sky, scale);
+    float skyH = imageHeight(sky, scale);
+    float y;
+    float x;
+    for (y = 0.0f; y < surfaceH + skyH; y += skyH) {
+        for (x = 0.0f; x < surfaceW + skyW; x += skyW) {
+            C2D_DrawImageAt(sky, x, y, 0.0f, NULL, scale, scale);
+        }
+    }
+}
+
+static void drawWorldMissionIcons(AppState* app) {
+    int mission;
+    int frame = 6 - ((int) ((osGetTime() / 100) % 6));
+    u64 now = osGetTime();
+    float mapX, mapY, mapScale;
+    worldMapLayout(app, app->worldSelectWorld, &mapX, &mapY, &mapScale);
+    (void) mapX; (void) mapY;
+    if (frame < 1) {
+        frame = 1;
+    }
+    for (mission = 1; mission <= 12; ++mission) {
+        float x;
+        float y;
+        float phase;
+        float t;
+        float cycle;
+        float dx;
+        float dy;
+        float iconScale = 0.5f * mapScale;
+        int state = worldMissionState(app, app->worldSelectWorld, mission);
+        missionPointToBottom(app, app->worldSelectWorld, mission, &x, &y);
+        if (state < 0) {
+            continue;
+        }
+        /* D-pad hover highlight: draw behind the icon so the flag appears on top */
+        if (app->hoverMissionLevel == mission) {
+            float r = 7.0f * mapScale;
+            C2D_DrawRectSolid(x - r - 2.0f, y - r - 2.0f, 0.0f, r * 2.0f + 4.0f, r * 2.0f + 4.0f, C2D_Color32(0x00, 0x00, 0x00, 0xA0));
+            C2D_DrawRectSolid(x - r,        y - r,        0.0f, r * 2.0f,         r * 2.0f,         C2D_Color32(0xFF, 0xE0, 0x00, 0x90));
+        }
+        if (state == 0) {
+            int shadowAsset = app->worldSelectWorld == 4 ? ASSET_OCEAN_QUESTION_MARK_SHADOW : ASSET_WORLD_QUESTION_MARK_SHADOW;
+            phase = ((float) ((mission - 1) % 6)) / 6.0f;
+            cycle = ((float) (now % 2200ULL)) / 2200.0f;
+            t = 2.0f * 3.14159265f * (phase + cycle);
+            dx = 1.5f * cosf(t);
+            dy = 2.25f * sinf(t);
+            drawAnchoredImage(getImage(app, shadowAsset), x + dx, y, iconScale, 15.0f,
+                app->worldSelectWorld == 4 ? -19.0f : -17.0f);
+            drawAnchoredImage(getImage(app, ASSET_WORLD_QUESTION_MARK), x + dx, y + dy, iconScale, 18.0f, 12.0f);
+        } else if (state == 3) {
+            int assetId = missionFlagAsset(app->worldSelectWorld, frame, true);
+            drawAnchoredImage(getImage(app, assetId), x, y, iconScale, 17.0f, 15.0f);
+        } else {
+            int assetId = missionFlagAsset(app->worldSelectWorld, frame, false);
+            drawAnchoredImage(getImage(app, assetId), x, y, iconScale, 17.0f, 15.0f);
+        }
+    }
+}
+
+static void drawWorldMiniWalkers(AppState* app) {
+    int i;
+    float mapX, mapY, mapScale;
+    worldMapLayout(app, app->worldSelectWorld, &mapX, &mapY, &mapScale);
+    (void) mapX; (void) mapY;
+    for (i = 0; i < (int) (sizeof(app->miniWalkers) / sizeof(app->miniWalkers[0])); ++i) {
+        WBMiniWalker* walker = &app->miniWalkers[i];
+        float iconScale = 0.5f * mapScale;
+        if (!walker->active) {
+            continue;
+        }
+        if (worldMissionState(app, walker->world, walker->mission) < 1 || (walker->bonus && worldMissionState(app, walker->world, walker->mission) < 3)) {
+            continue;
+        }
+        drawAnchoredImage(getImage(app, walker->spriteAssetId), walker->x, walker->y, iconScale,
+            walker->spriteAssetId == ASSET_BUGGY_MINI ? 7.0f :
+            walker->spriteAssetId == ASSET_DUCK_MINI ? 3.0f :
+            walker->spriteAssetId == ASSET_DUCK_WATER_MINI ? 3.0f :
+            walker->spriteAssetId == ASSET_FISH_MINI ? 7.0f : 3.0f,
+            walker->spriteAssetId == ASSET_BUGGY_MINI ? 9.0f :
+            walker->spriteAssetId == ASSET_DUCK_MINI ? 6.0f :
+            walker->spriteAssetId == ASSET_DUCK_WATER_MINI ? 3.0f :
+            walker->spriteAssetId == ASSET_FISH_MINI ? 4.0f : 5.0f);
+    }
+}
+
+/* Decoration sprites placed on worldmap screens, matching original WB1 Director positions.
+   imgX/imgY are image-space coords: locH, (locV - 73).
+   anchorX/anchorY are the registration point in sprite pixels (from Members CSV). */
+typedef struct { int assetId; float x; float y; float anchorX; float anchorY; } WBMapDeco;
+
+static const WBMapDeco g_world2Decos[] = {
+    /* trees (ASSET_MAP_TREE: 16x29 px, reg 7,14) */
+    {ASSET_MAP_TREE, 110, 255, 7, 14}, {ASSET_MAP_TREE, 218, 189, 7, 14},
+    {ASSET_MAP_TREE, 217,  99, 7, 14}, {ASSET_MAP_TREE, 279, 318, 7, 14},
+    {ASSET_MAP_TREE, 294, 215, 7, 14}, {ASSET_MAP_TREE, 326, 217, 7, 14},
+    {ASSET_MAP_TREE, 316, 185, 7, 14}, {ASSET_MAP_TREE, 323,  82, 7, 14},
+    {ASSET_MAP_TREE, 420, 118, 7, 14}, {ASSET_MAP_TREE, 476, 186, 7, 14},
+    {ASSET_MAP_TREE, 393, 230, 7, 14}, {ASSET_MAP_TREE, 427, 279, 7, 14},
+    {ASSET_MAP_TREE, 108, 146, 7, 14}, {ASSET_MAP_TREE, 277,  51, 7, 14},
+    {ASSET_MAP_TREE, 375,  57, 7, 14}, {ASSET_MAP_TREE, 382,  94, 7, 14},
+    {ASSET_MAP_TREE, 502,  99, 7, 14}, {ASSET_MAP_TREE, 528, 144, 7, 14},
+    /* mountains (ASSET_MAP_MOUNTAIN: 41x47 px, reg 21,23) */
+    {ASSET_MAP_MOUNTAIN, 237, 121, 21, 23},
+    {ASSET_MAP_MOUNTAIN, 419, 162, 21, 23},
+    {0, 0, 0, 0, 0}
+};
+
+static const WBMapDeco g_world3Decos[] = {
+    /* trees */
+    {ASSET_MAP_TREE,  50, 199, 7, 14}, {ASSET_MAP_TREE, 202, 173, 7, 14},
+    {ASSET_MAP_TREE, 119,  57, 7, 14}, {ASSET_MAP_TREE, 185,  43, 7, 14},
+    {ASSET_MAP_TREE, 245, 183, 7, 14}, {ASSET_MAP_TREE, 297, 212, 7, 14},
+    {ASSET_MAP_TREE, 321, 183, 7, 14}, {ASSET_MAP_TREE, 285,  79, 7, 14},
+    {ASSET_MAP_TREE, 420, 118, 7, 14}, {ASSET_MAP_TREE, 450, 184, 7, 14},
+    {ASSET_MAP_TREE, 450, 250, 7, 14}, {ASSET_MAP_TREE, 512, 282, 7, 14},
+    {ASSET_MAP_TREE, 108, 146, 7, 14}, {ASSET_MAP_TREE, 277,  39, 7, 14},
+    {ASSET_MAP_TREE, 228,  91, 7, 14}, {ASSET_MAP_TREE, 388,  90, 7, 14},
+    {ASSET_MAP_TREE, 511,  91, 7, 14}, {ASSET_MAP_TREE, 528, 144, 7, 14},
+    /* mountains */
+    {ASSET_MAP_MOUNTAIN, 252, 110, 21, 23},
+    {ASSET_MAP_MOUNTAIN, 411, 152, 21, 23},
+    {ASSET_MAP_MOUNTAIN, 182, 110, 21, 23},
+    {ASSET_MAP_MOUNTAIN, 223, 133, 21, 23},
+    /* rocks (ASSET_MAP_ROCKS: 28x14 px, reg 14,6) */
+    {ASSET_MAP_ROCKS,  75, 214, 14, 6}, {ASSET_MAP_ROCKS,  72, 171, 14, 6},
+    {ASSET_MAP_ROCKS, 145, 218, 14, 6}, {ASSET_MAP_ROCKS, 191, 219, 14, 6},
+    {ASSET_MAP_ROCKS, 196, 138, 14, 6}, {ASSET_MAP_ROCKS, 228, 165, 14, 6},
+    {ASSET_MAP_ROCKS, 208,  85, 14, 6}, {ASSET_MAP_ROCKS, 206,  64, 14, 6},
+    {ASSET_MAP_ROCKS, 274, 111, 14, 6}, {ASSET_MAP_ROCKS, 268, 131, 14, 6},
+    {ASSET_MAP_ROCKS, 250, 140, 14, 6}, {ASSET_MAP_ROCKS, 299, 112, 14, 6},
+    {ASSET_MAP_ROCKS, 323, 203, 14, 6}, {ASSET_MAP_ROCKS, 390, 176, 14, 6},
+    {ASSET_MAP_ROCKS, 434, 155, 14, 6}, {ASSET_MAP_ROCKS, 416, 173, 14, 6},
+    {ASSET_MAP_ROCKS, 521, 113, 14, 6}, {ASSET_MAP_ROCKS, 430, 269, 14, 6},
+    {ASSET_MAP_ROCKS, 509, 208, 14, 6},
+    {0, 0, 0, 0, 0}
+};
+
+static const WBMapDeco* const g_worldDecos[8] = {
+    NULL, NULL, g_world2Decos, g_world3Decos, NULL, NULL, NULL, NULL
+};
+
+static void drawWorldMapDecorations(AppState* app) {
+    int world = app->worldSelectWorld;
+    const WBMapDeco* deco;
+    float mapX, mapY, mapScale;
+    if (world < 1 || world > 7) return;
+    deco = g_worldDecos[world];
+    if (!deco) return;
+    worldMapLayout(app, world, &mapX, &mapY, &mapScale);
+    for (; deco->assetId != 0; ++deco) {
+        float sx = mapX + deco->x * mapScale;
+        float sy = mapY + deco->y * mapScale;
+        drawAnchoredImage(getImage(app, deco->assetId), sx, sy, mapScale, deco->anchorX, deco->anchorY);
+    }
+}
+
+static void drawWorldSelectBottom(AppState* app) {
+    C2D_Image mapImage = getImage(app, worldMapAssetId(app->worldSelectWorld));
+    float mapX;
+    float mapY;
+    float scale;
+    worldMapLayout(app, app->worldSelectWorld, &mapX, &mapY, &scale);
+    drawWorldSelectSkyBackdrop(app, BOTTOM_W, BOTTOM_H);
+    drawAnchoredImage(mapImage, mapX + imageWidth(mapImage, scale) * 0.5f, mapY + imageHeight(mapImage, scale) * 0.5f, scale, imageWidth(mapImage, 1.0f) * 0.5f, imageHeight(mapImage, 1.0f) * 0.5f);
+    drawWorldMapDecorations(app);
+    drawWorldMiniWalkers(app);
+    drawAnchoredImage(getImage(app, ASSET_PREV_WORLD_ARROW), 22.0f, 118.0f, 1.0f, 12.0f, 12.0f);
+    drawAnchoredImage(getImage(app, ASSET_NEXT_WORLD_ARROW), 298.0f, 118.0f, 1.0f, 12.0f, 12.0f);
+    drawWorldMissionIcons(app);
+    drawTextLine(app->dynamicBuf, 122.0f, 2.0f, 0.42f, worldName(app->worldSelectWorld));
+    if (app->showDiagnostics) {
+        int _m;
+        for (_m = 1; _m <= 12; ++_m) {
+            float _mx, _my;
+            if (worldMissionState(app, app->worldSelectWorld, _m) < 0) continue;
+            missionPointToBottom(app, app->worldSelectWorld, _m, &_mx, &_my);
+            C2D_DrawRectSolid(_mx - 4.0f, _my - 4.0f, 0.5f, 8.0f, 8.0f,
+                C2D_Color32(0xFF, 0x00, 0x00, 0xB0));
+        }
+    }
+}
+
+static void drawSidebarEnergy(const AppState* app, int energy) {
+    float iconX = 8.0f;
+    float iconY = 84.0f;
+    float bgX = 31.0f;
+    float bgY = 87.0f;
+    C2D_DrawImageAt(getImage(app, energy > 0 ? ASSET_UI_ENERGY_ICON : ASSET_UI_NO_ENERGY), iconX, iconY, 0.0f, NULL, 1.0f, 1.0f);
+    C2D_DrawImageAt(getImage(app, ASSET_UI_ENERGY_STRIPE_BG), bgX, bgY, 0.0f, NULL, 1.0f, 1.0f);
+    if (energy > 0) {
+        float units = floorf((float) energy * 0.23f);
+        u32 color = energy <= 20 ? C2D_Color32(0xFF, 0x00, 0x00, 0xFF) : C2D_Color32(0x00, 0xB3, 0x22, 0xFF);
+        if (units < 1.0f) {
+            units = 1.0f;
+        }
+        C2D_DrawRectSolid(bgX + 1.0f, bgY + 1.0f, 0.0f, units * 3.0f, 3.0f, color);
+    }
+}
+
+static void drawSidebarRecipe(AppState* app, const WBResourcePile* recipe, bool planMode) {
+    int assets[6];
+    int kinds[6];
+    int counts[6];
+    int num = 0;
+    float baseY = planMode ? 148.0f : 108.0f;
+    float iconX[6] = { 18.0f, 46.0f, 74.0f, 102.0f, 130.0f, 158.0f };
+    float textX[6] = { 30.0f, 58.0f, 86.0f, 114.0f, 142.0f, 170.0f };
+    if (recipe->red > 0) { assets[num] = ASSET_RESOURCE_RED; kinds[num] = 0; counts[num++] = recipe->red; }
+    if (recipe->blue > 0 && num < 6) { assets[num] = ASSET_RESOURCE_BLUE; kinds[num] = 1; counts[num++] = recipe->blue; }
+    if (recipe->green > 0 && num < 6) { assets[num] = ASSET_RESOURCE_YELLOW; kinds[num] = 2; counts[num++] = recipe->green; }
+    if (recipe->yellow > 0 && num < 6) { assets[num] = ASSET_RESOURCE_YELLOW; kinds[num] = 3; counts[num++] = recipe->yellow; }
+    if (recipe->wheel > 0 && num < 6) { assets[num] = ASSET_RESOURCE_WHEEL; kinds[num] = 4; counts[num++] = recipe->wheel; }
+    if (recipe->energy > 0 && num < 6) { assets[num] = ASSET_RESOURCE_ENERGY; kinds[num] = 5; counts[num++] = recipe->energy; }
+    if (recipe->white > 0 && num < 6) { assets[num] = ASSET_RESOURCE_WHITE_1; kinds[num] = 6; counts[num++] = recipe->white; }
+    if (num < 1) {
+        num = 1;
+    }
+    C2D_DrawImageAt(getImage(app, ASSET_UI_UNIT_INFO_SEPARATOR), 12.0f, baseY - 8.0f, 0.0f, NULL, 1.0f, 1.0f);
+    for (int i = 0; i < num; ++i) {
+        char countText[8];
+        int carryIdx = -1;
+        if      (kinds[i] == 0) carryIdx = WB_EXTRA_CARRY_RED_IDX;
+        else if (kinds[i] == 1) carryIdx = WB_EXTRA_CARRY_BLUE_IDX;
+        else if (kinds[i] == 2) carryIdx = WB_EXTRA_CARRY_GREEN_IDX;
+        else if (kinds[i] == 3) carryIdx = WB_EXTRA_CARRY_YELLOW_IDX;
+        else if (kinds[i] == 4) carryIdx = WB_EXTRA_CARRY_WHEEL_IDX;
+        else if (kinds[i] == 5) carryIdx = WB_EXTRA_CARRY_ENERGY_IDX;
+        if (carryIdx >= 0) {
+            C2D_Image img = getWorldbuilderExtraImage(app, carryIdx);
+            if (img.subtex) {
+                drawAnchoredImage(img, iconX[i], baseY + 18.0f, 0.75f, img.subtex->width * 0.5f, img.subtex->height * 0.5f);
+            } else {
+                drawAnchoredImage(getImage(app, assets[i]), iconX[i], baseY + 18.0f, 0.75f, g_objectAnchors[assets[i]].x, g_objectAnchors[assets[i]].y);
+            }
+        } else {
+            drawAnchoredImage(getImage(app, assets[i]), iconX[i], baseY + 18.0f, 0.75f, g_objectAnchors[assets[i]].x, g_objectAnchors[assets[i]].y);
+        }
+        snprintf(countText, sizeof(countText), "%d", counts[i]);
+        drawTextLineBlack(app->dynamicBuf, textX[i], baseY + 10.0f, 0.36f, countText);
+    }
+}
+
+/* Map a unit type to its small plan-card sprite — same icons used on the plan screen. */
+static int unitSidebarIconAssetId(WBUnitType unitType) {
+    switch (unitType) {
+        case WB_UNIT_BUGGY:       return ASSET_PLAN_BUGGY;
+        case WB_UNIT_DUCK:        return ASSET_VEHICLE_DUCK;
+        case WB_UNIT_DIRTBUGGY:   return ASSET_PLAN_DIRTBUGGY;
+        case WB_UNIT_STEAMSHOVEL: return ASSET_PLAN_STEAMSHOVEL;
+        case WB_UNIT_DUMPTRUCK:   return ASSET_PLAN_DUMPTRUCK;
+        case WB_UNIT_FORKLIFT:    return ASSET_PLAN_FORKLIFT;
+        case WB_UNIT_DOZER:       return ASSET_PLAN_DOZER;
+        case WB_UNIT_SPEEDBOAT:   return ASSET_PLAN_SPEEDBOAT;
+        case WB_UNIT_TUGBOAT:     return ASSET_PLAN_TUGBOAT;
+        case WB_UNIT_FREIGHTER:   return ASSET_PLAN_FREIGHTER;
+        case WB_UNIT_FROG:        return ASSET_PLAN_FROG;
+        case WB_UNIT_FISH:        return ASSET_PLAN_FISH;
+        case WB_UNIT_SNAIL:       return ASSET_PLAN_SNAIL;
+        case WB_UNIT_TREEBOT:     return ASSET_PLAN_TREEBOT;
+        case WB_UNIT_REPAIRBOT:   return ASSET_PLAN_REPAIRBOT;
+        case WB_UNIT_DEFENDER:
+        case WB_UNIT_DEFENDER2:   return ASSET_PLAN_DEFENDER;
+        case WB_UNIT_FREEZEBOT:   return ASSET_PLAN_FREEZEBOT;
+        default: return -1;
+    }
+}
+
+static void drawSidebarSelectionPanel(AppState* app, const WBSelectedUnitView* unitView) {
+    int iconAsset = unitSidebarIconAssetId(unitView->unitType);
+    const WBResourcePile* recipe = wbUnitRecipe(unitView->unitType);
+    drawTextLine(app->dynamicBuf, 48.0f, 22.0f, 0.42f, wbUnitName(unitView->unitType));
+    if (iconAsset >= 0) {
+        drawAnchoredImage(getImage(app, iconAsset), 59.0f, 51.0f, 1.0f, g_objectAnchors[iconAsset].x, g_objectAnchors[iconAsset].y);
+    }
+    drawSidebarEnergy(app, unitView->energy);
+    if (recipe) {
+        drawSidebarRecipe(app, recipe, false);
+    }
+}
+
+static void drawSidebarPlanPanel(AppState* app, WBPlanType planType) {
+    WBUnitType unitType = planTypeToUnit(planType);
+    WBBuildingType buildingType = planTypeToBuilding(planType);
+    const WBResourcePile* recipe = buildingType != WB_BUILDING_NONE ? wbBuildingRecipe(buildingType) : wbUnitRecipe(unitType);
+    int iconAsset = planAssetId(planType);
+    drawTextLine(app->dynamicBuf, 12.0f, 24.0f, 0.42f, wbPlanName(planType));
+    if (iconAsset >= 0) {
+        C2D_DrawImageAt(getImage(app, iconAsset), 18.0f, 46.0f, 0.0f, NULL, 1.0f, 1.0f);
+    }
+    if (recipe) {
+        drawSidebarRecipe(app, recipe, true);
+    }
+}
+
+static void drawSidebarBuildingPanel(AppState* app, WBBuildingType buildingType) {
+    int iconAsset = buildingPanelIconAssetId(buildingType);
+    const WBResourcePile* recipe = wbBuildingRecipe(buildingType);
+    drawTextLine(app->dynamicBuf, 12.0f, 24.0f, 0.42f, wbBuildingName(buildingType));
+    if (iconAsset >= 0) {
+        C2D_DrawImageAt(getImage(app, iconAsset), 18.0f, 46.0f, 0.0f, NULL, 1.0f, 1.0f);
+    }
+    if (recipe) {
+        drawSidebarRecipe(app, recipe, true);
+    }
+}
+
+static void drawInfoOverlay(AppState* app, const WBSelectedUnitView* unitView) {
+    int heroAsset = heroAssetIdForUnit(unitView->unitType);
+    const char* desc = unitDescription(unitView->unitType);
+    float descScale = 0.36f;
+    float lineStep = 17.0f;
+    int maxChars = 22;
+    int numLines = countWrappedLines(desc, maxChars);
+    float availH = 160.0f; /* y=210 prompt - y=50 start */
+    if (numLines > 0 && numLines * lineStep > availH) {
+        lineStep = availH / (float)numLines;
+        if (lineStep < 11.0f) lineStep = 11.0f;
+        descScale = lineStep / 17.0f * 0.36f;
+        if (descScale < 0.24f) descScale = 0.24f;
+    }
+    drawTextLine(app->dynamicBuf, 14.0f, 24.0f, 0.46f, wbUnitName(unitView->unitType));
+    drawWrappedText(app->dynamicBuf, 14.0f, 50.0f, descScale, desc, lineStep, maxChars);
+    if (heroAsset >= 0) {
+        C2D_DrawImageAt(getImage(app, heroAsset), 140.0f, 44.0f, 0.0f, NULL, 0.62f, 0.62f);
+    }
+    drawTextLine(app->dynamicBuf, 12.0f, 214.0f, 0.34f, "Y: close  B: deselect  X: disassemble");
+}
+
+static int heroAssetIdForBuilding(WBBuildingType buildingType) {
+    switch (buildingType) {
+        case WB_BUILDING_GAS_STATION:  return ASSET_BUILDING_GAS_STATION_HERO;
+        case WB_BUILDING_MARINA:       return ASSET_BUILDING_MARINA_HERO;
+        case WB_BUILDING_ROBOT_LAB:    return ASSET_BUILDING_ROBOT_LAB_HERO;
+        case WB_BUILDING_GUARD_TOWER:  return ASSET_BUILDING_GUARD_TOWER_HERO;
+        case WB_BUILDING_FACTORY:  return ASSET_BUILDING_FACTORY_HERO;
+        case WB_BUILDING_HOUSE:    return ASSET_BUILDING_HOUSE_HERO;
+        case WB_BUILDING_WINDMILL: return ASSET_BUILDING_WINDMILL_HERO;
+        case WB_BUILDING_GARAGE:   return ASSET_BUILDING_GARAGE_HERO;
+        case WB_BUILDING_NURSERY:  return ASSET_BUILDING_NURSERY_HERO;
+        default: return -1;
+    }
+}
+
+static const char* buildingDescription(WBBuildingType buildingType) {
+    switch (buildingType) {
+        case WB_BUILDING_GAS_STATION:
+            return "Recharges land vehicles parked adjacent to it.";
+        case WB_BUILDING_MARINA:
+            return "Recharges water vessels parked adjacent to it.";
+        case WB_BUILDING_ROBOT_LAB:
+            return "Recharges robots parked adjacent to it.";
+        case WB_BUILDING_GUARD_TOWER:
+            return "Automatically attacks nearby hostile monsters within range.";
+        case WB_BUILDING_FACTORY:
+            return "Converts adjacent boulders and trees into LEGO bricks. Press A to cycle the color of bricks it produces.";
+        case WB_BUILDING_HOUSE:
+            return "A home for colonists. Provides a place to rest and recharge.";
+        case WB_BUILDING_WINDMILL:
+            return "Generates energy over time and deposits it on an adjacent tile.";
+        case WB_BUILDING_GARAGE:
+            return "Generates wheels over time and deposits them on an adjacent tile.";
+        case WB_BUILDING_NURSERY:
+            return "Grows new trees on adjacent normal terrain over time.";
+        default:
+            return "No description available.";
+    }
+}
+
+static void drawBuildingInfoOverlay(AppState* app, WBBuildingType buildingType) {
+    int heroAsset = heroAssetIdForBuilding(buildingType);
+    const char* desc = buildingDescription(buildingType);
+    float descScale = 0.36f;
+    float lineStep = 17.0f;
+    int maxChars = 22;
+    int numLines = countWrappedLines(desc, maxChars);
+    float availH = 160.0f;
+    if (numLines > 0 && numLines * lineStep > availH) {
+        lineStep = availH / (float)numLines;
+        if (lineStep < 11.0f) lineStep = 11.0f;
+        descScale = lineStep / 17.0f * 0.36f;
+        if (descScale < 0.24f) descScale = 0.24f;
+    }
+    drawTextLine(app->dynamicBuf, 14.0f, 24.0f, 0.46f, wbBuildingName(buildingType));
+    drawWrappedText(app->dynamicBuf, 14.0f, 50.0f, descScale, desc, lineStep, maxChars);
+    if (heroAsset >= 0) {
+        C2D_DrawImageAt(getImage(app, heroAsset), 140.0f, 44.0f, 0.0f, NULL, 0.62f, 0.62f);
+    }
+    drawTextLine(app->dynamicBuf, 12.0f, 214.0f, 0.34f, "Y: close  B: deselect  X: disassemble");
+}
+
+static int planMenuEntryCount(const AppState* app) {
+    int count = 0;
+    int planType;
+    for (planType = 1; planType < WB_PLAN_COUNT; ++planType) {
+        if (app->map.possiblePlans[planType] || app->map.planInventory[planType] > 0) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static WBPlanType planMenuEntryAt(const AppState* app, int targetIndex) {
+    int index = 0;
+    int planType;
+    for (planType = 1; planType < WB_PLAN_COUNT; ++planType) {
+        if (!(app->map.possiblePlans[planType] || app->map.planInventory[planType] > 0)) {
+            continue;
+        }
+        if (index == targetIndex) {
+            return (WBPlanType) planType;
+        }
+        ++index;
+    }
+    return WB_PLAN_NONE;
+}
+
+static void drawBottomPlanMenu(AppState* app) {
+    int count = planMenuEntryCount(app);
+    int i;
+    float boxX = 26.0f;
+    float boxY = 34.0f;
+    float boxW = 268.0f;
+    float boxH = 170.0f;
+    C2D_DrawRectSolid(boxX, boxY, 0.0f, boxW, boxH, C2D_Color32(0xFF, 0xFF, 0xFF, 0xEA));
+    C2D_DrawRectSolid(boxX, boxY, 0.0f, boxW, 2.0f, C2D_Color32(0x00, 0x00, 0x00, 0xFF));
+    C2D_DrawRectSolid(boxX, boxY + boxH - 2.0f, 0.0f, boxW, 2.0f, C2D_Color32(0x00, 0x00, 0x00, 0xFF));
+    C2D_DrawRectSolid(boxX, boxY, 0.0f, 2.0f, boxH, C2D_Color32(0x00, 0x00, 0x00, 0xFF));
+    C2D_DrawRectSolid(boxX + boxW - 2.0f, boxY, 0.0f, 2.0f, boxH, C2D_Color32(0x00, 0x00, 0x00, 0xFF));
+    drawTextLine(app->dynamicBuf, boxX + 100.0f, boxY + 14.0f, 0.42f, "Plans");
+    drawTextLine(app->dynamicBuf, boxX + 18.0f, boxY + 34.0f, 0.34f, "D-pad/A:arm  B/SELECT:close");
+    if (count == 0) {
+        drawTextLine(app->dynamicBuf, boxX + 18.0f, boxY + 78.0f, 0.38f, "No plans available.");
+        return;
+    }
+    {
+        int maxVisible = 3;
+        int scrollOffset = app->planMenuScrollOffset;
+        int end = scrollOffset + maxVisible;
+        if (end > count) end = count;
+        for (i = scrollOffset; i < end; ++i) {
+            WBPlanType planType = planMenuEntryAt(app, i);
+            bool owned = app->map.planInventory[planType] > 0;
+            bool armed = app->armedPlan == planType;
+            float y = boxY + 56.0f + ((i - scrollOffset) * 34.0f);
+            char line[96];
+            int iconAsset = owned ? planAssetId(planType) : ASSET_PLAN_UNKNOWN;
+            C2D_DrawRectSolid(boxX + 16.0f, y, 0.0f, boxW - 32.0f, 28.0f,
+                armed   ? C2D_Color32(0xE3, 0xEC, 0x98, 0xE8) :
+                (i == app->planMenuCursor) ? C2D_Color32(0xA0, 0xC8, 0xFF, 0xB0) :
+                            C2D_Color32(0xFF, 0xFF, 0xFF, 0xD8));
+            C2D_DrawRectSolid(boxX + 16.0f, y, 0.0f, boxW - 32.0f, 1.0f, C2D_Color32(0x00, 0x00, 0x00, 0xFF));
+            C2D_DrawRectSolid(boxX + 16.0f, y + 27.0f, 0.0f, boxW - 32.0f, 1.0f, C2D_Color32(0x00, 0x00, 0x00, 0xFF));
+            drawAnchoredImage(getImage(app, iconAsset), boxX + 34.0f, y + 15.0f, 0.72f, g_objectAnchors[iconAsset].x, g_objectAnchors[iconAsset].y);
+            snprintf(line, sizeof(line), "%s  x%d", owned ? wbPlanName(planType) : "Unknown plan", app->map.planInventory[planType]);
+            drawTextLine(app->dynamicBuf, boxX + 58.0f, y + 8.0f, 0.34f, line);
+        }
+        if (scrollOffset > 0) {
+            drawTextLine(app->dynamicBuf, boxX + boxW - 22.0f, boxY + 54.0f, 0.38f, "^");
+        }
+        if (scrollOffset + maxVisible < count) {
+            drawTextLine(app->dynamicBuf, boxX + boxW - 22.0f, boxY + 156.0f, 0.38f, "v");
+        }
+    }
+}
+
+static void drawBottomStartMenu(AppState* app) {
+    float boxX = 66.0f;
+    float boxY = 48.0f;
+    float boxW = 188.0f;
+    float boxH = 144.0f;
+    static const float itemY[5] = { 36.0f, 56.0f, 76.0f, 98.0f, 118.0f };
+    C2D_DrawRectSolid(boxX, boxY, 0.0f, boxW, boxH, C2D_Color32(0xFF, 0xFF, 0xFF, 0xEF));
+    C2D_DrawRectSolid(boxX, boxY, 0.0f, boxW, 2.0f, C2D_Color32(0x00, 0x00, 0x00, 0xFF));
+    C2D_DrawRectSolid(boxX, boxY + boxH - 2.0f, 0.0f, boxW, 2.0f, C2D_Color32(0x00, 0x00, 0x00, 0xFF));
+    C2D_DrawRectSolid(boxX, boxY, 0.0f, 2.0f, boxH, C2D_Color32(0x00, 0x00, 0x00, 0xFF));
+    C2D_DrawRectSolid(boxX + boxW - 2.0f, boxY, 0.0f, 2.0f, boxH, C2D_Color32(0x00, 0x00, 0x00, 0xFF));
+    /* cursor highlight */
+    {
+        int cur = app->startMenuCursor;
+        if (cur >= 0 && cur < 5) {
+            float hy = boxY + itemY[cur] - 4.0f;
+            float hh = (cur == 3 || cur == 4) ? 20.0f : 18.0f;
+            C2D_DrawRectSolid(boxX + 4.0f, hy, 0.0f, boxW - 8.0f, hh, C2D_Color32(0xA0, 0xC8, 0xFF, 0xB0));
+        }
+    }
+    drawTextLine(app->dynamicBuf, boxX + 66.0f, boxY + 12.0f, 0.42f, "Menu");
+    drawTextLine(app->dynamicBuf, boxX + 30.0f, boxY + 36.0f, 0.34f, "Continue Mission");
+    drawTextLine(app->dynamicBuf, boxX + 30.0f, boxY + 56.0f, 0.34f, "Restart Mission");
+    drawTextLine(app->dynamicBuf, boxX + 30.0f, boxY + 76.0f, 0.34f, "End Mission");
+    drawTextLine(app->dynamicBuf, boxX + 30.0f, boxY + 98.0f, 0.34f, "Music");
+    drawTextLine(app->dynamicBuf, boxX + 30.0f, boxY + 118.0f, 0.34f, "Sound FX");
+    drawAnchoredImage(getImage(app, app->muteMusic ? ASSET_X_MARK : ASSET_CHECK_MARK), boxX + 150.0f, boxY + 105.0f, 0.58f, g_objectAnchors[ASSET_CHECK_MARK].x, g_objectAnchors[ASSET_CHECK_MARK].y);
+    drawAnchoredImage(getImage(app, app->muteSfx ? ASSET_X_MARK : ASSET_CHECK_MARK), boxX + 150.0f, boxY + 125.0f, 0.58f, g_objectAnchors[ASSET_CHECK_MARK].x, g_objectAnchors[ASSET_CHECK_MARK].y);
+    drawTextLine(app->dynamicBuf, boxX + 22.0f, boxY + 132.0f, 0.30f, "D-pad/A: select  B: close");
+}
+
+static void drawBottomGoalPopup(AppState* app) {
+    float locX;
+    float locY;
+    float drawX;
+    float drawY;
+    float boxW;
+    float boxH;
+    float pointerX;
+    if (!app->goalPopupVisible) {
+        return;
+    }
+    posToLoc(app, app->goalPopupX + 1, app->goalPopupY + 1, &locX, &locY);
+    boxW = 132.0f;
+    boxH = app->goalPopupComplete ? 86.0f : 64.0f;
+    drawX = locX - 54.0f;
+    drawY = locY - 74.0f;
+    if (drawX < 4.0f) drawX = 4.0f;
+    if (drawX + boxW > BOTTOM_W - 4.0f) drawX = BOTTOM_W - 4.0f - boxW;
+    if (drawY < 4.0f) drawY = 4.0f;
+    pointerX = locX;
+    if (pointerX < drawX + 12.0f) pointerX = drawX + 12.0f;
+    if (pointerX > drawX + boxW - 12.0f) pointerX = drawX + boxW - 12.0f;
+    C2D_DrawRectSolid(drawX, drawY, 0.0f, boxW, boxH, C2D_Color32(0x00, 0x00, 0x00, 0xFF));
+    C2D_DrawRectSolid(drawX + 3.0f, drawY + 3.0f, 0.0f, boxW - 6.0f, boxH - 4.0f, C2D_Color32(0xFF, 0xFF, 0xFF, 0xFF));
+    C2D_DrawTriangle(pointerX - 12.0f, drawY + boxH - 1.0f, C2D_Color32(0x00,0x00,0x00,0xFF), pointerX + 12.0f, drawY + boxH - 1.0f, C2D_Color32(0x00,0x00,0x00,0xFF), pointerX, drawY + boxH + 12.0f, C2D_Color32(0x00,0x00,0x00,0xFF), 0.0f);
+    C2D_DrawTriangle(pointerX - 8.0f, drawY + boxH + 1.0f, C2D_Color32(0xFF,0xFF,0xFF,0xFF), pointerX + 8.0f, drawY + boxH + 1.0f, C2D_Color32(0xFF,0xFF,0xFF,0xFF), pointerX, drawY + boxH + 9.0f, C2D_Color32(0xFF,0xFF,0xFF,0xFF), 0.0f);
+    drawTextLine(app->dynamicBuf, drawX + (boxW * 0.5f) - 28.0f, drawY + 10.0f, 0.38f, app->goalPopupBonus ? "Bonus Goal" : "Mission Goal");
+    drawWrappedText(app->dynamicBuf, drawX + 12.0f, drawY + 34.0f, 0.36f, app->goalPopupText, 16.0f, 18);
+    if (app->goalPopupComplete) {
+        drawTextLine(app->dynamicBuf, drawX + 14.0f, drawY + 68.0f, 0.26f, "A: Continue");
+        drawTextLine(app->dynamicBuf, drawX + 78.0f, drawY + 68.0f, 0.26f, "B: End");
+    }
+}
+
+static void drawTopScreen(AppState* app) {
+    WBSelectedUnitView unitView;
+    WBBuildingType selectedBuilding = WB_BUILDING_NONE;
+    bool hasUnitView = getSelectedUnitView(app, &unitView);
+    bool hasBuildingView = false;
+    char controls[128];
+    float miniScale = minimapScaleForMap(app);
+    if (!hasUnitView && app->hasSelection && inBounds(app, app->selectedX, app->selectedY)) {
+        const WBCell* selCell = &app->map.cells[app->selectedY][app->selectedX];
+        if (selCell->hasBuilding) {
+            hasBuildingView = true;
+            selectedBuilding = selCell->buildingType;
+        }
+    }
+    C2D_TextBufClear(app->dynamicBuf);
+    C2D_DrawText(&app->titleText, 0, 10.0f, 4.0f, 0.5f, 0.45f, 0.45f);
+    drawMinimap(app, 312.0f, 114.0f, miniScale);
+    if (app->infoOverlayOpen && hasUnitView) {
+        drawInfoOverlay(app, &unitView);
+    } else if (app->infoOverlayOpen && hasBuildingView) {
+        drawBuildingInfoOverlay(app, selectedBuilding);
+    } else {
+        if (app->armedPlan != WB_PLAN_NONE) {
+            drawSidebarPlanPanel(app, app->armedPlan);
+        } else if (hasUnitView) {
+            drawSidebarSelectionPanel(app, &unitView);
+        } else if (hasBuildingView) {
+            drawSidebarBuildingPanel(app, selectedBuilding);
+        } else {
+            drawTextLine(app->dynamicBuf, 12.0f, 24.0f, 0.42f, app->map.name[0] ? app->map.name : "Mission");
+            drawTextLine(app->dynamicBuf, 12.0f, 58.0f, 0.36f, "Select a unit or arm a plan.");
+        }
+    }
+    if (!app->infoOverlayOpen && hasUnitView) {
+        snprintf(controls, sizeof(controls), "A: %s  Y: info  X: disassemble  B: deselect", actionModeName(app->actionMode));
+        drawTextLine(app->dynamicBuf, 12.0f, 198.0f, 0.34f, controls);
+    } else if (!app->infoOverlayOpen && hasBuildingView) {
+        if (selectedBuilding == WB_BUILDING_FACTORY) {
+            drawTextLine(app->dynamicBuf, 12.0f, 198.0f, 0.34f, "A: Cycle  Y: info  X: disassemble  B: deselect");
+        } else {
+            drawTextLine(app->dynamicBuf, 12.0f, 198.0f, 0.34f, "Y: info  X: disassemble  B: deselect");
+        }
+    }
+    if (app->showDiagnostics) {
+        char audioLine1[96];
+        char audioLine2[96];
+        char audioLine3[64];
+        char audioLine4[80];
+        snprintf(audioLine1, sizeof(audioLine1),
+            "Audio %s  clips %d  music %d  sfx %d",
+            app->audioReady ? "ON" : "OFF",
+            app->loadedClipCount,
+            app->audioReady ? (int) ndspChnIsPlaying(MUSIC_CHANNEL) : -1,
+            app->audioReady ? (int) ndspChnIsPlaying(SFX_CHANNEL) : -1);
+        snprintf(audioLine2, sizeof(audioLine2),
+            "init %08lX  open %08lX  sfxN %d",
+            (unsigned long) app->audioInitResult,
+            (unsigned long) app->audioFallbackOpenResult,
+            app->sfxPlayCount);
+        snprintf(audioLine3, sizeof(audioLine3),
+            "fb %08lX  mv.ld %d  mu %d  lin %dKB",
+            (unsigned long) app->audioFallbackInitResult,
+            (int) app->sfxMove.loaded,
+            (int) app->muteSfx,
+            app->linearFreeKB);
+        {
+            int mACount = app->monstersASheet ? (int) C2D_SpriteSheetCount(app->monstersASheet) : -1;
+            int mBCount = app->monstersBSheet ? (int) C2D_SpriteSheetCount(app->monstersBSheet) : -1;
+            int sampleId = -1;
+            int sampleSubtex = 0;
+            if (g_monsterCount > 0 && g_monsters[0].active) {
+                sampleId = monsterAnimAssetId(g_monsters[0].type, g_monsters[0].dir, g_monsters[0].onWater, 0, false);
+                if (sampleId >= 0) {
+                    C2D_Image si = getImage(app, sampleId);
+                    sampleSubtex = si.subtex ? 1 : 0;
+                }
+            }
+            snprintf(audioLine4, sizeof(audioLine4),
+                "mc%d cA%d cB%d id%d ok%d",
+                g_monsterCount, mACount, mBCount, sampleId, sampleSubtex);
+        }
+        drawTextLine(app->dynamicBuf, 8.0f, 206.0f, 0.34f, audioLine1);
+        drawTextLine(app->dynamicBuf, 8.0f, 218.0f, 0.34f, audioLine2);
+        drawTextLine(app->dynamicBuf, 8.0f, 230.0f, 0.34f, audioLine3);
+        drawTextLine(app->dynamicBuf, 8.0f, 236.0f, 0.34f, audioLine4);
+    }
+}
+
+static bool selectedUnitCanBuild(const AppState* app) {
+    const WBCell* cell = selectedCell(app);
+    return cell && cell->hasUnit;
+}
+
+static bool checkResourcesAround(const AppState* app, int tx, int ty, const WBResourcePile* recipe) {
+    WBResourcePile need = *recipe;
+    int dy;
+    int dx;
+    const WBCell* target = &app->map.cells[ty][tx];
+    if (target->hasUnit || activeMonsterAt(NULL, ty, tx)) {
+        return false;
+    }
+    for (dy = -1; dy <= 1; ++dy) {
+        for (dx = -1; dx <= 1; ++dx) {
+            int nx = tx + dx;
+            int ny = ty + dy;
+            const WBCell* cell;
+            if (!inBounds(app, nx, ny)) {
+                continue;
+            }
+            cell = &app->map.cells[ny][nx];
+            if (!cell->hasResource || cell->resourceIsPlan) {
+                continue;
+            }
+            need.red -= cell->pile.red;
+            need.blue -= cell->pile.blue;
+            need.green -= cell->pile.green;
+            need.yellow -= cell->pile.yellow;
+            need.wheel -= cell->pile.wheel;
+            need.energy -= cell->pile.energy;
+            need.white -= cell->pile.white;
+            if (need.red < 0) need.red = 0;
+            if (need.blue < 0) need.blue = 0;
+            if (need.green < 0) need.green = 0;
+            if (need.yellow < 0) need.yellow = 0;
+            if (need.wheel < 0) need.wheel = 0;
+            if (need.energy < 0) need.energy = 0;
+            if (need.white < 0) need.white = 0;
+            if (resourceTotal(&need) == 0) {
+                return true;
+            }
+        }
+    }
+    return resourceTotal(&need) == 0;
+}
+
+static void consumeFromPile(WBResourcePile* pile, WBResourcePile* need) {
+    int take;
+    take = pile->red < need->red ? pile->red : need->red;
+    pile->red -= take;
+    need->red -= take;
+    take = pile->blue < need->blue ? pile->blue : need->blue;
+    pile->blue -= take;
+    need->blue -= take;
+    take = pile->green < need->green ? pile->green : need->green;
+    pile->green -= take;
+    need->green -= take;
+    take = pile->yellow < need->yellow ? pile->yellow : need->yellow;
+    pile->yellow -= take;
+    need->yellow -= take;
+    take = pile->wheel < need->wheel ? pile->wheel : need->wheel;
+    pile->wheel -= take;
+    need->wheel -= take;
+    take = pile->energy < need->energy ? pile->energy : need->energy;
+    pile->energy -= take;
+    need->energy -= take;
+    take = pile->white < need->white ? pile->white : need->white;
+    pile->white -= take;
+    need->white -= take;
+}
+
+static void cleanupResourceCell(WBCell* cell) {
+    if (!cell->hasResource || cell->resourceIsPlan) {
+        return;
+    }
+    if (resourceTotal(&cell->pile) == 0) {
+        memset(&cell->pile, 0, sizeof(cell->pile));
+        cell->hasResource = false;
+    }
+}
+
+static void useResourcesAround(AppState* app, int tx, int ty, const WBResourcePile* recipe) {
+    WBResourcePile need = *recipe;
+    WBCell* exact = NULL;
+    int dy;
+    int dx;
+
+    while (need.energy > 0) {
+        WBCell* bestCell = NULL;
+        int bestEnergyValue = -1;
+        int bestAmount = -1;
+        for (dy = -1; dy <= 1; ++dy) {
+            for (dx = -1; dx <= 1; ++dx) {
+                int nx = tx + dx;
+                int ny = ty + dy;
+                WBCell* cell;
+                if (!inBounds(app, nx, ny)) {
+                    continue;
+                }
+                cell = &app->map.cells[ny][nx];
+                if (!cell->hasResource || cell->resourceIsPlan || cell->pile.energy <= 0) {
+                    continue;
+                }
+                if (cell->pileEnergyValue > bestEnergyValue || (cell->pileEnergyValue == bestEnergyValue && cell->pile.energy > bestAmount)) {
+                    bestEnergyValue = cell->pileEnergyValue;
+                    bestAmount = cell->pile.energy;
+                    bestCell = cell;
+                }
+            }
+        }
+        if (!bestCell) {
+            break;
+        }
+        bestCell->pile.energy -= 1;
+        need.energy -= 1;
+        cleanupResourceCell(bestCell);
+    }
+
+    for (dy = -1; dy <= 1; ++dy) {
+        for (dx = -1; dx <= 1; ++dx) {
+            int nx = tx + dx;
+            int ny = ty + dy;
+            WBCell* cell;
+            if (!inBounds(app, nx, ny)) {
+                continue;
+            }
+            cell = &app->map.cells[ny][nx];
+            if (!cell->hasResource || cell->resourceIsPlan) {
+                continue;
+            }
+            if (cell->pile.red == need.red && cell->pile.blue == need.blue && cell->pile.green == need.green && cell->pile.yellow == need.yellow && cell->pile.wheel == need.wheel && cell->pile.white == need.white && need.red + need.blue + need.green + need.yellow + need.wheel + need.white > 0) {
+                exact = cell;
+                break;
+            }
+        }
+        if (exact) {
+            break;
+        }
+    }
+
+    if (exact) {
+        consumeFromPile(&exact->pile, &need);
+        cleanupResourceCell(exact);
+    } else {
+        for (dy = -1; dy <= 1; ++dy) {
+            for (dx = -1; dx <= 1; ++dx) {
+                int nx = tx + dx;
+                int ny = ty + dy;
+                WBCell* cell;
+                if (!inBounds(app, nx, ny)) {
+                    continue;
+                }
+                cell = &app->map.cells[ny][nx];
+                if (!cell->hasResource || cell->resourceIsPlan) {
+                    continue;
+                }
+                consumeFromPile(&cell->pile, &need);
+                cleanupResourceCell(cell);
+                if (need.red == 0 && need.blue == 0 && need.green == 0 && need.yellow == 0 && need.wheel == 0 && need.energy == 0 && need.white == 0) {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+static bool tryPickUpAt(AppState* app, int tx, int ty) {
+    WBCell* unitCell = selectedCellMutable(app);
+    WBCell* target;
+    int capacity;
+    int carried = 0;
+    if (!unitCell || !unitCell->hasUnit || !unitSupportsPickDrop(unitCell->unitType)) {
+        return false;
+    }
+    if (!inBounds(app, tx, ty) || manhattanDistance(app->selectedX, app->selectedY, tx, ty) > 1) {
+        return false;
+    }
+    target = &app->map.cells[ty][tx];
+    if (!target->hasResource || target->resourceIsPlan || !pileEmpty(&unitCell->unitCargo)) {
+        return false;
+    }
+    capacity = unitCarryCapacity(unitCell->unitType);
+    while (carried < capacity && !pileEmpty(&target->pile)) {
+        int kind = chooseLeastBrickKind(&target->pile);
+        if (kind < 0) {
+            break;
+        }
+        takeOneKind(&target->pile, kind);
+        addOneKind(&unitCell->unitCargo, kind);
+        ++carried;
+    }
+    cleanupResourceCell(target);
+    if (carried > 0) {
+        /* Preserve the cargo battery's charge level so it can be dropped at the same level */
+        if (unitCell->unitCargo.energy > 0) {
+            unitCell->unitCargoEnergyValue = target->pileEnergyValue;
+        } else {
+            unitCell->unitCargoEnergyValue = 0;
+        }
+        if (tx != app->selectedX || ty != app->selectedY) {
+            unitCell->unitDirection = directionFromStep(app->selectedX, app->selectedY, tx, ty);
+        }
+        app->actionMode = WB_ACTION_MOVE;
+        playSfxClip(app, app->sfxPickup.loaded ? &app->sfxPickup : &app->sfxMove);
+        return true;
+    }
+    return false;
+}
+
+static bool tryDropAt(AppState* app, int tx, int ty) {
+    WBCell* unitCell = selectedCellMutable(app);
+    WBCell* target;
+    if (!unitCell || !unitCell->hasUnit || !unitSupportsPickDrop(unitCell->unitType)) {
+        return false;
+    }
+    if (!inBounds(app, tx, ty) || manhattanDistance(app->selectedX, app->selectedY, tx, ty) > 1) {
+        return false;
+    }
+    if (pileEmpty(&unitCell->unitCargo)) {
+        return false;
+    }
+    target = &app->map.cells[ty][tx];
+    if ((target->hasUnit || activeMonsterAt(NULL, ty, tx)) && !(tx == app->selectedX && ty == app->selectedY)) {
+        return false;
+    }
+    if (!target->hasResource) {
+        if (!(target->terrain == WB_TERRAIN_NORMAL || target->terrain == WB_TERRAIN_WATER || target->terrain == WB_TERRAIN_SWAMP)) {
+            return false;
+        }
+        target->hasResource = true;
+        target->resourceIsPlan = false;
+        memset(&target->pile, 0, sizeof(target->pile));
+    } else if (target->resourceIsPlan) {
+        return false;
+    }
+    addPile(&target->pile, &unitCell->unitCargo);
+    if (unitCell->unitCargo.energy > 0) {
+        /* Drop the battery at its preserved charge level, not always 100 */
+        target->pileEnergyValue = (unitCell->unitCargoEnergyValue > 0 ? unitCell->unitCargoEnergyValue : 0);
+    }
+    if (tx != app->selectedX || ty != app->selectedY) {
+        unitCell->unitDirection = directionFromStep(app->selectedX, app->selectedY, tx, ty);
+    }
+    memset(&unitCell->unitCargo, 0, sizeof(unitCell->unitCargo));
+    app->actionMode = WB_ACTION_MOVE;
+    playSfxClip(app, app->sfxDrop.loaded ? &app->sfxDrop : &app->sfxMove);
+    return true;
+}
+
+static bool tryDigAt(AppState* app, int tx, int ty) {
+    WBCell* unitCell = selectedCellMutable(app);
+    WBCell* target;
+    if (!unitCell || !unitCell->hasUnit || !unitSupportsDigFill(unitCell->unitType)) {
+        return false;
+    }
+    if (!inBounds(app, tx, ty) || manhattanDistance(app->selectedX, app->selectedY, tx, ty) > 1) {
+        return false;
+    }
+    if (steamshovelHasFillCargo(unitCell)) {
+        return false;
+    }
+    target = &app->map.cells[ty][tx];
+    if (target->hasUnit || activeMonsterAt(NULL, ty, tx) || target->hasBuilding || target->hasResource) {
+        return false;
+    }
+    if (target->terrain == WB_TERRAIN_NORMAL) {
+        target->terrain = WB_TERRAIN_WATER;
+        unitCell->unitCargo.red = 1;
+    } else if (target->terrain == WB_TERRAIN_SWAMP) {
+        target->terrain = WB_TERRAIN_WATER;
+        unitCell->unitCargo.blue = 1;
+    } else {
+        return false;
+    }
+    if (tx != app->selectedX || ty != app->selectedY) {
+        unitCell->unitDirection = directionFromStep(app->selectedX, app->selectedY, tx, ty);
+    }
+    app->actionMode = WB_ACTION_MOVE;
+    setSelectedUnitActionAnim(app, WB_UNIT_ANIM_DIG, 220);
+    playSfxClip(app, app->sfxDigGround.loaded ? &app->sfxDigGround : &app->sfxMoveMisc);
+    return true;
+}
+
+static bool tryFillAt(AppState* app, int tx, int ty) {
+    WBCell* unitCell = selectedCellMutable(app);
+    WBCell* target;
+    bool hadDirt;
+    bool hadSwamp;
+    if (!unitCell || !unitCell->hasUnit || !unitSupportsDigFill(unitCell->unitType)) {
+        return false;
+    }
+    if (!inBounds(app, tx, ty) || manhattanDistance(app->selectedX, app->selectedY, tx, ty) > 1) {
+        return false;
+    }
+    target = &app->map.cells[ty][tx];
+    if (target->hasUnit || activeMonsterAt(NULL, ty, tx) || target->hasBuilding || target->hasResource) {
+        return false;
+    }
+    if (target->terrain != WB_TERRAIN_WATER) {
+        return false;
+    }
+    hadDirt = unitCell->unitCargo.red > 0;
+    hadSwamp = unitCell->unitCargo.blue > 0;
+    if (!hadDirt && !hadSwamp) {
+        return false;
+    }
+    if (hadDirt) {
+        target->terrain = WB_TERRAIN_NORMAL;
+        unitCell->unitCargo.red = 0;
+    } else {
+        target->terrain = WB_TERRAIN_SWAMP;
+        unitCell->unitCargo.blue = 0;
+    }
+    if (tx != app->selectedX || ty != app->selectedY) {
+        unitCell->unitDirection = directionFromStep(app->selectedX, app->selectedY, tx, ty);
+    }
+    app->actionMode = WB_ACTION_MOVE;
+    setSelectedUnitActionAnim(app, WB_UNIT_ANIM_FILL, 220);
+    playSfxClip(app, app->sfxFillGround.loaded ? &app->sfxFillGround : &app->sfxMoveMisc);
+    return true;
+}
+
+static bool tryUprootAt(AppState* app, int tx, int ty) {
+    WBCell* unitCell = selectedCellMutable(app);
+    WBCell* target;
+    if (!unitCell || !unitCell->hasUnit || !unitSupportsTransplant(unitCell->unitType)) {
+        return false;
+    }
+    if (!inBounds(app, tx, ty) || manhattanDistance(app->selectedX, app->selectedY, tx, ty) > 1) {
+        return false;
+    }
+    if (treebotHasSapling(unitCell)) {
+        return false;
+    }
+    target = &app->map.cells[ty][tx];
+    if ((target->terrain != WB_TERRAIN_TREE && target->terrain != WB_TERRAIN_TREE2 &&
+            target->terrain != WB_TERRAIN_TREE3 && target->terrain != WB_TERRAIN_TREE4) ||
+            target->hasUnit || activeMonsterAt(NULL, ty, tx) || target->hasBuilding) {
+        return false;
+    }
+    unitCell->unitCargoTreeType = target->terrain;
+    target->terrain = WB_TERRAIN_NORMAL;
+    unitCell->unitCargo.green = 1;
+    if (tx != app->selectedX || ty != app->selectedY) {
+        unitCell->unitDirection = directionFromStep(app->selectedX, app->selectedY, tx, ty);
+    }
+    app->actionMode = WB_ACTION_MOVE;
+    setSelectedUnitActionAnim(app, WB_UNIT_ANIM_UPROOT, 360);
+    playSfxClip(app, app->sfxDigTree.loaded ? &app->sfxDigTree : &app->sfxMoveMisc);
+    return true;
+}
+
+static bool tryPlantAt(AppState* app, int tx, int ty) {
+    WBCell* unitCell = selectedCellMutable(app);
+    WBCell* target;
+    if (!unitCell || !unitCell->hasUnit || !unitSupportsTransplant(unitCell->unitType)) {
+        return false;
+    }
+    if (!inBounds(app, tx, ty) || manhattanDistance(app->selectedX, app->selectedY, tx, ty) > 1) {
+        return false;
+    }
+    if (!treebotHasSapling(unitCell)) {
+        return false;
+    }
+    target = &app->map.cells[ty][tx];
+    if (target->terrain != WB_TERRAIN_NORMAL || target->hasUnit || activeMonsterAt(NULL, ty, tx) || target->hasBuilding || target->hasResource || target->hasGoal) {
+        return false;
+    }
+    target->terrain = (unitCell->unitCargoTreeType == WB_TERRAIN_TREE ||
+                        unitCell->unitCargoTreeType == WB_TERRAIN_TREE2 ||
+                        unitCell->unitCargoTreeType == WB_TERRAIN_TREE3 ||
+                        unitCell->unitCargoTreeType == WB_TERRAIN_TREE4)
+                       ? unitCell->unitCargoTreeType : WB_TERRAIN_TREE;
+    unitCell->unitCargo.green = 0;
+    unitCell->unitCargoTreeType = WB_TERRAIN_NORMAL;
+    if (tx != app->selectedX || ty != app->selectedY) {
+        unitCell->unitDirection = directionFromStep(app->selectedX, app->selectedY, tx, ty);
+    }
+    app->actionMode = WB_ACTION_MOVE;
+    setSelectedUnitActionAnim(app, WB_UNIT_ANIM_PLANT, 360);
+    playSfxClip(app, app->sfxPlantTree.loaded ? &app->sfxPlantTree : &app->sfxMoveMisc);
+    return true;
+}
+
+static bool tryPushAt(AppState* app, int tx, int ty) {
+    WBCell* unitCell = selectedCellMutable(app);
+    int bi;
+    int dx;
+    int dy;
+    int bx;
+    int by;
+    WBCell* beyond;
+    if (!unitCell || !unitCell->hasUnit || !unitSupportsPush(unitCell->unitType)) {
+        return false;
+    }
+    if (!inBounds(app, tx, ty) || manhattanDistance(app->selectedX, app->selectedY, tx, ty) != 1) {
+        return false;
+    }
+    /* Find an active, non-dying boulder at the target cell */
+    bi = -1;
+    {
+        int mi;
+        for (mi = 0; mi < g_monsterCount; ++mi) {
+            if (g_monsters[mi].active && !g_monsters[mi].dying
+                    && g_monsters[mi].type == WB_MONSTER_BOULDER
+                    && g_monsters[mi].row == ty && g_monsters[mi].col == tx) {
+                bi = mi;
+                break;
+            }
+        }
+    }
+    if (bi < 0) {
+        return false;
+    }
+    /* Compute the cell behind the boulder (in the push direction) */
+    dx = tx - app->selectedX;
+    dy = ty - app->selectedY;
+    bx = tx + dx;
+    by = ty + dy;
+    if (!inBounds(app, bx, by)) {
+        return false;
+    }
+    beyond = &app->map.cells[by][bx];
+    /* Beyond must be traversable by dozer and free of obstacles */
+    if (!wbUnitCanTraverse(WB_UNIT_DOZER, beyond->terrain)) {
+        return false;
+    }
+    if (beyond->hasUnit || activeMonsterAt(NULL, by, bx) || beyond->hasBuilding || beyond->hasResource) {
+        return false;
+    }
+    /* Move the boulder */
+    g_monsters[bi].row = by;
+    g_monsters[bi].col = bx;
+    app->map.cells[ty][tx].hasMonster = false;
+    beyond->hasMonster = true;
+    /* Face the dozer toward the push and trigger a brief action animation */
+    unitCell->unitDirection = directionFromStep(app->selectedX, app->selectedY, tx, ty);
+    app->actionMode = WB_ACTION_MOVE;
+    setSelectedUnitActionAnim(app, WB_UNIT_ANIM_DIG, 220);
+    playSfxClip(app, app->sfxFillGround.loaded ? &app->sfxFillGround : &app->sfxMove);
+    return true;
+}
+
+static void resolvePendingAction(AppState* app) {
+    if (!app->pendingActionValid || !app->hasSelection) {
+        return;
+    }
+    if ((app->pendingActionX != app->selectedX || app->pendingActionY != app->selectedY)
+        && manhattanDistance(app->selectedX, app->selectedY, app->pendingActionX, app->pendingActionY) == 1) {
+        WBCell* unitCell = selectedCellMutable(app);
+        if (unitCell && unitCell->hasUnit) {
+            unitCell->unitDirection = directionFromStep(app->selectedX, app->selectedY, app->pendingActionX, app->pendingActionY);
+        }
+    }
+    if (app->actionMode == WB_ACTION_PICK) {
+        tryPickUpAt(app, app->pendingActionX, app->pendingActionY);
+    } else if (app->actionMode == WB_ACTION_DROP) {
+        tryDropAt(app, app->pendingActionX, app->pendingActionY);
+    } else if (app->actionMode == WB_ACTION_DIG) {
+        tryDigAt(app, app->pendingActionX, app->pendingActionY);
+    } else if (app->actionMode == WB_ACTION_FILL) {
+        tryFillAt(app, app->pendingActionX, app->pendingActionY);
+    } else if (app->actionMode == WB_ACTION_UPROOT) {
+        tryUprootAt(app, app->pendingActionX, app->pendingActionY);
+    } else if (app->actionMode == WB_ACTION_PLANT) {
+        tryPlantAt(app, app->pendingActionX, app->pendingActionY);
+    } else if (app->actionMode == WB_ACTION_PUSH) {
+        tryPushAt(app, app->pendingActionX, app->pendingActionY);
+    }
+    app->pendingActionValid = false;
+}
+
+static WBUnitType planTypeToUnit(WBPlanType planType) {
+    switch (planType) {
+        case WB_PLAN_BUGGY:       return WB_UNIT_BUGGY;
+        case WB_PLAN_DUCK:        return WB_UNIT_DUCK;
+        case WB_PLAN_DIRTBUGGY:   return WB_UNIT_DIRTBUGGY;
+        case WB_PLAN_STEAMSHOVEL: return WB_UNIT_STEAMSHOVEL;
+        case WB_PLAN_DUMPTRUCK:   return WB_UNIT_DUMPTRUCK;
+        case WB_PLAN_FORKLIFT:    return WB_UNIT_FORKLIFT;
+        case WB_PLAN_DOZER:       return WB_UNIT_DOZER;
+        case WB_PLAN_SPEEDBOAT:   return WB_UNIT_SPEEDBOAT;
+        case WB_PLAN_TUGBOAT:     return WB_UNIT_TUGBOAT;
+        case WB_PLAN_FREIGHTER:   return WB_UNIT_FREIGHTER;
+        case WB_PLAN_FROG:        return WB_UNIT_FROG;
+        case WB_PLAN_FISH:        return WB_UNIT_FISH;
+        case WB_PLAN_SNAIL:       return WB_UNIT_SNAIL;
+        case WB_PLAN_TREEBOT:     return WB_UNIT_TREEBOT;
+        case WB_PLAN_REPAIRBOT:   return WB_UNIT_REPAIRBOT;
+        case WB_PLAN_DEFENDER:    return WB_UNIT_DEFENDER;
+        case WB_PLAN_FREEZEBOT:   return WB_UNIT_FREEZEBOT;
+        default: return WB_UNIT_NONE;
+    }
+}
+
+static WBBuildingType planTypeToBuilding(WBPlanType planType) {
+    switch (planType) {
+        case WB_PLAN_GAS_STATION: return WB_BUILDING_GAS_STATION;
+        case WB_PLAN_MARINA:      return WB_BUILDING_MARINA;
+        case WB_PLAN_ROBOT_LAB:   return WB_BUILDING_ROBOT_LAB;
+        case WB_PLAN_GUARD_TOWER: return WB_BUILDING_GUARD_TOWER;
+        case WB_PLAN_AIRPORT:     return WB_BUILDING_AIRPORT;
+        case WB_PLAN_HOUSE:       return WB_BUILDING_HOUSE;
+        case WB_PLAN_FACTORY:     return WB_BUILDING_FACTORY;
+        case WB_PLAN_WINDMILL:    return WB_BUILDING_WINDMILL;
+        case WB_PLAN_GARAGE:      return WB_BUILDING_GARAGE;
+        case WB_PLAN_NURSERY:     return WB_BUILDING_NURSERY;
+        default: return WB_BUILDING_NONE;
+    }
+}
+
+static void tryBuildPlan(AppState* app, int tx, int ty) {
+    WBUnitType buildUnit;
+    WBBuildingType buildBuilding;
+    WBCell* cell;
+    const WBResourcePile* recipe;
+
+    if (app->armedPlan == WB_PLAN_NONE) {
+        return;
+    }
+    buildUnit = planTypeToUnit(app->armedPlan);
+    buildBuilding = planTypeToBuilding(app->armedPlan);
+    recipe = buildBuilding != WB_BUILDING_NONE ? wbBuildingRecipe(buildBuilding) : wbUnitRecipe(buildUnit);
+    if (!recipe || app->map.planInventory[app->armedPlan] <= 0) {
+        return;
+    }
+    if (!inBounds(app, tx, ty)) {
+        return;
+    }
+    cell = &app->map.cells[ty][tx];
+    if (cell->hasUnit || activeMonsterAt(NULL, ty, tx) || cell->hasBuilding || (cell->hasResource && cell->resourceIsPlan)) {
+        return;
+    }
+    if (buildBuilding != WB_BUILDING_NONE) {
+        if (!wbBuildingCanBePlacedOn(buildBuilding, cell->terrain)) {
+            return;
+        }
+    } else if (!wbUnitCanTraverse(buildUnit, cell->terrain)) {
+        return;
+    }
+    if (!checkResourcesAround(app, tx, ty, recipe)) {
+        return;
+    }
+    /* Capture the highest nearby battery charge before consuming resources. */
+    {
+        int energyDeci = 1000;
+        if (recipe->energy > 0) {
+            int dy;
+            int dx;
+            energyDeci = 0;
+            for (dy = -1; dy <= 1; ++dy) {
+                for (dx = -1; dx <= 1; ++dx) {
+                    int nx = tx + dx;
+                    int ny = ty + dy;
+                    if (inBounds(app, nx, ny)) {
+                        const WBCell* nc = &app->map.cells[ny][nx];
+                        if (nc->hasResource && !nc->resourceIsPlan && nc->pile.energy > 0) {
+                            int candidateDeci = nc->pileEnergyValue * 10;
+                            if (candidateDeci > energyDeci) {
+                                energyDeci = candidateDeci;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        useResourcesAround(app, tx, ty, recipe);
+        spawnBuildCloudEffect(app, tx, ty, recipe);
+        app->map.planInventory[app->armedPlan] -= 1;
+        if (buildBuilding != WB_BUILDING_NONE) {
+            cell->hasBuilding = true;
+            cell->buildingType = buildBuilding;
+            cell->buildingDirection = WB_DIR_RIGHT;
+            cell->buildingHp = 1000;
+            cell->buildingEnergy = 1000;
+        } else {
+            cell->hasUnit = true;
+            cell->unitType = buildUnit;
+            cell->unitDirection = WB_DIR_RIGHT;
+            cell->unitEnergy = energyDeci / 10;
+            cell->unitEnergyDeci = energyDeci;
+        }
+    }
+    memset(&cell->unitCargo, 0, sizeof(cell->unitCargo));
+    app->selectedMover = -1;
+    if (buildBuilding != WB_BUILDING_NONE) {
+        app->hasSelection = false;
+    } else {
+        app->hasSelection = true;
+        app->selectedX = tx;
+        app->selectedY = ty;
+        app->actionMode = WB_ACTION_MOVE;
+    }
+    centerCameraOn(app, tx, ty);
+    if (buildBuilding != WB_BUILDING_NONE) {
+        if (cell->hasGoal && !cell->goalSatisfied && (!cell->bonusGoal || app->map.bonusAvailable) && goalMatchesBuilding(cell->goalType, buildBuilding)) {
+            satisfyGoalAt(app, cell, tx, ty);
+        }
+    } else {
+        handleUnitArrival(app, tx, ty, buildUnit);
+    }
+    app->armedPlan = WB_PLAN_NONE;
+    app->planMenuOpen = false;
+    playSfxClipWorld(app, &app->sfxAssembly);
+}
+
+static bool canBuildPlanAt(const AppState* app, WBPlanType planType, int tx, int ty, WBUnitType* outUnit) {
+    WBUnitType buildUnit = planTypeToUnit(planType);
+    WBBuildingType buildBuilding = planTypeToBuilding(planType);
+    const WBResourcePile* recipe = buildBuilding != WB_BUILDING_NONE ? wbBuildingRecipe(buildBuilding) : wbUnitRecipe(buildUnit);
+    const WBCell* cell;
+    if (outUnit) {
+        *outUnit = buildUnit;
+    }
+    if (!recipe || !inBounds(app, tx, ty)) {
+        return false;
+    }
+    cell = &app->map.cells[ty][tx];
+    if (cell->hasUnit || activeMonsterAt(NULL, ty, tx) || cell->hasBuilding || (cell->hasResource && cell->resourceIsPlan)) {
+        return false;
+    }
+    if (buildBuilding != WB_BUILDING_NONE) {
+        if (!wbBuildingCanBePlacedOn(buildBuilding, cell->terrain)) {
+            return false;
+        }
+    } else if (!wbUnitCanTraverse(buildUnit, cell->terrain)) {
+        return false;
+    }
+    return checkResourcesAround(app, tx, ty, recipe);
+}
+
+static void disassembleSelected(AppState* app) {
+    WBCell* cell = selectedCellMutable(app);
+    if (!cell || app->selectedMover >= 0 || app->armedPlan != WB_PLAN_NONE) {
+        return;
+    }
+    if (cell->hasUnit) {
+        disassembleUnitAtCell(app, app->selectedX, app->selectedY);
+    } else if (cell->hasBuilding) {
+        disassembleBuildingAtCell(app, app->selectedX, app->selectedY);
+    }
+}
+
+static bool pointInRect(float px, float py, float x, float y, float w, float h) {
+    return px >= x && px < (x + w) && py >= y && py < (y + h);
+}
+
+/* Identical to computeAdjacentActionDestination but only picks approach cells where
+   the push direction's beyond cell is traversable and unoccupied. This prevents
+   the dozer from silently walking to a position where the resulting push is impossible. */
+static bool computePushApproachDestination(const AppState* app, int targetX, int targetY, WBUnitType unitType, int* outX, int* outY) {
+    static const int offsets[4][2] = {{1,0},{0,1},{-1,0},{0,-1}};
+    int currentX = app->selectedX;
+    int currentY = app->selectedY;
+    int bestLen = 0x7FFFFFFF;
+    int i;
+    for (i = 0; i < 4; ++i) {
+        /* Approach cell: one of the 4 neighbours of the boulder */
+        int nx = targetX + offsets[i][0];
+        int ny = targetY + offsets[i][1];
+        /* Beyond cell: what the boulder would land on from this approach */
+        int bx = targetX - offsets[i][0];
+        int by = targetY - offsets[i][1];
+        const WBCell* beyond;
+        int pathLen = 0;
+        if (!inBounds(app, nx, ny)) {
+            continue;
+        }
+        /* Validate beyond cell before committing to this approach */
+        if (!inBounds(app, bx, by)) {
+            continue;
+        }
+        beyond = &app->map.cells[by][bx];
+        if (!wbUnitCanTraverse(WB_UNIT_DOZER, beyond->terrain)) {
+            continue;
+        }
+        if (beyond->hasUnit || activeMonsterAt(NULL, by, bx) || beyond->hasBuilding || beyond->hasResource) {
+            continue;
+        }
+        /* Now validate that the dozer can actually reach the approach cell */
+        if (nx == currentX && ny == currentY) {
+            *outX = nx;
+            *outY = ny;
+            return true;
+        }
+        if (app->map.cells[ny][nx].hasUnit) {
+            continue;
+        }
+        if (!wbUnitCanTraverse(unitType, app->map.cells[ny][nx].terrain)) {
+            continue;
+        }
+        if (!findPath(app, currentX, currentY, nx, ny, unitType, g_pathScratchX, g_pathScratchY, &pathLen)) {
+            continue;
+        }
+        if (pathLen < bestLen) {
+            bestLen = pathLen;
+            *outX = nx;
+            *outY = ny;
+        }
+    }
+    return bestLen != 0x7FFFFFFF;
+}
+
+static bool computeAdjacentActionDestination(const AppState* app, int targetX, int targetY, WBUnitType unitType, int* outX, int* outY) {
+    static const int offsets[4][2] = {{1,0},{0,1},{-1,0},{0,-1}};
+    int currentX = app->selectedX;
+    int currentY = app->selectedY;
+    int bestLen = 0x7FFFFFFF;
+    int i;
+    for (i = 0; i < 4; ++i) {
+        int nx = targetX + offsets[i][0];
+        int ny = targetY + offsets[i][1];
+        int pathLen = 0;
+        if (!inBounds(app, nx, ny)) {
+            continue;
+        }
+        if (nx == currentX && ny == currentY) {
+            *outX = nx;
+            *outY = ny;
+            return true;
+        }
+        if (app->map.cells[ny][nx].hasUnit) {
+            continue;
+        }
+        if (!wbUnitCanTraverse(unitType, app->map.cells[ny][nx].terrain)) {
+            continue;
+        }
+        if (!findPath(app, currentX, currentY, nx, ny, unitType, g_pathScratchX, g_pathScratchY, &pathLen)) {
+            continue;
+        }
+        if (pathLen < bestLen) {
+            bestLen = pathLen;
+            *outX = nx;
+            *outY = ny;
+        }
+    }
+    return bestLen != 0x7FFFFFFF;
+}
+
+static bool trySelectUnitAtTouch(AppState* app, const touchPosition* touch) {
+    int y;
+    int x;
+    int bestLocZ = -2147483647;
+    bool found = false;
+    for (y = 0; y < app->map.height; ++y) {
+        for (x = 0; x < app->map.width; ++x) {
+            const WBCell* cell = &app->map.cells[y][x];
+            float locX;
+            float locY;
+            C2D_Image image;
+            float left;
+            float top;
+            float w;
+            float h;
+            int assetId;
+            int locZ;
+            if (!cell->hasUnit) {
+                continue;
+            }
+            assetId = unitAnimAssetId(cell->unitType, cell->unitDirection, terrainUsesWaterSprite(cell->terrain), 0.0f, &cell->unitCargo, WB_UNIT_ANIM_NONE);
+            if (assetId < 0) {
+                continue;
+            }
+            posToLoc(app, x + 1, y + 1, &locX, &locY);
+            locX += 10.0f * DIRECTOR_SCALE;
+            locY += 18.0f * DIRECTOR_SCALE;
+            image = getImage(app, assetId);
+            left = locX - (g_objectAnchors[assetId].x * DIRECTOR_SCALE);
+            top = locY - (g_objectAnchors[assetId].y * DIRECTOR_SCALE);
+            w = imageWidth(image, DIRECTOR_SCALE);
+            h = imageHeight(image, DIRECTOR_SCALE);
+            if (!pointInRect((float) touch->px, (float) touch->py, left, top, w, h)) {
+                continue;
+            }
+            locZ = 5 * ((x + 1) + (app->map.width * (y + 1))) + 5;
+            if (locZ >= bestLocZ) {
+                bestLocZ = locZ;
+                app->selectedX = x;
+                app->selectedY = y;
+                app->hasSelection = true;
+                app->selectedMover = -1;
+                app->infoOverlayOpen = false;
+                if (unitSupportsPickDrop(cell->unitType)) {
+                    app->actionMode = pileEmpty(&cell->unitCargo) ? WB_ACTION_MOVE : WB_ACTION_DROP;
+                } else if (unitSupportsDigFill(cell->unitType)) {
+                    app->actionMode = steamshovelHasFillCargo(cell) ? WB_ACTION_FILL : WB_ACTION_DIG;
+                } else if (unitSupportsTransplant(cell->unitType)) {
+                    app->actionMode = treebotHasSapling(cell) ? WB_ACTION_PLANT : WB_ACTION_UPROOT;
+                } else if (unitSupportsPush(cell->unitType)) {
+                    app->actionMode = WB_ACTION_PUSH;
+                } else {
+                    app->actionMode = WB_ACTION_MOVE;
+                }
+                switch (cell->unitType) {
+                    case WB_UNIT_DUCK:
+                    case WB_UNIT_FROG:
+                    case WB_UNIT_FISH:
+                    case WB_UNIT_SNAIL:
+                        playSfxClip(app, &app->sfxUnitAnimal);
+                        break;
+                    case WB_UNIT_TREEBOT:
+                    case WB_UNIT_REPAIRBOT:
+                    case WB_UNIT_DEFENDER:
+                    case WB_UNIT_DEFENDER2:
+                    case WB_UNIT_FREEZEBOT:
+                        playSfxClip(app, app->sfxUnitRobot.loaded ? &app->sfxUnitRobot : &app->sfxUnitVehicle);
+                        break;
+                    case WB_UNIT_STEAMSHOVEL:
+                    case WB_UNIT_DUMPTRUCK:
+                    case WB_UNIT_FORKLIFT:
+                    case WB_UNIT_DOZER:
+                        playSfxClip(app, &app->sfxUnitVehicle);
+                        break;
+                    default:
+                        playSfxClip(app, &app->sfxUnitVehicle);
+                        break;
+                }
+                found = true;
+            }
+        }
+    }
+    /* Also check units currently in motion (not present in cells). */
+    {
+        int mi;
+        for (mi = 0; mi < (int)(sizeof(app->moves) / sizeof(app->moves[0])); ++mi) {
+            const WBMoveState* move = &app->moves[mi];
+            float fromX, fromY, toX, toY, baseX, baseY;
+            C2D_Image image;
+            float left, top, w, h;
+            int assetId;
+            int locZ;
+            if (!move->active) continue;
+            posToLoc(app, move->pathX[move->pathIndex] + 1, move->pathY[move->pathIndex] + 1, &fromX, &fromY);
+            if (move->blockedWaiting || move->pathIndex >= move->pathLen - 1) {
+                toX = fromX; toY = fromY;
+            } else {
+                posToLoc(app, move->pathX[move->pathIndex + 1] + 1, move->pathY[move->pathIndex + 1] + 1, &toX, &toY);
+            }
+            baseX = roundf(fromX + (toX - fromX) * move->progress + (10.0f * DIRECTOR_SCALE));
+            baseY = roundf(fromY + (toY - fromY) * move->progress + (18.0f * DIRECTOR_SCALE));
+            assetId = unitAnimAssetId(move->unitType, move->direction, false, 0.0f, &move->unitCargo, WB_UNIT_ANIM_NONE);
+            if (assetId < 0) continue;
+            image = getImage(app, assetId);
+            left = baseX - (g_objectAnchors[assetId].x * DIRECTOR_SCALE);
+            top  = baseY - (g_objectAnchors[assetId].y * DIRECTOR_SCALE);
+            w = imageWidth(image, DIRECTOR_SCALE);
+            h = imageHeight(image, DIRECTOR_SCALE);
+            if (!pointInRect((float)touch->px, (float)touch->py, left, top, w, h)) continue;
+            locZ = 5 * ((move->pathX[move->pathIndex] + 1) + (app->map.width * (move->pathY[move->pathIndex] + 1))) + 5;
+            if (locZ >= bestLocZ) {
+                bestLocZ = locZ;
+                app->selectedX = move->pathX[move->pathIndex];
+                app->selectedY = move->pathY[move->pathIndex];
+                app->hasSelection = true;
+                app->selectedMover = mi;
+                app->infoOverlayOpen = false;
+                if (unitSupportsPickDrop(move->unitType)) {
+                    app->actionMode = pileEmpty(&move->unitCargo) ? WB_ACTION_MOVE : WB_ACTION_DROP;
+                } else {
+                    app->actionMode = WB_ACTION_MOVE;
+                }
+                found = true;
+            }
+        }
+    }
+    if (found) {
+        centerCameraOn(app, app->selectedX, app->selectedY);
+    }
+    return found;
+}
+
+static void handleWorldTouch(AppState* app, const touchPosition* touch) {
+    int tx;
+    int ty;
+    if (anyMoveActive(app) && trySelectUnitAtTouch(app, touch)) {
+        app->buildPreviewValid = false;
+        app->planMenuOpen = false;
+        return;
+    }
+    if (!screenToTile(app, (float) touch->px, (float) touch->py, &tx, &ty)) {
+        if (trySelectUnitAtTouch(app, touch)) {
+            return;
+        }
+        return;
+    }
+    if (selectedMove(app)) {
+        WBMoveState* move = selectedMoveMutable(app);
+        if (inBounds(app, tx, ty) && app->map.cells[ty][tx].hasUnit) {
+            return;
+        }
+        move->queuedMoveValid = true;
+        move->queuedMoveX = tx;
+        move->queuedMoveY = ty;
+        return;
+    }
+    if (inBounds(app, tx, ty) && app->map.cells[ty][tx].hasGoal && !app->map.cells[ty][tx].goalSatisfied &&
+        (!app->map.cells[ty][tx].bonusGoal || app->map.bonusAvailable)) {
+        char goalText[96];
+        const WBCell* goalCell = &app->map.cells[ty][tx];
+        if (goalCell->goalIsCollect) {
+            const char* mname = goalCell->goalCollectType != WB_MONSTER_NONE
+                ? wbMonsterName(goalCell->goalCollectType) : "creature";
+            snprintf(goalText, sizeof(goalText), "Collect: %d %s", goalCell->goalCollectCount, mname);
+        } else {
+            snprintf(goalText, sizeof(goalText), "Needs: %s", goalRequiredUnitName(goalCell->goalType));
+        }
+        showGoalPopup(app, goalText, goalCell->bonusGoal, false, tx, ty);
+    } else if (!app->goalPopupComplete) {
+        app->goalPopupVisible = false;
+    }
+    if (app->armedPlan != WB_PLAN_NONE) {
+        tryBuildPlan(app, tx, ty);
+        return;
+    }
+    if (app->hasSelection && app->actionMode == WB_ACTION_PICK) {
+        const WBCell* target = inBounds(app, tx, ty) ? &app->map.cells[ty][tx] : NULL;
+        int moveX;
+        int moveY;
+        if (tryPickUpAt(app, tx, ty)) {
+            return;
+        }
+        if (!target || !target->hasResource || target->resourceIsPlan) {
+            app->actionMode = WB_ACTION_MOVE;
+            app->pendingActionValid = false;
+            return;
+        }
+        if (!computeAdjacentActionDestination(app, tx, ty, selectedCell(app)->unitType, &moveX, &moveY)) {
+            app->actionMode = WB_ACTION_MOVE;
+            app->pendingActionValid = false;
+            return;
+        }
+        app->pendingActionValid = true;
+        app->pendingActionX = tx;
+        app->pendingActionY = ty;
+        beginMove(app, moveX, moveY);
+        return;
+    }
+    if (app->hasSelection && app->actionMode == WB_ACTION_DROP) {
+        const WBCell* target = inBounds(app, tx, ty) ? &app->map.cells[ty][tx] : NULL;
+        int moveX;
+        int moveY;
+        if (tryDropAt(app, tx, ty)) {
+            return;
+        }
+        if (!target || target->hasUnit || activeMonsterAt(NULL, ty, tx) || (target->hasResource && target->resourceIsPlan)) {
+            app->actionMode = WB_ACTION_MOVE;
+            app->pendingActionValid = false;
+            return;
+        }
+        if (!computeAdjacentActionDestination(app, tx, ty, selectedCell(app)->unitType, &moveX, &moveY)) {
+            app->actionMode = WB_ACTION_MOVE;
+            app->pendingActionValid = false;
+            return;
+        }
+        app->pendingActionValid = true;
+        app->pendingActionX = tx;
+        app->pendingActionY = ty;
+        beginMove(app, moveX, moveY);
+        return;
+    }
+    if (app->hasSelection && (app->actionMode == WB_ACTION_DIG || app->actionMode == WB_ACTION_FILL ||
+        app->actionMode == WB_ACTION_UPROOT || app->actionMode == WB_ACTION_PLANT ||
+        app->actionMode == WB_ACTION_PUSH)) {
+        /* If tapping a different unit or building, cancel action mode and fall through to selection */
+        bool tryAction = true;
+        if (inBounds(app, tx, ty) && !(tx == app->selectedX && ty == app->selectedY)) {
+            const WBCell* tapCell = &app->map.cells[ty][tx];
+            if (tapCell->hasUnit || tapCell->hasBuilding) {
+                tryAction = false;
+                app->actionMode = WB_ACTION_MOVE;
+                app->pendingActionValid = false;
+            }
+        }
+        if (tryAction) {
+            int moveX;
+            int moveY;
+            bool didAction = false;
+            if (app->actionMode == WB_ACTION_DIG) {
+                didAction = tryDigAt(app, tx, ty);
+            } else if (app->actionMode == WB_ACTION_FILL) {
+                didAction = tryFillAt(app, tx, ty);
+            } else if (app->actionMode == WB_ACTION_UPROOT) {
+                didAction = tryUprootAt(app, tx, ty);
+            } else if (app->actionMode == WB_ACTION_PLANT) {
+                didAction = tryPlantAt(app, tx, ty);
+            } else if (app->actionMode == WB_ACTION_PUSH) {
+                didAction = tryPushAt(app, tx, ty);
+            }
+            if (didAction) {
+                return;
+            }
+            if (app->actionMode == WB_ACTION_PUSH) {
+                if (!computePushApproachDestination(app, tx, ty, selectedCell(app)->unitType, &moveX, &moveY)) {
+                    app->actionMode = WB_ACTION_MOVE;
+                    app->pendingActionValid = false;
+                    return;
+                }
+            } else if (!computeAdjacentActionDestination(app, tx, ty, selectedCell(app)->unitType, &moveX, &moveY)) {
+                app->actionMode = WB_ACTION_MOVE;
+                app->pendingActionValid = false;
+                return;
+            }
+            app->pendingActionValid = true;
+            app->pendingActionX = tx;
+            app->pendingActionY = ty;
+            beginMove(app, moveX, moveY);
+            return;
+        }
+    }
+    if (trySelectUnitAtTouch(app, touch)) {
+        return;
+    }
+    /* Select immobile building (replaces any current selection). */
+    if (inBounds(app, tx, ty) && app->map.cells[ty][tx].hasBuilding) {
+        WBBuildingType bType = app->map.cells[ty][tx].buildingType;
+        app->hasSelection = true;
+        app->selectedX = tx;
+        app->selectedY = ty;
+        app->selectedMover = -1;
+        app->infoOverlayOpen = false;
+        app->actionMode = WB_ACTION_MOVE;
+        centerCameraOn(app, tx, ty);
+        switch (bType) {
+            case WB_BUILDING_FACTORY:
+                playSfxClip(app, app->sfxBldgFactory.loaded  ? &app->sfxBldgFactory  :
+                                 app->sfxBldgGeneric.loaded   ? &app->sfxBldgGeneric   : &app->sfxUnitVehicle);
+                break;
+            case WB_BUILDING_GAS_STATION:
+            case WB_BUILDING_MARINA:
+                playSfxClip(app, app->sfxBldgGasStationMarina.loaded ? &app->sfxBldgGasStationMarina :
+                                 app->sfxBldgGeneric.loaded            ? &app->sfxBldgGeneric          : &app->sfxUnitVehicle);
+                break;
+            case WB_BUILDING_GUARD_TOWER:
+                playSfxClip(app, app->sfxBldgGuardTower.loaded   ? &app->sfxBldgGuardTower   :
+                                 app->sfxBldgGeneric.loaded       ? &app->sfxBldgGeneric       : &app->sfxUnitVehicle);
+                break;
+            case WB_BUILDING_ROBOT_LAB:
+                playSfxClip(app, app->sfxBldgRobotLab.loaded     ? &app->sfxBldgRobotLab     :
+                                 app->sfxBldgGeneric.loaded       ? &app->sfxBldgGeneric       : &app->sfxUnitVehicle);
+                break;
+            default:
+                playSfxClip(app, app->sfxBldgGeneric.loaded ? &app->sfxBldgGeneric : &app->sfxUnitVehicle);
+                break;
+        }
+        return;
+    }
+    if (selectedUnitCanBuild(app)) {
+        if (inBounds(app, tx, ty) && app->map.cells[ty][tx].hasUnit) {
+            return;
+        }
+        if (beginMove(app, tx, ty) < 0) {
+            app->selectedShudderUntilMs = osGetTime() + 350;
+        }
+    }
+}
+
+static void appendDebugLog(const char* msg) {
+    FILE* fp = fopen("sdmc:/legowb3ds_debug.log", "a");
+    if (fp) {
+        fprintf(fp, "%s\n", msg);
+        fclose(fp);
+    }
+}
+
+/* Returns the next world in direction (+1 right, -1 left) from current, skipping any
+   world whose first mission is still locked. Wraps around 1..7. */
+static int nextWorldInDirection(const AppState* app, int current, int dir) {
+    int w = current;
+    int steps;
+    for (steps = 0; steps < 7; ++steps) {
+        w += dir;
+        if (w < 1) w = 7;
+        if (w > 7) w = 1;
+        if (worldMissionState(app, w, 1) >= 0)
+            return w;
+    }
+    return current; /* fallback: all other worlds locked */
+}
+
+static int missionAtWorldTouch(const AppState* app, const touchPosition* touch) {
+    int mission;
+    for (mission = 1; mission <= 12; ++mission) {
+        float x;
+        float y;
+        float dx;
+        float dy;
+        if (worldMissionState(app, app->worldSelectWorld, mission) < 0) {
+            continue;
+        }
+        missionPointToBottom(app, app->worldSelectWorld, mission, &x, &y);
+        dx = (float) touch->px - x;
+        dy = (float) touch->py - y;
+        if ((dx * dx) + (dy * dy) <= 900.0f) {
+            return mission;
+        }
+    }
+    return 0;
+}
+
+static void handleTitleScreenTouch(AppState* app, const touchPosition* touch) {
+    (void) touch;
+    freeGameplaySheets(app);
+    ensureMenuSheetsLoaded(app);
+    switchWorldSelectSheets(app, 1);
+    app->screenMode = WB_SCREEN_WORLD_SELECT;
+    app->worldSelectWorld = 1;
+    app->hoverMissionWorld = 0;
+    app->hoverMissionLevel = 0;
+    initWorldMiniWalkers(app, app->worldSelectWorld);
+    playSfxClip(app, &app->sfxMove);
+}
+
+static void handleWorldSelectTouch(AppState* app, const touchPosition* touch) {
+    int mission;
+    {
+        char _dbg[128];
+        float mx, my;
+        missionPointToBottom(app, app->worldSelectWorld, 1, &mx, &my);
+        snprintf(_dbg, sizeof(_dbg), "touch world=%d pos=(%d,%d) m1=%.0f,%.0f m1state=%d",
+            app->worldSelectWorld, touch->px, touch->py, mx, my,
+            worldMissionState(app, app->worldSelectWorld, 1));
+        appendDebugLog(_dbg);
+    }
+    if (pointInRect((float) touch->px, (float) touch->py, 4.0f, 102.0f, 36.0f, 32.0f)) {
+        app->worldSelectWorld = nextWorldInDirection(app, app->worldSelectWorld, -1);
+        switchWorldSelectSheets(app, app->worldSelectWorld);
+        initWorldMiniWalkers(app, app->worldSelectWorld);
+        playSfxClip(app, &app->sfxMove);
+        return;
+    }
+    if (pointInRect((float) touch->px, (float) touch->py, 280.0f, 102.0f, 36.0f, 32.0f)) {
+        app->worldSelectWorld = nextWorldInDirection(app, app->worldSelectWorld, 1);
+        switchWorldSelectSheets(app, app->worldSelectWorld);
+        initWorldMiniWalkers(app, app->worldSelectWorld);
+        playSfxClip(app, &app->sfxMove);
+        return;
+    }
+    mission = missionAtWorldTouch(app, touch);
+    {
+        char _dbg[64];
+        snprintf(_dbg, sizeof(_dbg), "  missionHit=%d", mission);
+        appendDebugLog(_dbg);
+    }
+    if (mission > 0) {
+        if (packagedMissionExists(app->worldSelectWorld, mission)) {
+            appendDebugLog("  packagedMissionExists=true -> loading");
+            playSfxClip(app, &app->sfxMove);
+            loadMissionIntoGame(app, app->worldSelectWorld, mission);
+        } else {
+            appendDebugLog("  packagedMissionExists=false");
+            playSfxClip(app, app->sfxWorldComingSoon.loaded ? &app->sfxWorldComingSoon : &app->sfxMove);
+        }
+        return;
+    }
+}
+
+static void handleActionButton(AppState* app) {
+    const WBCell* cell = selectedCell(app);
+    WBActionMode prevMode;
+    if (!cell || !cell->hasUnit) {
+        return;
+    }
+    if (app->selectedMover >= 0) {
+        return;
+    }
+    prevMode = app->actionMode;
+    app->pendingActionValid = false;
+    if (unitSupportsPickDrop(cell->unitType)) {
+        if (pileEmpty(&cell->unitCargo)) {
+            app->actionMode = (app->actionMode == WB_ACTION_PICK) ? WB_ACTION_MOVE : WB_ACTION_PICK;
+        } else {
+            app->actionMode = (app->actionMode == WB_ACTION_DROP) ? WB_ACTION_MOVE : WB_ACTION_DROP;
+        }
+    } else if (unitSupportsDigFill(cell->unitType)) {
+        WBActionMode defaultMode = steamshovelHasFillCargo(cell) ? WB_ACTION_FILL : WB_ACTION_DIG;
+        app->actionMode = (app->actionMode == defaultMode) ? WB_ACTION_MOVE : defaultMode;
+    } else if (unitSupportsTransplant(cell->unitType)) {
+        WBActionMode defaultMode = treebotHasSapling(cell) ? WB_ACTION_PLANT : WB_ACTION_UPROOT;
+        app->actionMode = (app->actionMode == defaultMode) ? WB_ACTION_MOVE : defaultMode;
+    } else if (unitSupportsPush(cell->unitType)) {
+        app->actionMode = (app->actionMode == WB_ACTION_PUSH) ? WB_ACTION_MOVE : WB_ACTION_PUSH;
+    } else {
+        app->actionMode = WB_ACTION_MOVE;
+    }
+    if (app->actionMode != prevMode) {
+        playSfxClip(app, &app->sfxMove);
+    }
+}
+
+static void updateBuildPreview(AppState* app, int tx, int ty) {
+    app->buildPreviewValid = false;
+    if (app->armedPlan == WB_PLAN_NONE) {
+        return;
+    }
+    if (!inBounds(app, tx, ty)) {
+        return;
+    }
+    app->buildPreviewValid = true;
+    app->buildPreviewX = tx + 1;
+    app->buildPreviewY = ty + 1;
+    app->buildPreviewAllowed = canBuildPlanAt(app, app->armedPlan, tx, ty, NULL);
+}
+
+static void handlePlanMenuTouch(AppState* app, const touchPosition* touch) {
+    int count = planMenuEntryCount(app);
+    int maxVisible = 3;
+    int i;
+    if (!pointInRect((float) touch->px, (float) touch->py, 26.0f, 34.0f, 268.0f, 170.0f)) {
+        app->planMenuOpen = false;
+        return;
+    }
+    /* Scroll up arrow */
+    if (app->planMenuScrollOffset > 0 && touch->px >= 272 && touch->px < 294 && touch->py >= 88 && touch->py < 108) {
+        app->planMenuScrollOffset -= 1;
+        return;
+    }
+    /* Scroll down arrow */
+    if (app->planMenuScrollOffset + maxVisible < count && touch->px >= 272 && touch->px < 294 && touch->py >= 190 && touch->py < 210) {
+        app->planMenuScrollOffset += 1;
+        return;
+    }
+    for (i = app->planMenuScrollOffset; i < app->planMenuScrollOffset + maxVisible && i < count; ++i) {
+        float y = 90.0f + ((i - app->planMenuScrollOffset) * 34.0f);
+        if (touch->px >= 42 && touch->px < 278 && touch->py >= y && touch->py < y + 28.0f) {
+            WBPlanType planType = planMenuEntryAt(app, i);
+            if (app->map.planInventory[planType] > 0) {
+                app->armedPlan = planType;
+                app->hasSelection = false;
+                app->planMenuOpen = false;
+                app->infoOverlayOpen = false;
+                playSfxClip(app, &app->sfxPlan);
+            }
+            return;
+        }
+    }
+}
+
+static void handleStartMenuTouch(AppState* app, const touchPosition* touch) {
+    char path[64];
+    if (!pointInRect((float) touch->px, (float) touch->py, 66.0f, 48.0f, 188.0f, 144.0f)) {
+        app->startMenuOpen = false;
+        return;
+    }
+    if (touch->px >= 96 && touch->px < 224 && touch->py >= 84 && touch->py < 102) {
+        app->startMenuOpen = false;
+        playSfxClip(app, &app->sfxMove);
+        return;
+    }
+    if (touch->px >= 96 && touch->px < 224 && touch->py >= 104 && touch->py < 122) {
+        snprintf(path, sizeof(path), "romfs:/maps/map%d_%d.txt", app->activeWorld, app->activeMission);
+        wbMapLoad(path, &app->map);
+        app->cameraX = 1;
+        app->cameraY = 1;
+        app->hasSelection = false;
+        app->selectedMover = -1;
+        app->infoOverlayOpen = false;
+        app->planMenuOpen = false;
+        app->armedPlan = WB_PLAN_NONE;
+        memset(app->moves, 0, sizeof(app->moves));
+        memset(app->worldEffects, 0, sizeof(app->worldEffects));
+        memset(app->pendingUnitBreaks, 0, sizeof(app->pendingUnitBreaks));
+        memset(app->cellAttackCooldownMs, 0, sizeof(app->cellAttackCooldownMs));
+        memset(app->unitSwampDamageTickMs, 0, sizeof(app->unitSwampDamageTickMs));
+        memset(app->unitRechargeTickMs, 0, sizeof(app->unitRechargeTickMs));
+        memset(app->buildingTickMs, 0, sizeof(app->buildingTickMs));
+        memset(app->unitActionUntilMs, 0, sizeof(app->unitActionUntilMs));
+        memset(app->unitActionAnim, 0, sizeof(app->unitActionAnim));
+        populateMonstersFromMap(&app->map);
+        app->planSwoop.active = false;
+        app->startMenuOpen = false;
+        clampCamera(app);
+        playSfxClip(app, &app->sfxMove);
+        return;
+    }
+    if (touch->px >= 96 && touch->px < 224 && touch->py >= 124 && touch->py < 142) {
+        freeGameplaySheets(app);
+        ensureMenuSheetsLoaded(app);
+        switchWorldSelectSheets(app, app->activeWorld);
+        app->screenMode = WB_SCREEN_WORLD_SELECT;
+        app->worldSelectWorld = app->activeWorld;
+        app->startMenuOpen = false;
+        initWorldMiniWalkers(app, app->worldSelectWorld);
+        startMenuMusic(app);
+        playSfxClip(app, &app->sfxMove);
+        return;
+    }
+    if (touch->px >= 96 && touch->px < 224 && touch->py >= 146 && touch->py < 164) {
+        app->muteMusic = !app->muteMusic;
+        if (app->muteMusic) {
+            ndspChnWaveBufClear(MUSIC_CHANNEL);
+        } else {
+            playCurrentMusicTrack(app);
+        }
+        playSfxClip(app, &app->sfxMove);
+        return;
+    }
+    if (touch->px >= 96 && touch->px < 224 && touch->py >= 166 && touch->py < 184) {
+        app->muteSfx = !app->muteSfx;
+        playSfxClip(app, &app->sfxMove);
+        return;
+    }
+}
+
+int main(int argc, char* argv[]) {
+    AppState* app = &g_app;
+    C3D_RenderTarget* top;
+    C3D_RenderTarget* bottom;
+    Result romfsResult;
+
+    (void) argc;
+    (void) argv;
+
+    memset(app, 0, sizeof(*app));
+    srand((unsigned int) osGetTime());
+
+    romfsResult = romfsInit();
+    gfxInitDefault();
+    C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
+    C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
+    C2D_Prepare();
+    app->audioReady = initAudioSystem(app);
+
+    top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
+    bottom = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
+
+    if (R_SUCCEEDED(romfsResult)) {
+        app->spriteSheet = C2D_SpriteSheetLoad("romfs:/gfx/worldbuilder.t3x");
+        app->titleMainSheet = C2D_SpriteSheetLoad("romfs:/gfx/titlemain.t3x");
+        app->worldSkySheets[0] = C2D_SpriteSheetLoad("romfs:/gfx/worldsky_a.t3x");
+        app->worldSkySheets[1] = C2D_SpriteSheetLoad("romfs:/gfx/worldsky_b.t3x");
+        app->worldSkySheets[2] = C2D_SpriteSheetLoad("romfs:/gfx/worldsky_c.t3x");
+        /* worldsky_d loaded lazily when navigating to worlds 6/7 */
+        app->worldMapSheets[0] = C2D_SpriteSheetLoad("romfs:/gfx/worldmap_a.t3x");
+        app->worldMapSheets[1] = C2D_SpriteSheetLoad("romfs:/gfx/worldmap_b.t3x");
+        app->worldMapSheets[2] = C2D_SpriteSheetLoad("romfs:/gfx/worldmap_c.t3x");
+        /* worldmap_d loaded lazily when navigating to worlds 6/7 */
+        app->worldIconSheet = C2D_SpriteSheetLoad("romfs:/gfx/worldicons.t3x");
+        if (app->spriteSheet && C2D_SpriteSheetCount(app->spriteSheet) > 0) {
+            C2D_Image firstImage = C2D_SpriteSheetGetImage(app->spriteSheet, 0);
+            C3D_TexSetFilter(firstImage.tex, GPU_NEAREST, GPU_NEAREST);
+            C3D_TexSetWrap(firstImage.tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+        }
+        if (app->titleMainSheet && C2D_SpriteSheetCount(app->titleMainSheet) > 0) {
+            C2D_Image firstTitleImage = C2D_SpriteSheetGetImage(app->titleMainSheet, 0);
+            C3D_TexSetFilter(firstTitleImage.tex, GPU_NEAREST, GPU_NEAREST);
+            C3D_TexSetWrap(firstTitleImage.tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+        }
+        if (app->worldSkySheets[0] && C2D_SpriteSheetCount(app->worldSkySheets[0]) > 0) {
+            C2D_Image img = C2D_SpriteSheetGetImage(app->worldSkySheets[0], 0);
+            C3D_TexSetFilter(img.tex, GPU_NEAREST, GPU_NEAREST);
+            C3D_TexSetWrap(img.tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+        }
+        if (app->worldSkySheets[1] && C2D_SpriteSheetCount(app->worldSkySheets[1]) > 0) {
+            C2D_Image img = C2D_SpriteSheetGetImage(app->worldSkySheets[1], 0);
+            C3D_TexSetFilter(img.tex, GPU_NEAREST, GPU_NEAREST);
+            C3D_TexSetWrap(img.tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+        }
+        if (app->worldSkySheets[2] && C2D_SpriteSheetCount(app->worldSkySheets[2]) > 0) {
+            C2D_Image img = C2D_SpriteSheetGetImage(app->worldSkySheets[2], 0);
+            C3D_TexSetFilter(img.tex, GPU_NEAREST, GPU_NEAREST);
+            C3D_TexSetWrap(img.tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+        }
+        if (app->worldSkySheets[3] && C2D_SpriteSheetCount(app->worldSkySheets[3]) > 0) {
+            C2D_Image img = C2D_SpriteSheetGetImage(app->worldSkySheets[3], 0);
+            C3D_TexSetFilter(img.tex, GPU_NEAREST, GPU_NEAREST);
+            C3D_TexSetWrap(img.tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+        }
+        if (app->worldMapSheets[0] && C2D_SpriteSheetCount(app->worldMapSheets[0]) > 0) {
+            C2D_Image img = C2D_SpriteSheetGetImage(app->worldMapSheets[0], 0);
+            C3D_TexSetFilter(img.tex, GPU_NEAREST, GPU_NEAREST);
+            C3D_TexSetWrap(img.tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+        }
+        if (app->worldMapSheets[1] && C2D_SpriteSheetCount(app->worldMapSheets[1]) > 0) {
+            C2D_Image img = C2D_SpriteSheetGetImage(app->worldMapSheets[1], 0);
+            C3D_TexSetFilter(img.tex, GPU_NEAREST, GPU_NEAREST);
+            C3D_TexSetWrap(img.tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+        }
+        if (app->worldMapSheets[2] && C2D_SpriteSheetCount(app->worldMapSheets[2]) > 0) {
+            C2D_Image img = C2D_SpriteSheetGetImage(app->worldMapSheets[2], 0);
+            C3D_TexSetFilter(img.tex, GPU_NEAREST, GPU_NEAREST);
+            C3D_TexSetWrap(img.tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+        }
+        if (app->worldMapSheets[3] && C2D_SpriteSheetCount(app->worldMapSheets[3]) > 0) {
+            C2D_Image img = C2D_SpriteSheetGetImage(app->worldMapSheets[3], 0);
+            C3D_TexSetFilter(img.tex, GPU_NEAREST, GPU_NEAREST);
+            C3D_TexSetWrap(img.tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+        }
+        if (app->worldIconSheet && C2D_SpriteSheetCount(app->worldIconSheet) > 0) {
+            C2D_Image img = C2D_SpriteSheetGetImage(app->worldIconSheet, 0);
+            C3D_TexSetFilter(img.tex, GPU_NEAREST, GPU_NEAREST);
+            C3D_TexSetWrap(img.tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+        }
+    }
+    /* Gameplay sheets (vehicles/monsters/buildings/whirlpool) are loaded lazily
+       in loadGameplaySheets() when entering a mission to stay within VRAM limits. */
+
+    {
+        FILE* mapTestFp = fopen("romfs:/maps/map1_1.txt", "rb");
+        bool mapFileExists = (mapTestFp != NULL);
+        bool mapLoaded = false;
+        if (mapTestFp) { fclose(mapTestFp); mapLoaded = wbMapLoad("romfs:/maps/map1_1.txt", &app->map); }
+        bool startupOk = R_SUCCEEDED(romfsResult) && app->spriteSheet && app->titleMainSheet &&
+            app->worldSkySheets[0] && app->worldSkySheets[1] && app->worldSkySheets[2] &&
+            app->worldMapSheets[0] && app->worldMapSheets[1] && app->worldMapSheets[2] &&
+            app->worldIconSheet &&
+            mapLoaded;
+        if (!startupOk) {
+        consoleInit(GFX_TOP, NULL);
+        printf("Startup diagnostics:\n");
+        printf("romfsInit: %s (0x%08lX)\n", R_FAILED(romfsResult) ? "FAIL" : "OK", (unsigned long)romfsResult);
+        printf("spriteSheet: %s\n", app->spriteSheet ? "OK" : "FAIL");
+        printf("titleMain: %s\n", app->titleMainSheet ? "OK" : "FAIL");
+        printf("worldSky: %s/%s/%s/%s\n", app->worldSkySheets[0] ? "OK" : "FAIL", app->worldSkySheets[1] ? "OK" : "FAIL", app->worldSkySheets[2] ? "OK" : "FAIL", app->worldSkySheets[3] ? "OK" : "FAIL");
+        printf("worldMap: %s/%s/%s/%s\n", app->worldMapSheets[0] ? "OK" : "FAIL", app->worldMapSheets[1] ? "OK" : "FAIL", app->worldMapSheets[2] ? "OK" : "FAIL", app->worldMapSheets[3] ? "OK" : "FAIL");
+        printf("worldIcon: %s\n", app->worldIconSheet ? "OK" : "FAIL");
+        printf("map fopen: %s\n", mapFileExists ? "OK" : "FAIL (no file)");
+        printf("map load: %s\n", mapLoaded ? "OK" : (mapFileExists ? "FAIL (parse)" : "FAIL (no file)"));
+        if (mapFileExists && !mapLoaded) {
+            FILE* dbgFp = fopen("romfs:/maps/map1_1.txt", "r");
+            if (dbgFp) {
+                char dbgLine[64]; int i; int lc = 0; int mapSec = 0; int mapRows = 0;
+                while (fgets(dbgLine, sizeof(dbgLine), dbgFp) && lc < 100) {
+                    size_t len = strlen(dbgLine);
+                    while (len > 0 && (dbgLine[len-1]=='\r' || dbgLine[len-1]=='\n' || dbgLine[len-1]==' ')) dbgLine[--len] = '\0';
+                    ++lc;
+                    if (strcmp(dbgLine, "[map]") == 0) mapSec = 1;
+                    if (mapSec && (strncmp(dbgLine, " map=", 5)==0 || strncmp(dbgLine, "map=", 4)==0)) ++mapRows;
+                }
+                fclose(dbgFp);
+                printf("lines=%d mapSec=%d mapRows=%d\n", lc, mapSec, mapRows);
+                dbgFp = fopen("romfs:/maps/map1_1.txt", "r");
+                if (dbgFp) {
+                    fgets(dbgLine, sizeof(dbgLine), dbgFp);
+                    fclose(dbgFp);
+                    printf("line1(%d):", (int)strlen(dbgLine));
+                    for (i = 0; i < 8 && i < (int)strlen(dbgLine); ++i) printf("%02X", (unsigned char)dbgLine[i]);
+                    printf("\n");
+                }
+            }
+        }
+        printf("\nFailed to load sprite sheet or map.\n");
+        printf("Press START to exit.\n");
+        while (aptMainLoop()) {
+            hidScanInput();
+            if (hidKeysDown() & KEY_START) break;
+            gfxFlushBuffers();
+            gfxSwapBuffers();
+            gspWaitForVBlank();
+        }
+        C2D_Fini();
+        C3D_Fini();
+        gfxExit();
+        romfsExit();
+        return 1;
+        }
+    }
+
+    sceneInit(app);
+    /* Global audio: base music + UI/interaction/goal SFX needed on every screen.
+       Per-level SFX (unit sounds, building sounds, terrain actions, music variants)
+       are freed and reloaded fresh each time a level starts via loadLevelAudio(). */
+    app->loadedClipCount += loadWavClip("romfs:/audio/music_intro.wav", &app->musicIntro) ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/music_game.wav",  &app->musicGame)  ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/sfx_button.wav",           &app->sfxButton)         ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/sfx_rollover.wav",          &app->sfxRollover)       ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/sfx_world_coming_soon.wav", &app->sfxWorldComingSoon) ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/sfx_move.wav",         &app->sfxMove)        ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/sfx_plan.wav",         &app->sfxPlan)        ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/sfx_pickup_plan.wav",  &app->sfxPickupPlan)  ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/sfx_pickup.wav",       &app->sfxPickup)      ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/sfx_drop.wav",         &app->sfxDrop)        ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/sfx_damage.wav",       &app->sfxDamage)      ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/sfx_disassemble.wav",  &app->sfxDisassemble) ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/sfx_assembly.wav",     &app->sfxAssembly)    ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/sfx_move_misc.wav",    &app->sfxMoveMisc)    ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/sfx_goal.wav",         &app->sfxGoal)        ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/sfx_bonus_goal.wav",   &app->sfxBonusGoal)   ? 1 : 0;
+    /* Intro music variants (title/world-map screen) — optional, load after core sounds */
+    app->loadedClipCount += loadWavClip("romfs:/audio/music_intro_1.wav", &app->musicIntroVariants[0]) ? 1 : 0;
+    app->loadedClipCount += loadWavClip("romfs:/audio/music_intro_2.wav", &app->musicIntroVariants[1]) ? 1 : 0;
+    app->linearFreeKB = (int)(linearSpaceFree() / 1024);
+    if (app->audioReady) {
+        startMenuMusic(app);
+    }
+    app->cameraX = 1;
+    app->cameraY = 1;
+    clampCamera(app);
+
+    while (aptMainLoop()) {
+        circlePosition circle;
+        touchPosition touch;
+        u32 kDown;
+        u32 kHeld;
+
+        hidScanInput();
+        kDown = hidKeysDown();
+        kHeld = hidKeysHeld();
+        hidCircleRead(&circle);
+        hidTouchRead(&touch);
+        if (app->screenMode != WB_SCREEN_GAME) {
+            /* Konami code detection (title screen only) */
+            if (app->screenMode == WB_SCREEN_TITLE && !app->debugMenuOpen) {
+                if (kDown != 0) {
+                    if (kDown & g_konamiSeq[app->konamiProgress]) {
+                        app->konamiProgress += 1;
+                        if (app->konamiProgress >= WB_KONAMI_LEN) {
+                            app->konamiProgress = 0;
+                            app->debugMenuOpen = true;
+                            app->debugMenuCursor = 0;
+                        }
+                    } else {
+                        /* Restart from 0, but also check if this key restarts the sequence */
+                        app->konamiProgress = (kDown & g_konamiSeq[0]) ? 1 : 0;
+                    }
+                }
+            }
+            /* Debug menu navigation */
+            if (app->debugMenuOpen && app->screenMode == WB_SCREEN_TITLE) {
+                if (kDown & KEY_DOWN) {
+                    app->debugMenuCursor = (app->debugMenuCursor + 1) % 4;
+                }
+                if (kDown & KEY_UP) {
+                    app->debugMenuCursor = (app->debugMenuCursor + 3) % 4;
+                }
+                if (kDown & (KEY_A | KEY_B)) {
+                    if ((kDown & KEY_B) || app->debugMenuCursor == 3) {
+                        app->debugMenuOpen = false;
+                        app->konamiProgress = 0;
+                    } else if (kDown & KEY_A) {
+                        switch (app->debugMenuCursor) {
+                            case 0: /* Clear Save Data */
+                                clearSaveData(app);
+                                break;
+                            case 1: /* Unlock All Levels */
+                                unlockAllLevels(app);
+                                break;
+                            case 2: /* Toggle Debug Info */
+                                app->showDiagnostics = !app->showDiagnostics;
+                                break;
+                            default: break;
+                        }
+                    }
+                }
+                /* Suppress touch-to-start while debug menu is open */
+            } else {
+            if ((kDown & KEY_B) != 0 && app->screenMode == WB_SCREEN_WORLD_SELECT) {
+                app->screenMode = WB_SCREEN_TITLE;
+                app->titleCycleStartMs = 0; /* restart cycle from WB1 */
+                startMenuMusic(app);
+                playSfxClip(app, &app->sfxMove);
+            }
+            /* Worldmap button navigation */
+            if (app->screenMode == WB_SCREEN_WORLD_SELECT) {
+                /* SELECT: toggle Builder's License overlay (WB1 when world 3 done; WB2 when world 6 done) */
+                if (kDown & KEY_SELECT) {
+                    bool isWb2World = (app->worldSelectWorld >= 6);
+                    bool hasLicense = isWb2World ? wb2LicenseUnlocked(app) : licenseUnlocked(app);
+                    if (hasLicense) {
+                        app->licenseVisible = !app->licenseVisible;
+                        playSfxClip(app, &app->sfxMove);
+                    } else {
+                        /* Not yet unlocked — play "coming soon" cue like original */
+                        playSfxClip(app, app->sfxWorldComingSoon.loaded ? &app->sfxWorldComingSoon : &app->sfxMove);
+                    }
+                }
+                /* L / ZL: previous world */
+                if (kDown & (KEY_L | KEY_ZL)) {
+                    app->worldSelectWorld = nextWorldInDirection(app, app->worldSelectWorld, -1);
+                    switchWorldSelectSheets(app, app->worldSelectWorld);
+                    initWorldMiniWalkers(app, app->worldSelectWorld);
+                    app->hoverMissionLevel = 0;
+                    playSfxClip(app, &app->sfxMove);
+                }
+                /* R / ZR: next world */
+                if (kDown & (KEY_R | KEY_ZR)) {
+                    app->worldSelectWorld = nextWorldInDirection(app, app->worldSelectWorld, 1);
+                    switchWorldSelectSheets(app, app->worldSelectWorld);
+                    initWorldMiniWalkers(app, app->worldSelectWorld);
+                    app->hoverMissionLevel = 0;
+                    playSfxClip(app, &app->sfxMove);
+                }
+                /* D-pad: cycle through available mission markers */
+                if (kDown & (KEY_RIGHT | KEY_DOWN)) {
+                    int cur = app->hoverMissionLevel;
+                    int next = cur;
+                    int m;
+                    for (m = 1; m <= 12; ++m) {
+                        int candidate = (cur % 12) + m;
+                        if (candidate > 12) candidate -= 12;
+                        if (worldMissionState(app, app->worldSelectWorld, candidate) >= 0) {
+                            next = candidate;
+                            break;
+                        }
+                    }
+                    app->hoverMissionLevel = next;
+                    playSfxClip(app, &app->sfxMove);
+                }
+                if (kDown & (KEY_LEFT | KEY_UP)) {
+                    int cur = app->hoverMissionLevel;
+                    int next = cur;
+                    int m;
+                    for (m = 1; m <= 12; ++m) {
+                        int candidate = ((cur - 2 + 12) % 12) + 1 - m + 1;
+                        candidate = ((cur - 1 - m + 12 * 2) % 12) + 1;
+                        if (worldMissionState(app, app->worldSelectWorld, candidate) >= 0) {
+                            next = candidate;
+                            break;
+                        }
+                    }
+                    app->hoverMissionLevel = next;
+                    playSfxClip(app, &app->sfxMove);
+                }
+                /* A: launch selected mission */
+                if (kDown & KEY_A) {
+                    int sel = app->hoverMissionLevel;
+                    if (sel >= 1 && sel <= 12 && worldMissionState(app, app->worldSelectWorld, sel) >= 0) {
+                        if (packagedMissionExists(app->worldSelectWorld, sel)) {
+                            playSfxClip(app, &app->sfxMove);
+                            loadMissionIntoGame(app, app->worldSelectWorld, sel);
+                        } else {
+                            playSfxClip(app, app->sfxWorldComingSoon.loaded ? &app->sfxWorldComingSoon : &app->sfxMove);
+                        }
+                    }
+                }
+            }
+            if (kHeld & KEY_TOUCH) {
+                if (!app->worldSelectTouchActive) {
+                    if (app->screenMode == WB_SCREEN_TITLE) {
+                        handleTitleScreenTouch(app, &touch);
+                    } else {
+                        handleWorldSelectTouch(app, &touch);
+                    }
+                }
+                app->worldSelectTouchActive = true;
+            } else {
+                app->worldSelectTouchActive = false;
+            }
+            updateWorldMiniWalkers(app);
+            updateAudioRuntime(app);
+            }
+        } else {
+            if (kDown & KEY_START) {
+                if (app->goalPopupVisible && app->goalPopupComplete) {
+                    app->goalPopupVisible = false;
+                    app->goalPopupComplete = false;
+                    app->goalPopupBonus = false;
+                }
+                app->startMenuOpen = !app->startMenuOpen;
+                app->startMenuCursor = 0;
+                app->planMenuOpen = false;
+                app->infoOverlayOpen = false;
+                playSfxClip(app, &app->sfxMove);
+            }
+            /* ── Start-menu button navigation (takes priority over game controls) ── */
+            if (app->startMenuOpen) {
+                char smPath[64];
+                if (kDown & KEY_DOWN) {
+                    app->startMenuCursor = (app->startMenuCursor + 1) % 5;
+                    playSfxClip(app, &app->sfxMove);
+                }
+                if (kDown & KEY_UP) {
+                    app->startMenuCursor = (app->startMenuCursor + 4) % 5;
+                    playSfxClip(app, &app->sfxMove);
+                }
+                if (kDown & KEY_B) {
+                    app->startMenuOpen = false;
+                    playSfxClip(app, &app->sfxMove);
+                }
+                if (kDown & KEY_A) {
+                    switch (app->startMenuCursor) {
+                        case 0: /* Continue Mission */
+                            app->startMenuOpen = false;
+                            playSfxClip(app, &app->sfxMove);
+                            break;
+                        case 1: /* Restart Mission */
+                            snprintf(smPath, sizeof(smPath), "romfs:/maps/map%d_%d.txt", app->activeWorld, app->activeMission);
+                            wbMapLoad(smPath, &app->map);
+                            app->cameraX = 1; app->cameraY = 1;
+                            app->hasSelection = false; app->selectedMover = -1;
+                            app->infoOverlayOpen = false; app->planMenuOpen = false;
+                            app->armedPlan = WB_PLAN_NONE;
+                            memset(app->moves, 0, sizeof(app->moves));
+                            memset(app->worldEffects, 0, sizeof(app->worldEffects));
+                            memset(app->pendingUnitBreaks, 0, sizeof(app->pendingUnitBreaks));
+                            memset(app->cellAttackCooldownMs, 0, sizeof(app->cellAttackCooldownMs));
+                            memset(app->unitSwampDamageTickMs, 0, sizeof(app->unitSwampDamageTickMs));
+                            memset(app->unitRechargeTickMs, 0, sizeof(app->unitRechargeTickMs));
+                            memset(app->buildingTickMs, 0, sizeof(app->buildingTickMs));
+                            memset(app->unitActionUntilMs, 0, sizeof(app->unitActionUntilMs));
+                            memset(app->unitActionAnim, 0, sizeof(app->unitActionAnim));
+                            populateMonstersFromMap(&app->map);
+                            app->planSwoop.active = false;
+                            app->startMenuOpen = false;
+                            clampCamera(app);
+                            playSfxClip(app, &app->sfxMove);
+                            break;
+                        case 2: /* End Mission */
+                            freeGameplaySheets(app);
+                            ensureMenuSheetsLoaded(app);
+                            switchWorldSelectSheets(app, app->activeWorld);
+                            app->screenMode = WB_SCREEN_WORLD_SELECT;
+                            app->worldSelectWorld = app->activeWorld;
+                            app->startMenuOpen = false;
+                            initWorldMiniWalkers(app, app->worldSelectWorld);
+                            startMenuMusic(app);
+                            playSfxClip(app, &app->sfxMove);
+                            break;
+                        case 3: /* Music toggle */
+                            app->muteMusic = !app->muteMusic;
+                            if (app->muteMusic) {
+                                ndspChnWaveBufClear(MUSIC_CHANNEL);
+                            } else {
+                                playCurrentMusicTrack(app);
+                            }
+                            playSfxClip(app, &app->sfxMove);
+                            break;
+                        case 4: /* Sound FX toggle */
+                            app->muteSfx = !app->muteSfx;
+                            playSfxClip(app, &app->sfxMove);
+                            break;
+                        default: break;
+                    }
+                }
+                /* Keep music running and handle touch while start menu is open */
+                if (kHeld & KEY_TOUCH) {
+                    if (!app->touchActiveLast)
+                        handleStartMenuTouch(app, &touch);
+                    app->touchActiveLast = true;
+                } else {
+                    app->touchActiveLast = false;
+                }
+                updateAudioRuntime(app);
+                goto doneGameInput;
+            }
+            if (kDown & KEY_SELECT) {
+                app->planMenuOpen = !app->planMenuOpen;
+                app->planMenuScrollOffset = 0;
+                app->planMenuCursor = 0;
+                app->infoOverlayOpen = false;
+                app->startMenuOpen = false;
+                playSfxClip(app, &app->sfxPlan);
+            }
+            if (kDown & KEY_R) {
+                app->planMenuOpen = !app->planMenuOpen;
+                app->planMenuScrollOffset = 0;
+                app->planMenuCursor = 0;
+                app->infoOverlayOpen = false;
+                app->startMenuOpen = false;
+                playSfxClip(app, &app->sfxPlan);
+            }
+            /* ── Plan-menu button navigation (takes priority over game controls) ── */
+            if (app->planMenuOpen) {
+                int pmCount = planMenuEntryCount(app);
+                if (kDown & KEY_DOWN) {
+                    if (pmCount > 0) {
+                        app->planMenuCursor = (app->planMenuCursor + 1) % pmCount;
+                        if (app->planMenuCursor >= app->planMenuScrollOffset + 3)
+                            app->planMenuScrollOffset = app->planMenuCursor - 2;
+                    }
+                    playSfxClip(app, &app->sfxMove);
+                }
+                if (kDown & KEY_UP) {
+                    if (pmCount > 0) {
+                        app->planMenuCursor = (app->planMenuCursor + pmCount - 1) % pmCount;
+                        if (app->planMenuCursor < app->planMenuScrollOffset)
+                            app->planMenuScrollOffset = app->planMenuCursor;
+                    }
+                    playSfxClip(app, &app->sfxMove);
+                }
+                if (kDown & KEY_A) {
+                    WBPlanType pmPlan = planMenuEntryAt(app, app->planMenuCursor);
+                    if (pmPlan != WB_PLAN_NONE && app->map.planInventory[pmPlan] > 0)
+                        app->armedPlan = pmPlan;
+                    app->planMenuOpen = false;
+                    app->infoOverlayOpen = false;
+                    playSfxClip(app, &app->sfxPlan);
+                }
+                if (kDown & KEY_B) {
+                    app->planMenuOpen = false;
+                    playSfxClip(app, &app->sfxMove);
+                }
+                if (kHeld & KEY_TOUCH) {
+                    if (!app->touchActiveLast)
+                        handlePlanMenuTouch(app, &touch);
+                    app->touchActiveLast = true;
+                } else {
+                    app->touchActiveLast = false;
+                }
+                updateAudioRuntime(app);
+                goto doneGameInput;
+            }
+            if ((kDown & KEY_A) != 0) {
+                if (app->goalPopupVisible && app->goalPopupComplete) {
+                    playSfxClip(app, &app->sfxMove);
+                    app->goalPopupVisible = false;
+                    app->goalPopupComplete = false;
+                    app->goalPopupBonus = false;
+                } else {
+                    if (app->hasSelection) {
+                        WBCell* sc = &app->map.cells[app->selectedY][app->selectedX];
+                        if (sc->hasBuilding && sc->buildingType == WB_BUILDING_FACTORY) {
+                            sc->factoryColor = (sc->factoryColor + 1) % 5;
+                            playSfxClip(app, &app->sfxMove);
+                        }
+                    }
+                    handleActionButton(app);
+                }
+            }
+            if ((kDown & KEY_L) != 0) {
+                if (app->goalPopupVisible && app->goalPopupComplete) {
+                    playSfxClip(app, &app->sfxMove);
+                    app->goalPopupVisible = false;
+                    app->goalPopupComplete = false;
+                    app->goalPopupBonus = false;
+                } else {
+                    if (app->hasSelection) {
+                        WBCell* sc = &app->map.cells[app->selectedY][app->selectedX];
+                        if (sc->hasBuilding && sc->buildingType == WB_BUILDING_FACTORY) {
+                            sc->factoryColor = (sc->factoryColor + 1) % 5;
+                            playSfxClip(app, &app->sfxMove);
+                        }
+                    }
+                    handleActionButton(app);
+                }
+            }
+            if ((kDown & KEY_B) != 0) {
+                if (app->goalPopupVisible && app->goalPopupComplete) {
+                    app->goalPopupVisible = false;
+                    app->goalPopupComplete = false;
+                    app->goalPopupBonus = false;
+                    freeGameplaySheets(app);
+                    ensureMenuSheetsLoaded(app);
+                    switchWorldSelectSheets(app, app->activeWorld);
+                    app->screenMode = WB_SCREEN_WORLD_SELECT;
+                    app->worldSelectWorld = app->activeWorld;
+                    app->hasSelection = false;
+                    app->selectedMover = -1;
+                    app->infoOverlayOpen = false;
+                    app->armedPlan = WB_PLAN_NONE;
+                    app->planMenuOpen = false;
+                    app->startMenuOpen = false;
+                    initWorldMiniWalkers(app, app->worldSelectWorld);
+                    startMenuMusic(app);
+                    playSfxClip(app, &app->sfxMove);
+                    continue;
+                }
+                app->hasSelection = false;
+                app->selectedMover = -1;
+                app->infoOverlayOpen = false;
+                app->armedPlan = WB_PLAN_NONE;
+                app->planMenuOpen = false;
+                app->goalPopupVisible = false;
+                app->pendingActionValid = false;
+                app->actionMode = WB_ACTION_MOVE;
+                app->startMenuOpen = false;
+                playSfxClip(app, &app->sfxMove);
+            }
+            if ((kDown & KEY_X) != 0) {
+                disassembleSelected(app);
+            }
+            if ((kDown & KEY_Y) != 0 && app->hasSelection) {
+                app->infoOverlayOpen = !app->infoOverlayOpen;
+                app->planMenuOpen = false;
+                app->startMenuOpen = false;
+                playSfxClip(app, &app->sfxMove);
+            }
+
+            if (kHeld & KEY_LEFT) app->cameraX--;
+            if (kHeld & KEY_RIGHT) app->cameraX++;
+            if (kHeld & KEY_UP) app->cameraY--;
+            if (kHeld & KEY_DOWN) app->cameraY++;
+
+            if (circle.dx < -20) app->cameraX--;
+            if (circle.dx > 20) app->cameraX++;
+            if (circle.dy < -20) app->cameraY++;
+            if (circle.dy > 20) app->cameraY--;
+
+            if (kHeld & KEY_TOUCH) {
+                int previewX;
+                int previewY;
+                if (app->armedPlan != WB_PLAN_NONE && screenToTile(app, (float) touch.px, (float) touch.py, &previewX, &previewY)) {
+                    updateBuildPreview(app, previewX, previewY);
+                }
+                if (!app->touchActiveLast) {
+                    if (app->planMenuOpen) {
+                        handlePlanMenuTouch(app, &touch);
+                    } else if (app->startMenuOpen) {
+                        handleStartMenuTouch(app, &touch);
+                    } else if (!app->startMenuOpen) {
+                        handleWorldTouch(app, &touch);
+                    }
+                }
+                app->touchActiveLast = true;
+            } else {
+                app->touchActiveLast = false;
+                if (app->armedPlan == WB_PLAN_NONE) {
+                    app->buildPreviewValid = false;
+                }
+            }
+
+            updateMovement(app);
+            tickBuildings(app);
+            tickUnitRecharging(app);
+            tickMonsters(app);
+            tickCollectGoals(app);
+            resolvePendingUnitBreaks(app);
+            updateAudioRuntime(app);
+            clampCamera(app);
+            doneGameInput:;
+        }
+
+        C2D_TextBufClear(app->dynamicBuf);
+
+        /* Update title screen cycle state */
+        if (app->screenMode == WB_SCREEN_TITLE) {
+            u64 titleNow = osGetTime();
+            if (app->titleCycleStartMs == 0) {
+                app->titleCycleStartMs = titleNow;
+            }
+            app->titleShowWB2 = (((titleNow - app->titleCycleStartMs) / 15000ULL) % 2) == 1;
+        } else {
+            app->titleCycleStartMs = 0;
+            app->titleShowWB2 = false;
+        }
+
+        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+
+        C2D_TargetClear(top, (app->screenMode == WB_SCREEN_TITLE && app->titleShowWB2)
+            ? C2D_Color32(88, 123, 41, 0xFF)
+            : C2D_Color32(0xFF, 0xFF, 0xFF, 0xFF));
+        C2D_SceneBegin(top);
+        if (app->screenMode == WB_SCREEN_GAME) {
+            drawTopScreen(app);
+        } else if (app->screenMode == WB_SCREEN_WORLD_SELECT) {
+            drawWorldSelectTop(app);
+        }
+        if (app->debugMenuOpen && app->screenMode == WB_SCREEN_TITLE) {
+            drawDebugMenu(app);
+        }
+
+        C2D_TargetClear(bottom, C2D_Color32(0xFF, 0xFF, 0xFF, 0xFF));
+        C2D_SceneBegin(bottom);
+        if (app->screenMode == WB_SCREEN_TITLE) {
+            drawTitleBottom(app);
+        } else if (app->screenMode == WB_SCREEN_WORLD_SELECT) {
+            drawWorldSelectBottom(app);
+        } else {
+            drawSkyBottom(app);
+            drawTerrainBottom(app);
+            drawObjectsBottom(app);
+            drawPlanSwoop(app);
+            drawBuildPreview(app);
+            drawBottomGoalPopup(app);
+            if (app->startMenuOpen) {
+                drawBottomStartMenu(app);
+            } else if (app->planMenuOpen) {
+                drawBottomPlanMenu(app);
+            }
+        }
+
+        C3D_FrameEnd(0);
+    }
+
+    sceneExit(app);
+    if (app->audioReady) {
+        ndspExit();
+    }
+    C2D_Fini();
+    C3D_Fini();
+    gfxExit();
+    romfsExit();
+    return 0;
+}

@@ -1,0 +1,41 @@
+[map]
+name=STEAM-POWERED ISLAND
+
+ map=@@@wexxw...xxwwxw@@@
+ map=@@wwwwww.1.wwcwwzw@@
+ map=@@dxxwwx.f.wwxxwwx@@
+ map=@wwwwwww@@@wwwgwwww@
+ map=@xxwwxxw@@@xxwwxxww@
+ map=@~wwwww@@@@@wwwwwdzw
+ map=xwwxxwb@@@@@wxxwwxxw
+ map=wwwwwww@@@@@wwwwwwww
+ map=wxxwwxx@@@@@xwwxxwwx
+ map=a..wwww@@@@@wwzwwww2
+
+
+center=4,6
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+
+[mapitems]
+a=pile,yellow,25,wheel,4,energy,1
+b=waterplan,gas_station,10
+c=waterplan,robot_lab,10
+d=waterpile,red,40,green,5
+e=waterplan,defender,5
+f=pile,blue,40,yellow,25,energy,1
+g=waterpile,blue,25,yellow,25,green,10
+z=waterunit,monster,water_crab
+1=goal,steamshovel
+2=bonusgoal,defender,water
+
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+steamshovel=10

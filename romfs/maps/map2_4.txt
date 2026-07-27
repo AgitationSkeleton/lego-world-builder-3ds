@@ -1,0 +1,46 @@
+[map]
+name=THE LONG ROAD
+
+ map=@@@@@@@@@@@@@@@.......
+ map=@@@@@@@@@@@@@@@.......
+ map=.@..e...@TTT......1...
+ map=.@.@@@@.@.iTTT.....i..
+ map=.@....@i@...TTT.......
+ map=.@@@@.@.@.ab.@@@@@@@@@
+ map=......T...i........g..
+ map=.@@@@.@@@@@@.@.@@@@@@.
+ map=.@c...@......@.....h@.
+ map=.@.@@@@.@@@@@@@@@.@.@.
+ map=.@.@....@d........@...
+ map=.@.@@@@@@.@@@@@@@@@@@.
+ map=2@f.......@e..........
+
+
+--   H = HQ 
+--   B = BUGGY
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   C = crab
+
+ 
+[mapitems]
+a=pile,red,55,green,5,wheel,4
+b=plan,gas_station,5
+c=pile,green,10,blue,5
+d=pile,green,10,blue,10
+e=pile,blue,10
+f=plan,treebot,10
+g=pile,blue,10
+h=pile,green,5
+i=pile,energy,1
+j=unit,vehicle,treebot
+
+1=goal,treebot
+2=bonusgoal,gas_station
+
+[inventory]
+forklift=10

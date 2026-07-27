@@ -1,0 +1,74 @@
+﻿[map]
+name=RIVER CROSSING
+
+ map=@.2!?_...wwwnw_es__.!
+ map=@?'.._...wwtww____..!
+ map=@?.m_f..dwnww_.....'.
+ map=@..._...wnww_h..?...!
+ map=@b.._..wwww___.....!j
+ map=@.?._..www..ww__.j!jo
+ map=@...k_.www..1zw._..!j
+ map=@mw@@_.wnw______....'
+ map=@@w@@@tww...h......!.
+ map=.?.y@@wc.s..wwww..s.!
+ map=...wv@@ww..wwpwrw?..!
+ map=@q..wu@@@@@@@@@@@@@@@
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers 
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+center=10,5
+ 
+[mapitems]
+a=waterplan,house,1
+b=plan,buggy,5
+c=waterplan,dirtbuggy,10
+d=plan,fish,5
+e=plan,frog,5
+f=pile,energy,1
+g=pile,red,10
+h=pile,yellow,10,energy,1,wheel,4
+i=pile,blue,5
+j=pile,green,5,energy,1
+k=pile,wheel,4
+l=waterpile,energy,1
+m=unit,vehicle,snail
+n=waterpile,blue,5
+o=plan,tugboat,5
+p=waterplan,house,1
+r=waterpile,red,10,energy,1
+s=pile,white,5
+t=waterpile,white,5
+u=waterplan,forklift,5
+v=waterunit,monster,water_crab
+y=pile,blue,40,yellow,25,energy,1
+z=waterplan,defender,5
+q=unit,monster,crab
+
+
+1=goal,house
+2=bonusgoal,forklift
+
+[inventory]
+
+snail=5

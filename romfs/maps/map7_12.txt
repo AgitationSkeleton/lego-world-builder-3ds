@@ -1,0 +1,79 @@
+﻿[map]
+name=THE LAST FRONTIER
+
+ map=!g#e#.##.!!'!n
+ map=!!#...k..''!!f
+ map=l!####ww..!w?!
+ map=www#j#ww..?ww?
+ map=wpwwawww...www
+ map=wwwwww...d.wwi
+ map=.r.r.r1o....cr
+ map=wwwwwwwwwwrrww
+ map=wrhwwwrwwwwrww
+ map=wwwrwhwwwwhwww
+ map=2wwwwwwrwwwwwr
+
+center=10,7
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   @ = hole
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers 
+
+-- ` = cement
+-- > = road block
+-- ( = street 1
+-- [ = street 2
+-- { = street 3
+-- \ = street 4
+-- / = street 5
+-- ) = street 6
+-- ] = street 7
+-- } = street 8
+-- + = street 9
+-- = = street 10
+-- - = street undiggable
+
+ 
+ 
+[mapitems]
+a=unit,building,factory
+b=unit,monster,boulder
+c=pile,blue,25
+d=unit,vehicle,dumptruck
+e=unit,building,gas_station
+f=unit,building,robot_lab
+g=unit,building,windmill
+h=waterunit,monster,shark
+i=waterplan,fish,5
+j=plan,treebot,10
+k=pile,green,20
+l=plan,guard_tower,10
+n=plan,steamshovel,10
+o=pile,energy,1
+p=waterunit,vehicle,fish
+
+1=goal,guard_tower
+2=bonusgoal,fish,water
+
+
+[inventory]
+
+dumptruck=10
+

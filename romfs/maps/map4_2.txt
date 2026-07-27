@@ -1,0 +1,47 @@
+[map]
+name=MYSTERIOUS WHIRLPOOLS
+
+ map=@@wbwwdrriwww@@ 
+ map=@bwcwbwrrw1rk2@ 
+ map=dwwawwwrfwwrrrr 
+ map=wbwwwbrrwewewge 
+ map=wwdbwwbrrwewwww 
+ map=wbcjdwcrewwweww 
+ map=@dwbbrrrrwwawe@ 
+ map=@@bwwrkhrwfww@@ 
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+
+ 
+[mapitems]
+a=whirlpool,1
+b=waterpile,blue,5
+c=waterpile,green,5
+d=waterpile,energy,1
+e=waterplan,fish,1
+f=waterplan,tugboat,1
+g=waterplan,freighter,1
+h=waterplan,frog,1
+i=waterplan,marina,1
+j=waterunit,vehicle,fish
+k=whirlpool,2
+
+
+1=goal,marina,water
+2=bonusgoal,frog,water
+
+[inventory]
+

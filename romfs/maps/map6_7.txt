@@ -1,0 +1,60 @@
+﻿[map]
+name=SLOW GOING
+
+ map=.i!l!:::!k!.h
+ map=...'?::2?'.g.
+ map=.b!..?!?..!.b
+ map=!.!?.....?!.!
+ map=.T...___...T.
+ map=aja.._d_..a.a
+ map=:::T.....T...
+ map=:1::a...a.e..
+ map=:::a..c..a.jf
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+--   @ = hole
+--   : = capture goal area (yellow zone)
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers 
+
+
+ 
+ 
+[mapitems]
+1=goal,collect 1 crab
+2=bonusgoal,collect 1 lion
+
+a=unit,monster,boulder
+b=unit,monster,crab
+c=unit,vehicle,freezebot
+d=plan,dozer,10
+e=pile,yellow,15,wheel,6,energy,1
+f=plan,treebot,10
+g=pile,blue,25,green,20,energy,1
+h=plan,freezebot,10
+i=pile,yellow,25,white,10,blue,5,red,5,energy,1
+j=unit,monster,lion
+k=unit,building,gas_station
+l=unit,building,robot_lab
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+
+

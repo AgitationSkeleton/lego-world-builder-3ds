@@ -1,0 +1,63 @@
+﻿[map]
+name=THE ESCORT
+
+ map=1k...wwwiwwww
+ map=a...wewwwwwew
+ map=.wwbwwww..www
+ map=wwwwwwwwh.www
+ map=wwwwwwd...wew
+ map=wwwwwww.!.www
+ map=wwwwhg.2..cww
+ map=wiww'.f..wwew
+ map=wwh.b.&!..wwj
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+--   @ = hole
+
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers 
+
+
+[mapitems]
+a=unit,monster,lion
+b=pile,energy,1
+c=pile,blue,25,energy,1
+d=unit,vehicle,freezebot
+e=waterunit,monster,water_crab
+f=plan,freighter,10
+g=waterplan,defender,10
+h=waterpile,energy,1
+i=waterpile,blue,5,energy,1
+j=waterplan,fish,10
+k=plan,snail,5
+
+
+
+
+
+1=goal,defender
+2=bonusgoal,snail
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+
+freezebot=10
+
+

@@ -1,0 +1,64 @@
+[map]
+name=STRANGE CURRENTS
+
+ map=@@@@@@@@@@baaa@
+ map=1wwwww@@@wwwwww
+ map=wwswww@@@rr65rr
+ map=wwwws6@@@rr58rr
+ map=@@@@@@@@@rr78rr
+ map=@@@@@@@@@wwwwww
+ map=wwwwww...wwwcww
+ map=wwcwww...wwwwww
+ map=wwwwww@@@@@@@@@
+ map=rr31rr@@@@@@@@@
+ map=rr34rr@@@7wswww
+ map=rr24rr@@@wwwwww
+ map=wwwwww@@@wwwsw2
+ map=@wwww@@@@@@@@@@
+ map=@w9ed@@@@@@@@@@
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+center=5,5
+ 
+[mapitems]
+
+s=waterunit,monster,shark
+a=waterpile,green,5,energy,1
+c=waterunit,monster,water_crab
+1=whirlpool,1
+2=whirlpool,2
+3=whirlpool,3
+4=whirlpool,4
+5=whirlpool,5
+6=whirlpool,6
+7=whirlpool,7
+8=whirlpool,8
+d=waterplan,duck,1
+e=waterpile,yellow,5,energy,1
+
+
+9=goal,anything,water
+b=bonusgoal,duck,water
+
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+frog=3
+
+
+

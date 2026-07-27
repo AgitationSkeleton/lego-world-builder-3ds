@@ -1,0 +1,24 @@
+--atlas -f rgba8888 -z auto
+building_factory.png
+building_factory_blue.png
+building_factory_green.png
+building_factory_red.png
+building_factory_white.png
+building_factory_yellow.png
+building_factory_hero.png
+plan_factory.png
+building_house.png
+building_house_hero.png
+plan_house.png
+building_windmill_1.png
+building_windmill_2.png
+building_windmill_3.png
+building_windmill_4.png
+building_windmill_hero.png
+plan_windmill.png
+building_garage.png
+building_garage_hero.png
+plan_garage.png
+building_nursery.png
+building_nursery_hero.png
+plan_nursery.png

@@ -1,0 +1,60 @@
+﻿[map]
+name=BIG GAME HUNTER
+
+ map=..wwwwwwwwwxxmwxxwwwwww
+ map=a..i..e..ewwxxxxw.www.w
+ map=..wwwrw...wbwwww......w
+ map=wrrrrhww...e...w..www.w
+ map=wwwwrrwwbwwww....wwww.w
+ map=wwwcwrwwwwwdwwwwwww2gjl
+ map=wwwwrrwwbwwww..f.wwww.w
+ map=wrrrrhww...e...w..www.w
+ map=..wwwww...wwbwww......w
+ map=1..e..e..ewwxxxxw.www.w
+ map=..wwwwwwwwwxxwkxxwwwwww
+
+center=-3,-3
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+--   @ = hole
+
+ 
+[mapitems]
+a=unit,vehicle,snail
+b=waterunit,monster,water_crab
+c=waterplan,freezebot,10
+d=waterplan,duck,10
+e=pile,yellow,5,energy,1
+f=pile,white,10,red,5,energy,1
+g=waterunit,monster,shark
+h=waterpile,blue,5,energy,1
+i=plan,fish,5
+j=plan,tugboat,5
+k=waterpile,green,5,energy,1
+l=waterpile,blue,15,energy,1
+m=waterplan,frog,10
+
+
+
+
+
+1=goal,snail
+2=bonusgoal,frog,water
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+
+
+
+
+

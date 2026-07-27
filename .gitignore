@@ -1,0 +1,16 @@
+# Build output.
+/build/
+/legowb3ds.3dsx
+/legowb3ds.cia
+/legowb3ds.elf
+/legowb3ds.smdh
+/legowb3ds.map
+/banner.bnr
+
+# Texture atlases, compiled from gfx/*.t3s by tex3ds during the build. They are
+# byte for byte reproducible from the sources beside them, so there is no
+# reason to carry them.
+/romfs/gfx/
+
+# Copies made before editing, a working habit rather than part of the project.
+/backups

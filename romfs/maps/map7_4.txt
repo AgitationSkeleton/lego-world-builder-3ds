@@ -1,0 +1,91 @@
+﻿[map]
+name=COOPERATION
+
+ map=__.....wwwwww..[>__.
+ map=n_....wwww.wwwo/_..p
+ map=.__e.ew3..c..\\+\\\\
+ map=n_....wwwwwwww_-b___
+ map=?__...e....::w[}_d.?
+ map=n_.....e...:1w=\\\\\
+ map=?__2...egewwwy/....?
+ map=n_...heie..f.\).____
+ map=?__....e.ewwww{>-m__
+ map=n_j...e...e.wwwl{\\\
+ map=.__.a..e.e.twkww...q
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+--   @ = hole
+--   : = capture goal area (yellow zone)
+
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers 
+
+-- ` = cement
+-- > = road block
+-- ( = street 1
+-- [ = street 2
+-- { = street 3
+-- \ = street 4
+-- / = street 5
+-- ) = street 6
+-- ] = street 7
+-- } = street 8
+-- + = street 9
+-- = = street 10
+-- - = street undiggable
+
+
+ center=13,3
+ 
+[mapitems]
+1=goal,collect 1 lion
+2=goal, factory
+3=bonusgoal, house
+
+
+a=unit,monster,lion
+b=unit,vehicle,snail
+c=plan,buggy,5
+d=pile,red,5,energy,1,wheel,4
+e=unit,monster,boulder
+f=plan,dozer,5
+g=plan,freezebot,5
+h=pile,blue,5,red,5,white,10,yellow,25,energy,1
+i=pile,yellow,15,energy,1,wheel,6
+j=plan,fish,5
+k=waterpile,blue,5,energy,1
+l=waterplan,dumptruck,5
+m=pile,yellow,20,wheel,6,energy,1
+n=pile,white,5
+o=waterplan,factory,5
+p=pile,red,5
+q=pile,blue,5
+
+
+t=plan,house,5
+y=waterunit,monster,water_crab
+
+
+
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+
+snail=5

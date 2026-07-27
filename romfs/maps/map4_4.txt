@@ -1,0 +1,61 @@
+[map]
+name=THE BERMUDA RECTANGLE
+
+ map=@@w5rwbwr3wcrcwnrzw5@@
+ map=@qcrrrrlrwwrrrrrrrw4r@
+ map=rrrr4wrrrrrrwwrwgrrrrr
+ map=wbwcwyrewrwswwrwirwwow
+ map=wwvwrrrwfrww1rrrrrmwww
+ map=rrrrrwrrrrrrrry2rkwbww
+ map=wfwrdwwsredwhrrrrrwwlw
+ map=ww5rrqwwrtwawjrpwrrrrr
+ map=whwgrrrprrrrrrrrorwwdw
+ map=rrrrrjrrrwzwwrtrrrw5ww
+ map=@wcnrwwkrrwwwrwdrwiwr@
+ map=@@mrrwbw5rdw3rwvrrrr@@
+ 
+
+
+-- MAP TERRAIN KEY
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+ 
+[mapitems]
+a=waterunit,vehicle,tugboat
+b=waterplan,frog,1
+c=waterpile,green,1
+d=waterpile,energy,1
+e=whirlpool,1
+f=whirlpool,2
+g=whirlpool,3
+h=whirlpool,4
+i=whirlpool,5
+j=whirlpool,6
+k=whirlpool,7
+l=whirlpool,8
+m=whirlpool,9
+n=whirlpool,10
+o=whirlpool,11
+p=whirlpool,12
+q=whirlpool,13
+s=whirlpool,14
+t=whirlpool,15
+u=whirlpool,16
+v=whirlpool,17
+4=whirlpool,18
+y=whirlpool,19
+z=whirlpool,20
+3=whirlpool,21
+5=waterplan,tugboat,1
+
+1=goal,frog
+2=bonusgoal,frog,water
+
+[inventory]

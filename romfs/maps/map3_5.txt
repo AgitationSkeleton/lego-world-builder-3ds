@@ -1,0 +1,49 @@
+[map]
+name=STONEHENGE
+
+ map=www@@@@@@@Tf...T.1T@@@@
+ map=www@@@@@@TT..bbT..T@_.@
+ map=w2w@ww.......b.b.TT@_@_
+ map=www@ww...g...b.b.TT@_@_
+ map=@@w@ww.TTT.T..b.TTT@@_@
+ map=@@w@wwbaT..TT..TTTT@@@@
+ map=@@wwww.T.g.TTT.TTTT@@@@
+ map=@@@www.b.b.TTT...TT@@@@
+ map=@@@hww...T.TTTTT.TT@@@@
+ map=@@@wwwg.TT.TTTT..TT@@@@
+ map=@@@@@@@@@@@TTTT.TTT@@@@
+ map=@@@@@@@@_@@.TT.b.TT@@@@
+ map=@@@@@@@_@@@.TTb...T@@@@
+ map=@@@@@@.@__@T.bdbbTT@@@@
+ map=@@@@@@@_@@@TT.b...T@@@@
+
+
+
+center=13,13
+
+--   H = HQ 
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   ~ = space bar billboard - should be to right of a hole
+
+
+center=15,2
+ 
+[mapitems]
+a=plan,fish,10
+b=unit,monster,boulder
+d=unit,vehicle,dozer
+e=pile,blue,1
+f=unit,building,gas_station
+g=pile,blue,1
+h=waterpile,blue,2,energy,1
+
+1=goal,dozer
+2=bonusgoal,fish,water
+
+
+[inventory]

@@ -1,0 +1,51 @@
+[map]
+name=WHAT'S A TREEBOT?
+
+ map=cd....__T..@@@@@@@@@
+ map=e......TT.2@@@@@@@@@
+ map=.TT.....TT.@@@@@@@@@ 
+ map=TTTTT.a.wTT@@@@@@@@@
+ map=T__TT.gwwwwwwwwwww.4
+ map=___TTT.w3.w@@@@@@@@@
+ map=.1__TT....w@@@@@@@@@
+ map=f.._TTT..ww@@@@@@@@@
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+center=5,5
+ 
+[mapitems]
+
+a=plan,treebot,10
+b=pile,yellow,10,wheel,4,energy,1
+c=pile,blue,25
+d=pile,green,20
+e=pile,energy,1
+f=plan,tugboat,10
+g=pile,energy,1
+
+
+1=goal,anything
+2=unit,vehicle,dirtbuggy
+3=unit,vehicle,buggy
+4=bonusgoal,buggy
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+buggy=10
+
+
+

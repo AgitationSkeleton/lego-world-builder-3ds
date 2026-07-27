@@ -1,0 +1,53 @@
+[map]
+name=TWO AND A HALF
+
+ map=wbw_1@@.dg.g@@k@@
+ map=w_w_w@@d..T.@@l2@
+ map=wwcwww@@gTg.n@@T@
+ map=@w_w_w@@j..T.@@i@
+ map=@w_w_w@@T.Tg.@@.@
+ map=@cwwwc@@g..iT@@p.
+ map=@@w__ww@@.T..h@@.
+ map=@@ww_wa@@...ww@@.
+ map=@@fwwa_@@gTTwe@@.
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   r = water rocks
+--   @ = hole
+
+
+ 
+[mapitems]
+a=waterpile,green,5,energy,1
+b=waterplan,buggy,10
+c=waterunit,monster,gator
+d=pile,red,10,wheel,4,energy,1
+e=waterplan,tugboat,10
+f=waterpile,blue,15,energy,1
+g=pile,yellow,1
+h=pile,energy,1
+i=unit,monster,crab
+j=plan,duck,10
+k=pile,red,10,green,30,blue,30,energy,1
+l=pile,yellow,4,wheel,4,energy,1
+m=plan,steamshovel,10
+n=plan,treebot,10
+o=plan,defender,10
+p=pile,yellow,1
+
+
+
+1=goal,tugboat,water
+2=bonusgoal,duck
+
+
+[inventory]
+frog=10

@@ -1,0 +1,40 @@
+[map]
+name=BOT VS. BEAST
+
+ map=..@@@@....@...@@..@@@@....@@@..
+ map=..................@@@...#......
+ map=..d._###__#....e..@@@..##..##..
+ map=@.e..##..e.d..c..@@ww..www..##.
+ map=@#..b.e...f.#_..e@ww...##2c#w..
+ map=.#.b...e##e...._.gww...##ww##..
+ map=..b.##..###.e.##1.ww..###www..@
+ map=@__.e...ed...###_@@@....w.###.@
+ map=..................@@@..#....#..
+ map=...@@@@...@@......@@@@...@@....
+
+
+center=1,4
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   r = water with reefs
+
+
+ 
+[mapitems]
+a=unit,vehicle,defender2
+b=unit,vehicle,defender
+c=unit,monster,trex
+d=plan,defender,3
+e=pile,energy,1
+f=plan,snail,5
+g=plan,duck,5
+
+1=goal,snail
+2=bonusgoal,snail
+
+[inventory]

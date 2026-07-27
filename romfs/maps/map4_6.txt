@@ -1,0 +1,44 @@
+[map]
+name=ALLIGATOR WRESTLING
+
+
+ map=@@wwawwawwwwwrwwwwwrww@@@@@w
+ map=@wwwwrrrrwwwrawrwwwwwww@@www
+ map=wwwwrw2wdrwwwwwwrwrdwwr@www@
+ map=wfwwreswwrwwrwwrwwwrwwwww1@@
+ map=wwwwwrrrrwwwwrwwwwrwwwc@www@
+ map=@@@wwwwwwawwrewrwwwwwww@@www
+ map=@@wwwwawwwwwwwwwrwwwbb@@@@@w
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+center=10,3
+ 
+[mapitems]
+a=waterunit,monster,gator
+b=waterpile,yellow,40,blue,10,red,10,energy,1
+c=waterpile,yellow,50,energy,10
+d=whirlpool,1
+e=whirlpool,2
+s=waterunit,monster,shark
+f=waterplan,speedboat,10
+
+1=goal,gator,water
+2=bonusgoal,duck,water
+
+[inventory]
+duck=5
+

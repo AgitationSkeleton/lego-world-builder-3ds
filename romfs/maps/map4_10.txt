@@ -1,0 +1,61 @@
+[map]
+name=DIRE STRAITS
+
+ map=2h@@w3w@@ww4ww@@@@@@@@
+ map=5w@@bwr@@wwwww....@@@@
+ map=@wa@@grb@@wwrww@@.@@@@
+ map=@fw@@www@@wwrww@@..@@@
+ map=@@ww@@rwg@@wwrww@@.@@@
+ map=@@fb@@bww@@dwrwe@@..@@
+ map=@@@ww@@rwr@@wwrww@@.@@
+ map=@@@wi@@wgb@@wwrww@@..@
+ map=@@@@wf@@rcw@@wwsww@@.@
+ map=@@@@w3@@j4j@@ww1ww@@..
+ map=@@@@@@@@@@@@@@@.@@@@@.
+ map=@@@@@@@@@@@@@@@...kl..
+
+center=7,5
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+
+ 
+[mapitems]
+3=whirlpool,1
+4=whirlpool,2
+5=waterunit,vehicle,fish
+s=waterunit,monster,shark
+g=waterunit,monster,gator
+a=waterplan,frog,10
+b=waterplan,speedboat,1
+c=waterplan,fish,10
+d=waterplan,forklift,10
+e=waterplan,tugboat,10
+f=waterpile,green,5,energy,1
+h=unit,vehicle,forklift
+i=waterpile,yellow,40,red,10,blue,10,energy,1
+j=waterpile,blue,5,energy,1
+k=plan,guard_tower,5
+l=pile,red,25,yellow,25
+
+
+
+1=goal,forklift
+2=bonusgoal,forklift
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+

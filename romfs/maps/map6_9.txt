@@ -1,0 +1,75 @@
+﻿[map]
+name=WILDLIFE PRESERVE
+
+ map=@@$.@@wg@@.$@@
+ map=@@.c@@xx@@c.@@
+ map=$..wwwwwwww..$
+ map=.ewwwwwwwwwwe.
+ map=@@w________w@@
+ map=@@__d!!!!h__@@
+ map=::.!'.al.'!.::
+ map=1:.!ka3w.j!.:2
+ map=::.!'!ww!'!.::
+ map=@@...!.i!...@@
+ map=@@w..!!!!..w@@
+ map=$.wwwwwwwwwwh$
+ map=.m.wwwwwwwwe..
+ map=@@.c@@xx@@c.@@
+ map=@@.$@@bw@@$f@@
+
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+--   @ = hole
+--   : = capture goal area (yellow zone)
+
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers 
+ 
+ 
+[mapitems]
+1=goal,collect 1 lion
+2=goal,collect 1 lion
+3=bonusgoal, marina, water
+
+
+
+
+
+a=unit,monster,lion
+b=waterplan,frog,5
+c=pile,green,5,energy,1
+d=unit,vehicle,dumptruck
+e=pile,blue,5,energy,1
+f=plan,fish,5
+g=waterplan,treebot,5
+h=pile,blue,5
+i=plan,freezebot,5
+j=pile,blue,5,red,5,white,10,yellow,25,energy,1
+k=plan,marina,5
+l=pile,blue,10
+m=plan,dumptruck,5
+
+
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+
+tugboat=5

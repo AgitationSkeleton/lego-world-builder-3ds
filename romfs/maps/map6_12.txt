@@ -1,0 +1,80 @@
+﻿[map]
+name=THE OUTPOST
+ map=@@@!*':::'%!@@@
+ map=@@!':::1:::'!@@
+ map=@g'?:::::::?%?@
+ map=@??!!..d..!'!c@
+ map=@@@e._!!!wwj@@@
+ map=@@@___...%ww@@@
+ map=@%.!!.....!!ww@
+ map=.*.a.!.i.!a..n.
+ map=%.3...!'!.s2.wm
+ map=@...t!.!k!..ow@
+ map=@@@!!..!..!!@@@
+ map=@@@.f.!b!.f.@@@
+ map=@wrrrrp.brrrrw@
+ map=@rwwwwwhwwwwwr@
+ map=rqwxwxwwwxwxqwr
+ map=@rxxxxxuxxxxxr@
+ map=@@wzwwr@rwwyw@@
+ map=@@@ww@@@@@ww@@@
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+--   @ = hole
+--   : = capture goal area (yellow zone)
+
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers 
+
+ 
+ 
+[mapitems]
+1=goal,collect 1 lion
+2=goal,gas_station
+3=bonusgoal,house
+
+a=unit,monster,lion
+b=unit,monster,crab
+c=plan,repairbot,10
+d=pile,yellow,5,wheel,4
+e=plan,treebot,10
+f=unit,vehicle,defender
+g=pile,green,20,blue,25,energy,1
+h=pile,blue,20,green,10,yellow,5,energy,1
+i=unit,vehicle,duck
+j=waterplan,dirtbuggy,5
+k=plan,gas_station,5
+l=plan,house,5
+m=unit,vehicle,frog
+n=waterplan,dumptruck,10
+o=waterpile,wheel,2
+p=plan,defender,5
+q=waterunit,monster,water_crab
+s=plan,freezebot,10
+t=pile,blue,5,red,5,white,10,yellow,25,energy,1
+u=waterplan,freighter,5
+y=waterplan,house,5
+z=waterpile,white,15
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+
+

@@ -1,0 +1,50 @@
+[map]
+name=BLOCKADE
+
+ 
+ map=.......wwwwwwwwwwwwwww..__....
+ map=...k...wwwwrwwrrwlwwrw..._..2.
+ map=..www..wwrwlwwwrrwwrrw...__...
+ map=..jwwwwwwrrwwwwwwrwwww....____
+ map=..www..wwrwwwwwwwwwrww......__
+ map=..iww..wwwwwrwwwrwwrlw...k..g.
+ map=..www..wwwwwrwlrrwwwww..www...
+ map=..hw...rrwwwrwwwwwrrwwwwwfw1..
+ map=...a...wwwwrwwwrwwrwww..www...
+ map=.bcden.wwwwwwwwrwwwwww........
+
+
+--   H = HQ 
+--   B = BUGGY
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   C = crab
+
+ 
+[mapitems]
+a=unit,vehicle,snail
+b=plan,defender,10
+c=plan,tugboat,10
+d=plan,freighter,10
+e=plan,steamshovel,10
+f=waterplan,marina,10
+g=plan,dumptruck,10
+h=pile,yellow,25,wheel,6,energy,1
+i=pile,red,40,green,5,energy,5
+j=pile,blue,120,yellow,50,energy,10
+k=waterunit,building,marina
+l=waterunit,monster,water_crab
+m=plan,steamshovel,10
+n=plan,gas_station,10
+
+1=goal,steamshovel
+2=bonusgoal,gas_station
+
+[inventory]
+snail=10
+
+

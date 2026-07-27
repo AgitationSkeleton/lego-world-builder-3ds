@@ -1,0 +1,44 @@
+[map]
+name=CRAB FOREST
+
+ map=.c.a.ca.1.k._.2
+ map=TTT......a.._a.
+ map=.a.TT..TTT.T_ie
+ map=....cTT..cTh__w
+ map=TT..a..T....aT.
+ map=h.TTTh..T.TTT.h
+ map=....TTTT.T...c.
+ map=.d........c...j
+ map=_....h...c..b._
+ map=__.g____....___
+ 
+center=9,1
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   r = water with reefs
+
+
+ 
+[mapitems]
+a=unit,monster,crab
+b=unit,vehicle,duck
+c=plan,defender,1
+d=plan,treebot,5
+e=plan,snail,5
+f=pile,energy,1
+g=pile,blue,25,green,20,energy,1
+h=pile,blue,40,yellow,25,energy,1
+i=pile,blue,40
+j=pile,yellow,25,energy,5
+k=plan,duck,20
+
+1=goal,duck
+2=bonusgoal,snail
+
+[inventory]
+duck=5

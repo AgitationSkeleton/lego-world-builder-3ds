@@ -1,0 +1,68 @@
+[map]
+name=BUILD YOUR OWN BATTLEFIELD
+
+ map=TTTTTTTTTTTT
+ map=Tw..bcde..#T
+ map=ww...af...##
+ map=ww...Pg...##
+ map=ww.hijklm.##
+ map=ww........##
+ map=TTT......TTT
+ map=MMMTTTTTTMMM
+ map=MM.u..uu..MM
+ map=@TT.qu..uTT@
+ map=@@TTTTTTTT@@
+ map=@@@TTTTTT@@@
+ map=@@@@nsso@@@@
+ map=@@@@..1.@@@@
+ map=@@@TTTTTT@@@
+ map=@@....._..@@
+ map=@@.__.z...@@
+ map=@@@...._z@@@
+ map=@@@@wwww@@@@
+ map=@@@@wwww@@@@
+ map=@@@@@2w@@@@@
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   r = water rocks
+--   @ = hole
+
+center=6,12
+ 
+[mapitems]
+a=pile,energy,10
+b=pile,yellow,100
+c=pile,blue,200
+d=pile,red,100
+e=pile,green,100
+f=pile,wheel,20
+g=plan,defender,10
+h=plan,robot_lab,10
+i=plan,gas_station,10
+j=plan,treebot,10
+k=plan,dumptruck,10
+l=plan,steamshovel,10
+m=plan,guard_tower,10
+n=plan,defender,5
+o=plan,repairbot,10
+P=unit,vehicle,dumptruck
+q=plan,snail,10
+s=pile,blue,20,green,10,yellow,5,energy,1
+u=unit,monster,scorpion
+z=unit,monster,trex
+y=unit,vehicle,snail
+
+1=goal,snail
+2=bonusgoal,defender,water
+
+
+[inventory]
+

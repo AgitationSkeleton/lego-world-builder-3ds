@@ -1,0 +1,58 @@
+[map]
+name=FISH OUT OF WATER
+
+ map=b.....###ww######...d
+ map=####.#####2####...##.
+ map=###.d.####ww###b####.
+ map=b##..#############...
+ map=.###...###########..#
+ map=........#####.......#
+ map=#.###...heeeh....##.#
+ map=#.##..#..ai......##b.
+ map=#.##...#.eee...#..##.
+ map=#.##.#...www###...##.
+ map=..##.##.wwww##..####.
+ map=.##..##.wc..#....d##.
+ map=....##..www...www..#.
+ map=d######...wwwww1ww.#.
+ map=...b#####....bwwww..b
+ map=@@@@@@@@@@@@@@@@w@@@@
+ map=@@@@@@@@@@@@@@@@w@@@@
+ map=@@@@@@@@@@@wwwwww@@@@
+ map=@@@@@@@@@@fgw@@@@@@@@
+
+center=12,10
+
+--   H = HQ 
+--   B = BUGGY
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   C = crab
+
+
+ 
+[mapitems]
+
+a=unit,vehicle,buggy
+b=pile,blue,1
+c=plan,fish,7
+d=unit,monster,gator
+e=pile,energy,1
+f=waterplan,guard_tower,10
+g=waterplan,steamshovel,10
+h=pile,yellow,25,red,25,energy,1
+i=pile,yellow,25,wheel,4,energy,1
+z=waterunit,vehicle,fish
+
+
+
+1=goal,fish,water
+2=bonusgoal,fish,water
+
+[inventory]
+buggy=10
+

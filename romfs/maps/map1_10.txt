@@ -1,0 +1,66 @@
+[map]
+name=SPIRAL JETTY
+
+ map=....jfeawwww
+ map=d..T...jwwww 
+ map=ig.......www
+ map=ww....2..www
+ map=wwww.b..wwww
+ map=wwwwwwwwwwww
+ map=ww.cwwww...w
+ map=w.d.wwww..T.
+ map=wT.wwww.TT1T
+ map=wwwww..TT.TT
+ map=wwwwwwwwww.w
+ map=w........w.w
+ map=w.wwwwww.w.w
+ map=w.w...kw.w.w
+ map=w.w.3www.w.w
+ map=w.w......w.w
+ map=w.wwwwwwww.w
+ map=w..........w
+ map=wwwwwwwwwwww
+
+
+
+center=7,5
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+
+ 
+[mapitems]
+a=plan,steamshovel,10
+b=plan,forklift,10
+c=plan,treebot,10
+d=pile,green,10
+e=pile,red,50
+f=pile,yellow,50
+g=pile,blue,50
+h=pile,wheel,4
+i=pile,energy,1
+j=pile,energy,1,wheel,4
+k=plan,tugboat,10
+
+
+
+1=goal,anything
+2=unit,vehicle,buggy
+3=bonusgoal,tugboat,water
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+buggy=10

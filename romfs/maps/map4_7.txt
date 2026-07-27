@@ -1,0 +1,61 @@
+[map]
+name=THE TWO TOWERS
+
+ map=errc1worrnw
+ map=wrwcwcwrwwg
+ map=wrrrcwwrwwr
+ map=wwwrr2rr.rr
+ map=rrwwjB.wwww
+ map=.wwwwwwwrww
+ map=wrwwawawwrw
+ map=wwrwwwwwwww
+ map=rwwrwfwwprw
+ map=rrwrwwwrwww
+ map=wwwrkwwlrww
+ map=wrr....rwwr
+ map=hrdwdw.drww
+ map=rdddwddwwww
+ map=wddmwdwddrw
+
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+center=5,1
+ 
+[mapitems]
+a=plan,guard_tower,2
+B=unit,monster,boulder
+c=waterunit,monster,gator
+d=waterpile,yellow,5
+e=waterplan,duck,1
+f=waterunit,vehicle,fish
+g=waterplan,freighter,5
+h=waterplan,dozer,2
+i=waterplan,marina,1
+j=pile,wheel,6
+k=waterpile,blue,50,energy,1
+l=waterpile,red,50
+m=waterpile,energy,1
+n=waterplan,frog,1
+o=waterplan,steamshovel,1
+p=pile,energy,1
+
+1=goal,frog
+2=bonusgoal,boulder,water
+
+[inventory]
+
+

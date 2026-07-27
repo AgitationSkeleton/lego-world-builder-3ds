@@ -1,0 +1,85 @@
+﻿[map]
+name=BUILDING THE NEIGHBORHOOD
+ 
+ map=@/i\i\i\i/@@@
+ map=@/.d...m./@@@
+ map=@/wwl/www/@@@
+ map=@-kww-wjw-@@@
+ map=@/_b_._?_/@@@
+ map=@/...a\+\}-@@
+ map=@{]Tn.c/.T>@.
+ map=@./..../?e/@2
+ map=@f{]o.[}.f/@.
+ map=@ff-=\}*ff%@p
+ map=@..fffff...f.
+ map=g..T?!?Tf.f?!
+ map=.fw!.1.!.f.{@
+ map=@fwwT!T.'f@@@
+ map=@rwwwwwwwr@@@
+ map=@rwwwhwwwr@@@
+ map=@wwrrwrrww@@@
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+--   @ = hole
+
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers 
+
+-- ` = cement
+-- > = road block
+-- ( = street 1
+-- [ = street 2
+-- { = street 3
+-- \ = street 4
+-- / = street 5
+-- ) = street 6
+-- ] = street 7
+-- } = street 8
+-- + = street 9
+-- = = street 10
+-- - = street undiggable
+
+ 
+ 
+[mapitems]
+a=unit,building,factory
+b=unit,building,windmill
+c=unit,vehicle,treebot
+d=pile,yellow,10,energy,1,wheel,4
+e=plan,dozer,5
+f=unit,monster,boulder
+g=plan,house,5
+h=waterplan,gas_station,5
+i=unit,building,house
+j=waterplan,garage,1
+k=waterunit,vehicle,fish
+l=waterplan,dirtbuggy,5
+m=plan,fish,1
+n=pile,wheel,4
+o=plan,forklift,5
+p=plan,tugboat,1
+
+1=goal,house
+2=bonusgoal,gas_station
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+
+
+treebot=10

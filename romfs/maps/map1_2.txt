@@ -1,0 +1,44 @@
+[map]
+name=BUGGY RIDE
+
+ map=..T.T... 
+ map=..T2..T.
+ map=.b.TTTT.
+ map=.T.TT...
+ map=....T.1.
+ map=..T.....
+
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+ 
+[mapitems]
+a=pile,yellow,10
+b=unit,vehicle,buggy
+c=plan,dirtbuggy,10
+d=pile,yellow,10
+e=pile,wheel,4
+f=pile,energy,1
+h=pile,yellow,1
+
+
+k=whirlpool,1
+
+1=goal,anything
+2=bonusgoal,buggy
+
+[inventory]
+buggy=10

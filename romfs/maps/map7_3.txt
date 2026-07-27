@@ -1,0 +1,76 @@
+﻿[map]
+name=THE DISTRACTION
+ 
+ map=a!#!##!??mw2w.%
+ map=.c.!##f.*?wwwrl
+ map=!..*!##'.%?wrww
+ map=!..'.#&...!!!!j
+ map=...'##'...?!e!!
+ map=.!#!#k...1!!!!!
+ map=.!!###....%!&!!
+ map=.##.'....?!>!..
+ map=..#!....?g!{\\]
+ map=!..d...?'!'.b./
+ map=!.....?'.h.i.>}
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+--   @ = hole
+
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers 
+
+-- ` = cement
+-- > = road block
+-- ( = street 1
+-- [ = street 2
+-- { = street 3
+-- \ = street 4
+-- / = street 5
+-- ) = street 6
+-- ] = street 7
+-- } = street 8
+-- + = street 9
+-- = = street 10
+-- - = street undiggable
+
+ center=6,4
+ 
+[mapitems]
+
+a=plan,treebot,10
+b=unit,building,factory
+c=unit,monster,lion
+d=pile,blue,40,yellow,25,energy,1
+e=pile,green,20,blue,25,energy,1
+f=plan,repairbot,5
+g=pile,green,10,blue,20,yellow,5,energy,1
+h=plan,house,10
+i=pile,wheel,6,energy,1
+j=plan,dumptruck,5
+k=unit,vehicle,duck
+l=plan,fish,5
+m=waterunit,monster,water_crab
+
+1=goal,house
+2=bonusgoal,fish,water
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+
+defender=5

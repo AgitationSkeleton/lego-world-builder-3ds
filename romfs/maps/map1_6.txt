@@ -1,0 +1,53 @@
+[map]
+name=ONE BRICK SHORT
+
+
+ map=.j.......www.ww......TT.
+ map=...._..T.wwwwww..._..T..
+ map=..T...._.ww.wwzg..fT_...
+ map=..__1_...wwwwww....d..2.
+ map=..iT.._.awwwhww.._e.....
+ map=..._.T...wwwwww...T..T..
+ map=.........w.wwww.........
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+center=5,3
+ 
+[mapitems]
+a=waterpile,yellow,9,energy,1,wheel,4
+z=pile,blue,15,energy,1
+c=pile,blue,5
+d=pile,yellow,10
+e=pile,wheel,4
+f=pile,energy,1
+g=plan,tugboat,10
+h=pile,yellow,1
+i=pile,red,10
+j=plan,buggy,10
+
+
+
+
+b=unit,vehicle,buggy
+
+1=goal,anything
+2=bonusgoal,buggy
+
+[inventory]
+dirtbuggy=10
+
+

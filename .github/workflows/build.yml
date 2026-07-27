@@ -1,0 +1,82 @@
+name: Build
+
+# Builds the port. Runs on its own for pushes and pull requests, and is called
+# by the release workflow so a tag ships exactly what CI built.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  build:
+    name: 3dsx and cia
+    runs-on: ubuntu-latest
+    # Carries devkitARM, libctru, citro3d, citro2d and the 3DS tools.
+    container: devkitpro/devkitarm:latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Install host tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends unzip
+
+      # devkitPro's package server answers 403 to the address ranges CI runs
+      # in; they would rather people used this image, which already carries
+      # what is needed, than have builders pull the same packages repeatedly.
+      - name: Check the toolchain
+        run: |
+          missing=
+          for lib in libctru.a libcitro3d.a libcitro2d.a; do
+            [ -f "/opt/devkitpro/libctru/lib/$lib" ] || missing="$missing $lib"
+          done
+          for tool in tex3ds 3dsxtool smdhtool; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "not in the image:$missing"
+            dkp-pacman -Sy --noconfirm --needed 3ds-dev
+          else
+            echo "libctru, citro3d, citro2d and the 3DS tools are all present"
+          fi
+
+      - name: Fetch packaging tools
+        run: |
+          mkdir -p "$RUNNER_TEMP/tools"
+          curl -fsSL -o "$RUNNER_TEMP/makerom.zip" \
+            https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.18.4/makerom-v0.18.4-ubuntu_x86_64.zip
+          unzip -j -o "$RUNNER_TEMP/makerom.zip" makerom -d "$RUNNER_TEMP/tools"
+          # This build of bannertool rather than a newer one: the current
+          # releases want glibc 2.38 and this image is Debian Bullseye, which
+          # has 2.31. This one asks for 2.14.
+          curl -fsSL -o "$RUNNER_TEMP/bannertool.zip" \
+            https://github.com/diasurgical/bannertool/releases/download/1.2.0/bannertool.zip
+          unzip -j -o "$RUNNER_TEMP/bannertool.zip" linux-x86_64/bannertool \
+            -d "$RUNNER_TEMP/tools"
+          chmod +x "$RUNNER_TEMP/tools/makerom" "$RUNNER_TEMP/tools/bannertool"
+
+      - name: Build
+        env:
+          MAKEROM: ${{ runner.temp }}/tools/makerom
+          BANNERTOOL: ${{ runner.temp }}/tools/bannertool
+        run: make -j"$(nproc)"
+
+      - name: Report
+        run: |
+          ls -l legowb3ds.3dsx legowb3ds.cia legowb3ds.smdh
+          sha256sum legowb3ds.3dsx legowb3ds.cia
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: legowb3ds
+          if-no-files-found: error
+          path: |
+            legowb3ds.3dsx
+            legowb3ds.cia
+            legowb3ds.smdh

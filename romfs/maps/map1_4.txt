@@ -1,0 +1,40 @@
+[map]
+name=PICK UP AND CARRY
+
+ map=.a...... 
+ map=..d...b.
+ map=........
+ map=T__TT..c
+ map=_T.__.TT
+ map=f1__e.w2
+
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+ 
+[mapitems]
+a=pile,yellow, 10
+c=pile,energy,1
+d=plan,dirtbuggy,10
+e=pile,wheel,4
+f=plan,duck,10
+
+b=unit,vehicle,buggy
+
+1=goal,anything
+2=bonusgoal,duck,water
+
+[inventory]
+buggy=10

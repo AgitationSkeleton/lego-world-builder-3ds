@@ -1,0 +1,55 @@
+[map]
+name=THREE ROOMS
+
+ map=.......cde...
+ map=...........a.
+ map=.j.h.f.i.g...
+ map=.............
+ map=..b...b...b..
+ map=TT.TTT.TTT.TT
+ map=T...T...T...T
+ map=T...T...T...T
+ map=T.s.T.s.T.ssT
+ map=T___T___T___T
+ map=T_k_T_1_T_2_T
+ map=TTTTTTTTTTTTT
+
+
+
+--   H = HQ 
+--   B = BUGGY
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   C = crab
+
+center=5,3
+ 
+[mapitems]
+a=unit,vehicle,dumptruck
+b=unit,monster,boulder
+c=plan,defender,2
+d=plan,dozer,10
+e=plan,robot_lab,5
+f=pile,blue,105
+g=pile,yellow,90
+h=pile,wheel,6
+i=pile,energy,3
+j=pile,green,10
+k=plan,snail,10
+l=pile,red,5
+s=unit,monster,scorpion
+z=unit,vehicle,defender
+
+
+1=goal,snail
+2=bonusgoal,dumptruck
+
+
+[inventory]
+dumptruck=10
+
+

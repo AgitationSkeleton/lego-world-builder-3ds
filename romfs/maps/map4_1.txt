@@ -1,0 +1,49 @@
+[map]
+name=BUILD A SPEEDBOAT
+ 
+ map=@@wwwwwww@@
+ map=@wwh.wwwww@
+ map=wwwwwwwewww
+ map=wwwwgwfwwrr
+ map=wwrwwwwwwr2
+ map=rwwdw1wdwrj
+ map=wwwwwwwwwrw
+ map=wwrwwwwwwrw
+ map=wwwww.a.wrw
+ map=xxxxx.xxxxx
+ map=xxxxxxxxxxx
+ map=wxxxxxxxwww
+ map=@xx.bxxwwi@
+ map=@@xxxxxxw@@
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+--   @ = hole
+
+
+ 
+ 
+[mapitems]
+a=plan,fish,10
+b=plan,speedboat,10
+d=waterunit,vehicle,duck
+e=waterplan,duck,10
+f=waterpile,yellow,30,energy,6
+1=goal,speedboat,water
+g=waterpile,blue,15,energy,2
+h=pile,red,10,energy,2
+i=waterplan,tugboat,10
+2=bonusgoal,duck
+j=unit,monster,crab
+
+-- inventory: which plans does user get at start of level?
+[inventory]

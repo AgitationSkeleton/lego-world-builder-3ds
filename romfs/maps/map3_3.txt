@@ -1,0 +1,48 @@
+[map]
+name=NAVAL SUPPORT
+
+ map=T.....TT...wwwaaawwrww__..T.... 
+ map=h.w.c..__wwwwaaiaawwrwwww__..12
+ map=..w..wwwwwwwwwwbwwwrr..qwwww_.. 
+ map=..wwww..__wwwwwwwwwwr.T....ww_.
+ map=......c.wwwwww____ww_.TTT...... 
+ map=TT..T..ww__ww_.....w_..T.qTTTT.
+ map=TTTTT..w...qw...T..iww......qT.
+ map=...d.qww..T.w..T..q..www.dTT...
+ map=..wwwww.qT.....TT..T...w...TTT.
+ map=q........TT.d.TTg.TT..q..T.....
+
+
+
+--   H = HQ 
+--   B = BUGGY
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   C = crab
+
+
+ 
+[mapitems]
+a=pile,energy,1
+b=waterunit,vehicle,tugboat
+c=pile,blue,40,yellow,25
+d=plan,defender,2
+e=pile,blue,40,yellow,20
+f=pile,yellow,25
+g=plan,buggy,5
+h=pile,wheel,4
+i=waterplan,defender,2
+q=unit,monster,crab
+
+
+
+
+1=goal,defender
+2=bonusgoal,buggy
+
+[inventory]
+tugboat=2

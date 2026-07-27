@@ -1,0 +1,18 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# The game's data is packed into the RomFS byte for byte, so it has to survive
+# a round trip through git unchanged. The recovered Director maps carry a BOM
+# and CRLF line endings; normalising them would change what the console reads
+# and stop the build reproducing the released binaries.
+romfs/** -text
+
+# Read by tex3ds and makerom rather than embedded, but held to the same rule so
+# the build stays reproducible.
+gfx/*.t3s -text
+legowb3ds.rsf -text
+
+*.png binary
+*.wav binary
+*.t3x binary
+*.exe binary

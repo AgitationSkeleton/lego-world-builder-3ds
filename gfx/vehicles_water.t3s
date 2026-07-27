@@ -1,0 +1,13 @@
+--atlas -f rgba8888 -z auto
+vehicle_tugboat_up.png
+vehicle_tugboat_down.png
+vehicle_tugboat_left.png
+vehicle_tugboat_right.png
+vehicle_freighter_up.png
+vehicle_freighter_down.png
+vehicle_freighter_left.png
+vehicle_freighter_right.png
+vehicle_tugboat_hero.png
+vehicle_freighter_hero.png
+plan_tugboat.png
+plan_freighter.png

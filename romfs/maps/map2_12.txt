@@ -1,0 +1,46 @@
+[map]
+name=ON THE RUN
+
+ map=@b.......c...........@....c.
+ map=@....................@..i...
+ map=@@@________________.c@......
+ map=..._TTTT.TTT.TTTTT_..@@@@@@.
+ map=.f._T.eT..gTeTe..._..___.j@.
+ map=..._T.TTTT.TTTTTTT_.._a_h1@c
+ map=@.._T.Te.T......eT_..___.l@.
+ map=@.._T_TT_TT_TTTTTT_..@@@@@@.
+ map=@..________________..@......
+ map=@c...................@..2k..
+ map=@.............c......@.c....
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   r = water rocks
+
+
+center=3,1
+
+ 
+[mapitems]
+a=unit,building,gas_station
+b=unit,vehicle,buggy
+c=unit,monster,crab
+d=pile,energy,1
+e=pile,green,1
+f=plan,dirtbuggy,10
+g=plan,frog,10
+h=pile,yellow,10,energy,1,wheel,4
+i=pile,blue,40,yellow,25,energy,1
+j=plan,defender,10
+k=pile,green,5
+l=plan,gas_station,1
+
+1=goal,frog
+2=bonusgoal,gas_station
+
+[inventory]
+buggy=10

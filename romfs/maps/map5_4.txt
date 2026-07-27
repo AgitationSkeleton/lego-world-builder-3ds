@@ -1,0 +1,50 @@
+[map]
+name=T-REX LIVES!
+
+ map=##ccc..@@@@@@@@
+ map=..ccc.w@@@@@@@@
+ map=wwwdwww@@TTTT@@
+ map=.h.e....TTkkTT@
+ map=.##..h#@TTiiT@@
+ map=w#..###@@@TT_@@
+ map=.h.fw#.@@T_T@@@
+ map=##.w...@@.@TT.@
+ map=##.2.g.@@TTTT.@
+ map=h...##.@@T.TTT@
+ map=wwwwwww@i.T._@@
+ map=ww..www@@TTT..@
+ map=w##1.Tj.TTccTi@
+ map=ww#..ww@.TccT@@
+ map=bwwwwwb@@iT@.@@
+ map=wawawaw@@@@@@@@
+
+center=4,2
+
+--   H = HQ 
+--   B = BUGGY
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   C = crab
+
+ 
+[mapitems]
+a=waterpile,blue,5,energy,1
+b=waterunit,vehicle,fish
+c=unit,vehicle,frog
+d=waterplan,defender,2
+e=pile,blue,40,yellow,25,energy,1
+f=unit,monster,trex
+g=waterplan,treebot,5
+h=plan,fish,1
+i=plan,defender,1
+j=plan,snail,1
+k=pile,energy,1
+
+1=goal,treebot
+2=bonusgoal,snail
+
+[inventory]

@@ -1,0 +1,45 @@
+[map]
+name=SPEEDBOATS ON PATROL
+
+ map=@@crwwwrrrwrrrwrrrr@@
+ map=@2wwerwrwwwwwgwwwwcw@
+ map=rrrrwrwwwcrwwrrrrrwww
+ map=wawrwrrrrrrrwewwwrwww
+ map=wawwwrwwwrwrrrrwwrw1w
+ map=wawrwwwrwwwgwwrwwrwwh
+ map=rrrrrrrrrwwrwrrwwrrf.
+ map=@wbwecwwrwwrwwwwgwww@
+ map=@@rrrrwwwerrwcrrrrw@@
+
+
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+ 
+[mapitems]
+a=waterpile,yellow,40,red,10,blue,10,energy,1
+b=waterplan,fish,10
+c=waterunit,monster,water_crab
+g=waterunit,monster,gator
+e=waterpile,energy,1
+f=pile,yellow,50,wheel,4,energy,1
+h=waterplan,steamshovel,1
+
+1=goal,fish,water
+2=bonusgoal,steamshovel
+
+[inventory]
+speedboat=10

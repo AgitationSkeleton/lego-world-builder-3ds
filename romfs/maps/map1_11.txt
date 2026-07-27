@@ -1,0 +1,43 @@
+[map]
+name=BEWARE THE CRAB
+
+ map=..a......d_df.__._.__@ 
+ map=......@@...._dww_.._._
+ map=2.a...@@..e.q.wwj.1.i.
+ map=......@@.__c.dww_.__..
+ map=..a......d....___..__@
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+ 
+[mapitems]
+a=pile,red,10,wheel,4,energy,1
+c=plan,dirtbuggy,10
+d=pile,yellow,3
+e=pile,wheel,4
+f=pile,energy,1
+h=pile,yellow,1
+i=plan,steamshovel,10
+j=pile,yellow,15
+
+b=unit,vehicle,buggy
+q=unit,monster,crab
+
+1=goal,anything
+2=bonusgoal,steamshovel
+
+[inventory]
+buggy=10

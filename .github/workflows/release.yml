@@ -1,0 +1,56 @@
+name: Release
+
+# Tagging publishes a release with the two things a 3DS can run: the 3dsx for
+# the Homebrew Launcher and the CIA for installing as a title. The build is the
+# same workflow pushes use, so a release is never built by a path nobody has
+# exercised.
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download build
+        uses: actions/download-artifact@v4
+        with:
+          name: legowb3ds
+          path: dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # This job only downloads the build and never checks the repository
+          # out, so gh has no working tree to work out where to publish from.
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version="${GITHUB_REF_NAME}"
+          cat > notes.md <<EOF
+          Nintendo 3DS build of LEGO World Builder, \`${version}\`.
+
+          | File | Use |
+          | --- | --- |
+          | \`legowb3ds.cia\` | Install with FBI. Appears on the HOME menu. |
+          | \`legowb3ds.3dsx\` | Copy to \`sdmc:/3ds/\` and run from the Homebrew Launcher. |
+
+          Everything the game needs is packed inside; there is nothing else to
+          copy across. Progress is saved to \`sdmc:/legowb3ds/save.txt\`.
+
+          LEGO World Builder was made by Gamelab for The LEGO Group. This is an
+          unofficial fan port and is not sponsored or endorsed by them.
+          EOF
+          gh release create "$version" \
+            --title "LEGO World Builder 3DS $version" \
+            --notes-file notes.md \
+            dist/legowb3ds.cia \
+            dist/legowb3ds.3dsx

@@ -1,0 +1,79 @@
+﻿[map]
+name=URBAN JUNGLE
+
+ map=..[\]2[\\\\bpo!!...b..
+ map=._/_{=}.d.e_..!m!.bn.q
+ map=__/_______b___!'!!'bb.
+ map=.c/..bg.......!!k!.j.b 
+ map=wwww._....d.d.'w'!..j.
+ map=wafw._.i...d..!w!'!..s
+ map=hwwwwwwwwwwwwwwwwlrrw1
+
+center=4,3
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   @ = hole
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers 
+
+-- ` = cement
+-- > = road block
+-- ( = street 1
+-- [ = street 2
+-- { = street 3
+-- \ = street 4
+-- / = street 5
+-- ) = street 6
+-- ] = street 7
+-- } = street 8
+-- + = street 9
+-- = = street 10
+-- - = street undiggable
+ 
+ 
+[mapitems]
+a=pile,yellow,25
+b=unit,monster,boulder
+c=pile,red,10,wheel,4,energy,1
+d=unit,monster,crab
+e=plan,duck,15
+f=pile,energy,10
+g=plan,defender,10
+h=waterpile,blue,25
+i=pile,blue,40,yellow,25,energy,1
+j=unit,monster,lion
+k=pile,green,20,blue,15
+l=waterplan,treebot,10
+m=unit,building,garage
+n=plan,dumptruck,10
+o=plan,dozer,10
+p=plan,fish,10
+q=unit,building,factory
+s=plan,house,5
+
+
+1=goal,duck
+2=bonusgoal,house
+
+
+[inventory]
+
+defender=1
+buggy=10
+dirtbuggy=10

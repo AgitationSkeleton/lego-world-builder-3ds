@@ -1,0 +1,50 @@
+[map]
+name=TREEBOT IN THE FOREST
+
+ map=@.T.@....T.@....a
+ map=@.@.@@.@.@@@@@.@@
+ map=@2@.b..@..@..T...
+ map=@@@@@@@@@.@.@@@@.
+ map=@...@.....@..cb@.
+ map=@.@.@T@@@@@@@@@@.
+ map=.b@.@.....@......
+ map=.@@.@@@@@.@T@@@@@
+ map=.........b@.....@
+ map=.@T@@@@@@@@@@@@.@
+ map=.@...@.@........@
+ map=.@@@.@.T.@@T@@.@@
+ map=.@.@b@@@@@...@..b
+ map=T@.@...@.@.@.@@@@
+ map=.@.@@@.@.@.@....b
+ map=.@.....@.@.@@@@@.
+ map=.@@@@T@@.@.......
+ map=..b.@.@..@@@@@@@T
+ map=@@@.@.@.@@.......
+ map=1dT.@...T..@@@@@@
+
+
+
+
+--   H = HQ 
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   ~ = space bar billboard - should be to right of a hole
+
+
+center=15,2
+ 
+[mapitems]
+a=unit,vehicle,treebot
+b=pile,yellow,25,blue,25,green,10
+c=plan,robot_lab,10
+d=unit,vehicle,buggy
+
+1=goal,treebot
+2=bonusgoal,buggy
+
+
+[inventory]

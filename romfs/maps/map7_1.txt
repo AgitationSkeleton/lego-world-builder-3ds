@@ -1,0 +1,72 @@
+﻿[map]
+name=TURNING TREES INTO BRICKS
+
+ map=!!!.....wwwiw
+ map=!!?.....www1b
+ map=2?!c....wwwww
+ map=!!?>\\\\]wwaw
+ map=g!'...../wwww
+ map=!!!?...e{\\].
+ map=..?....h..f/'
+ map=.%!%%*%...[}.
+ map=!*!'!%*%.>}.'
+ map=.!!d'''''''*%
+ map=.!'!!!*!!'!!!
+ map=%&%%...%%&%!!
+
+ 
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers 
+
+-- ` = cement
+-- > = road block
+-- ( = street 1
+-- [ = street 2
+-- { = street 3
+-- \ = street 4
+-- / = street 5
+-- ) = street 6
+-- ] = street 7
+-- } = street 8
+-- + = street 9
+-- = = street 10
+-- - = street undiggable
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+ 
+[mapitems]
+a=waterpile,blue,5,energy,1
+b=waterplan,treebot,5
+c=unit,vehicle,buggy
+d=pile,blue,25,green,20,energy,1
+e=unit,building,factory
+f=plan,fish,5
+g=plan,steamshovel,5
+h=pile,wheel,4,energy,1
+i=pile,energy,1
+
+1=goal,buggy
+2=bonusgoal,fish
+
+[inventory]

@@ -1,0 +1,53 @@
+[map]
+name=SCORPION MAZE
+
+ map=..ab2.....@@@@@@@@@@@@
+ map=........ww@@@@@@@@@@@@
+ map=wwwwwwwwww@@....@@@@@@
+ map=w_.._w__._@@....@@@@@@
+ map=._..ww_...@@....@@@@@@
+ map=...____._.......@@@@@@
+ map=._......____.@@@@@@@@@
+ map=._.__c_._ww_.@@@@@@@@@
+ map=...__......_.@@@@@@@@@
+ map=@@@@@@@.__._......c...
+ map=@@@@@@@.______._____._
+ map=@@@.........._._....._
+ map=@@@....@@@@@._._._____
+ map=@@@....@@@@@.c._...w..
+ map=@@@....@@@@@__._.__w_.
+ map=@@@@@@@@@@@@wwwwwwwwww
+ map=@@@@@@@@@@@@wdb.d...f.
+ map=@@@@@@@@@@@@d.d.e1gddd
+
+--   H = HQ 
+--   B = BUGGY
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   C = crab
+
+
+
+center=3,3
+ 
+[mapitems]
+a=unit,vehicle,buggy
+b=unit,vehicle,steamshovel
+c=unit,monster,scorpion
+d=pile,green,1
+e=pile,energy,1
+f=plan,frog,1
+g=unit,building,gas_station
+
+
+1=goal,buggy
+2=bonusgoal,frog
+
+
+[inventory]
+
+

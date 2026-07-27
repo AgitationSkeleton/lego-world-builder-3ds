@@ -1,0 +1,36 @@
+[map]
+name=DANGER RIVER
+
+ map=.a..c.___.w._.g
+ map=.Ta.a._...w._..
+ map=.e.b___.www._.2
+ map=.f.__..qwc___..
+ map=c.._..www._T...
+ map=T.a_.ww..._...1
+ 
+--   H = HQ 
+--   B = BUGGY
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   C = crab
+
+
+ 
+[mapitems]
+a=pile,yellow,5,energy,1
+b=unit,vehicle,duck
+c=pile,wheel,4
+e=plan,duck,10
+f=plan,dirtbuggy,10
+g=plan,steamshovel,10
+q=unit,monster,gator
+
+
+1=goal,dirtbuggy
+2=bonusgoal,steamshovel
+
+[inventory]

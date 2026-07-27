@@ -1,0 +1,43 @@
+[map]
+name=DANGEROUS SWAMPS
+
+ map=b..w..##__@###hg
+ map=2.ww..f##___##.d
+ map=www...####_##..@
+ map=w.....######...@
+ map=@..a.#####...1..
+ map=@@...#####......
+ map=....__##___...c.
+ map=...f_###__@_....
+
+center=3,4
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   @ = hole
+
+ 
+ 
+[mapitems]
+a=unit,vehicle,buggy
+b=plan,dirtbuggy,1
+c=plan,buggy,1
+d=pile,red,7
+e=unit,vehicle,frog
+f=unit,vehicle,duck
+g=plan,dirtbuggy,1
+h=plan,duck,1
+
+1=goal,buggy
+2=bonusgoal,duck
+
+
+[inventory]

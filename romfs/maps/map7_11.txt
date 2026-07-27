@@ -1,0 +1,79 @@
+﻿[map]
+name=SHIPPING LANES
+ 
+ map=%*%wwwwww'.w[\]
+ map=$.p_*www_?.>}1/
+ map=%m__...www__.n/
+ map=wwl..2%.gwww_[}
+ map=Twww...%.Towww_
+ map=wa.ww...e...jww
+ map=%wwwwww.e.e.dww
+ map='%ww?w?e?..kjww
+ map=t*.wwwi.wwwwwww
+ map=w%%.fwwww?3wwwc
+ map=wqr%.wwwwwwwwww
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+--   @ = hole
+
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers 
+
+-- ` = cement
+-- > = road block
+-- ( = street 1
+-- [ = street 2
+-- { = street 3
+-- \ = street 4
+-- / = street 5
+-- ) = street 6
+-- ] = street 7
+-- } = street 8
+-- + = street 9
+-- = = street 10
+-- - = street undiggable
+
+center=10,6
+ 
+[mapitems]
+
+a=unit,building,windmill
+c=waterunit,vehicle,freighter
+d=unit,building,factory
+e=unit,monster,boulder
+f=waterplan,treebot,10
+g=plan,marina,1
+i=plan,house,1
+j=pile,wheel,6
+k=pile,blue,25,green,20,energy,1
+l=plan,dumptruck,5
+m=plan,nursery,1
+n=plan,fish,1
+o=plan,dozer,5
+p=pile,red,15
+q=waterpile,blue,5,energy,1
+t=waterplan,garage,1
+
+1=goal,house
+2=goal,nursery
+3=bonusgoal,garage
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]

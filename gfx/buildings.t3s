@@ -1,0 +1,18 @@
+--atlas -f rgba8888 -z auto
+building_gas_station.png
+building_guard_tower.png
+building_guard_tower_up.png
+building_guard_tower_down.png
+building_guard_tower_left.png
+building_guard_tower_right.png
+building_marina.png
+building_robot_lab.png
+building_gas_station_hero.png
+building_marina_hero.png
+building_robot_lab_hero.png
+building_guard_tower_hero.png
+plan_gas_station.png
+plan_guard_tower.png
+plan_marina.png
+plan_robot_lab.png
+plan_duck.png

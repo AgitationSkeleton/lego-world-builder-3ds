@@ -1,0 +1,65 @@
+﻿[map]
+name=INTO THE JUNGLE
+
+ map=@@h@@@@@np@@@@@@*.*...@
+ map=@'.'@@@.f.m'@@@@._..*.@
+ map=!..!.@....!!@@@@*_wfw.@
+ map=.....@l.....@@@@._www.@
+ map=.a.u.!g1.s.i..k..*wew.b
+ map=..!..@......i@@@._w2w.@
+ map=.'...@f..'!.d@@@*_wjw.@
+ map=@'.'@@@d.!.c@@@@._..*.@
+ map=@@o@@@@@m..@@@@@*.*...@
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers
+
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+center=10,5
+
+ 
+[mapitems]
+
+
+a=unit,monster,lion
+b=plan,snail,5
+c=pile,wheel,4,yellow,10,energy,1
+d=unit,vehicle,defender
+e=waterunit,monster,water_crab
+f=pile,yellow,5
+g=pile,wheel,6,energy,1
+h=plan,dozer,5
+i=unit,monster,boulder
+j=pile,energy,1
+k=plan,duck,5
+l=plan,dirtbuggy,5
+m=pile,energy,1
+n=unit,monster,crab
+o=pile,energy,1,yellow,25,blue,40
+p=plan,treebot,1
+s=pile,green,20,blue,25,energy,1
+u=plan,defender,10
+
+1=goal,snail
+2=bonusgoal,duck,water
+
+[inventory]

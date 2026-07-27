@@ -1,0 +1,62 @@
+[map]
+name=THE QUEST
+
+ map=@TTTT@@@@@@@@@.a...@@.......@@@@@@@
+ map=Te.dTT..g..TT..z._.TT.@@@@@.@@@@@@@
+ map=T.a..TT.....TT._.i.@@@@k....@@.a.@@
+ map=Tb.cTTTT...hT...._zTT.@@@@@@@.....@
+ map=@TTTTT@@.@@@@@__a..@@..............
+ map=@@@@@@@@.@@j@@@@@@@@@@.@@@@@wwwxxxw
+ map=@p@......c@............@@o@@xxwvxww
+ map=@.@f@@@@@@@@@@@@@@@@@@@@@.@@wwwwwwx
+ map=@.@@@....@@@@@@@@@@@......@@wxxxxww
+ map=@.....@@......@@@@.@.@@@@@@@TTTTTTT
+ map=@@@@@@@@@@@@@.@@@@@@.@@@@@@@xxwwxxx
+ map=@@@.._.w..v_.___@@m....l.@@.wywwwwx
+ map=@_.u...w._...._..@@_____@@..xwxxxyx
+ map=12u__._w.q.__..n.T..........wwxxwwx
+ map=@......w..__.._..@@_____@@.........
+ map=@@@__..w....v._.@@.h...b.@@@@@@@@@@
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+
+center=5,5 
+[mapitems]
+a=pile,yellow,20,wheel,6,energy,1
+b=pile,blue,25
+c=pile,energy,1
+d=pile,green,20
+e=plan,treebot,10
+f=plan,defender,10
+g=pile,blue,40
+h=pile,yellow,25
+i=pile,red,40,green,5
+j=plan,gas_station,10
+k=plan,steamshovel,10
+l=plan,robot_lab,10
+m=pile,green,10
+n=unit,monster,boulder
+o=plan,dirtbuggy,10
+p=plan,duck,10
+q=plan,dozer,10
+u=unit,monster,scorpion
+v=waterunit,monster,gator
+y=waterunit,monster,water_crab
+z=unit,monster,crab
+
+1=goal,duck
+2=bonusgoal,dumptruck
+
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+dumptruck=10
+
+
+

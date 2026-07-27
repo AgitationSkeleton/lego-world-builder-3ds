@@ -1,0 +1,55 @@
+[map]
+name=BACK AND FORTH
+
+
+ map=wwrrrwwwiwwwwwwww.q.@s
+ map=wwigvk..f..f...ww...@f
+ map=wwwwwwwwwwwwwwwfeww_@l
+ map=@@@@@@@@@@@@@@@@@@@_@.
+ map=rrrwwwwwwwxxxw2www@_@.
+ map=__r_bcw.hjTu..t.1w@_@.
+ map=_rwwrr.wwwxxxwrflw@_@.
+ map=arwwdrwwowmxxwrwww@...
+
+-- MAP TERRAIN KEY
+
+center=16,5
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   r = water rocks
+--   @ = hole
+
+[mapitems]
+a=unit,vehicle,dirtbuggy
+b=pile,wheel,4,yellow,5
+c=plan,snail,1
+d=waterplan,buggy,1
+e=pile,red,10,wheel,4,energy,1
+f=plan,dirtbuggy,1
+g=pile,red,10,wheel,4
+h=plan,forklift,1
+i=waterpile,blue,10
+j=pile,yellow,15
+k=plan,treebot,1
+l=plan,tugboat,1
+m=waterpile,blue,25,green,20
+n=plan,dumptruck,1
+o=waterplan,tugboat,1
+p=waterpile,yellow,5
+q=pile,yellow,15,wheel,2
+s=plan,dozer,1
+t=unit,monster,boulder
+u=pile,wheel,2
+v=plan,duck,1
+
+
+1=goal,anything
+2=bonusgoal,dirtbuggy
+
+[inventory]
+duck=1

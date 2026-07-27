@@ -1,0 +1,60 @@
+﻿[map]
+name=I NEED A HERO
+
+ map=.............
+ map=f._________.f
+ map=!'!e..j..e!'!
+ map=__..c...c..__
+ map='..!!!*!!!..'
+ map='d'.*.!2*.'d'
+ map=.....___.....
+ map=.....g.......
+ map=www.*...*.www
+ map=wwaw..1..waww
+ map=wwwww.i.wwwwb
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers
+
+
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+ 
+[mapitems]
+a=waterpile,yellow,5,energy,1
+b=waterplan,dirtbuggy,10
+c=pile,energy,1
+d=pile,blue,40,yellow,25
+e=unit,vehicle,buggy
+f=plan,defender,5
+g=plan,duck,10
+i=unit,monster,lion
+j=pile,wheel,4
+
+
+k=whirlpool,1
+
+1=goal,defender
+2=bonusgoal,buggy
+
+[inventory]

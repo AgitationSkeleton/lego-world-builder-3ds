@@ -1,0 +1,57 @@
+[map]
+name=BATTLE AT CRABBY BEACH
+
+ map=@@@@@@wwwwwwwwwwwwwwwwwwww@@@@@
+ map=@@@@@@wilwrwwwwww...wwwwww@@@@@
+ map=@oww@@wwwiwww.p.T.z..wwwww@@@ww
+ map=wj1owwiwwwww...f.new.w.wwwwww3w
+ map=wo2lwwwlwww.g._.n..wwwwwwwwwwbw
+ map=@oww@@wwrwww..mw.Ta.nwwwww@@@ww
+ map=@@@@@@wwiwwwwwww....wwwwww@@@@@
+ map=@@@@@@wwwwwwwwwwwwwwwwwwww@@@@@
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+center=3,4
+ 
+[mapitems]
+a=pile,blue,80,yellow,80,energy,3,wheel,4
+z=pile,green,20,blue,75
+b=waterplan,tugboat,5
+c=waterplan,freighter,10
+d=waterplan,duck,10
+e=plan,defender,5
+f=plan,steamshovel,10
+g=plan,dirtbuggy,10
+h=waterpile,energy,1
+i=waterpile,yellow,5
+j=waterunit,monster,shark
+k=pile,yellow,25,blue,25
+l=waterpile,wheel,2
+m=waterpile,blue,15,energy,1
+n=unit,monster,crab
+o=waterunit,monster,water_crab
+p=plan,robot_lab,5
+
+
+1=goal,tugboat,water
+2=bonusgoal,robot_lab,water
+3=waterunit,vehicle,duck
+
+
+[inventory]
+
+

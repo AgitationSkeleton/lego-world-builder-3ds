@@ -1,0 +1,71 @@
+﻿[map]
+name=COASTAL PROPERTY
+ 
+ map=wlwwwwwrwnwwww
+ map=awgwwwwrwwhwbw
+ map=ww.eww'?dw..ww
+ map=.____......k.?
+ map=?.j.....i____.
+ map=ww..wv??dw.fww
+ map=wwwwwwrwwwwwww
+ map=whwzwwrwwwwwmw
+ map=bw..cw!!ww..wa
+ map=?.s...!?.'.t.!
+ map=!...?.?!.....?
+ map=ww..wp!!cw..qu
+ map=wrrrwwwwwwrrrv
+ map=rywrrrrrrrrwwr
+ map=qwowpw12wwwwwy
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+--   @ = hole
+
+
+center=0,0
+ 
+[mapitems]
+
+a=whirlpool,1
+b=whirlpool,2
+c=whirlpool,3
+d=whirlpool,4
+e=unit,building,garage
+f=unit,building,windmill
+g=waterunit,vehicle,tugboat
+h=waterunit,monster,shark
+i=pile,yellow,20
+j=pile,yellow,25
+k=pile,red,25
+l=waterplan,dumptruck,10
+m=waterplan,guard_tower,10
+n=waterplan,freighter,5
+o=waterunit,monster,gator
+p=whirlpool,5
+q=whirlpool,6
+s=plan,speedboat,5
+t=plan,house,1
+u=waterpile,red,10
+v=whirlpool,7
+y=whirlpool,8
+z=waterplan,buggy,5
+
+
+
+
+
+
+1=goal,house
+2=bonusgoal,buggy
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]

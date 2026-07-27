@@ -1,0 +1,56 @@
+[map]
+name=MASTER AND COMMANDER
+
+ map=@@sxxwhwwwwwxwwdwwwwwfwrrww.wawbf@@
+ map=@swhwhwwwwwwwzww.wwwwwwgwwwwwwwbww@
+ map=xxwwwwhw.wwwwwzwwiwwwwww.wwwawwcwdw
+ map=wwwxxxwwwwwzww.wwwwiwdwwwwwwa.wwwwe
+ map=w1wwxxxxw.wwwwwwwwwwwwww.wwwwwwbwde
+ map=wwwwwwxwwwwzwww.wwwwiwwwwwwwawwcwdw
+ map=xswhwwhwwwwwwwwwwwiwwwwgw.wwwawwbww
+ map=swswhwwxxwwwwwzwwwwdwwfrwwwww.wbwfw
+ map=www@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+ map=wwww.wwwwwwwwwwwwwwwwwwwwwwwwwww...
+ map=@www.wwwswwswwswswswswwwwwwwwwtw.2.
+ map=@@ww.wwwwwwwwwwwwwwwwwwwwwwwwwww...
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+center=3,3
+ 
+[mapitems]
+a=waterunit,vehicle,speedboat
+b=waterunit,vehicle,freighter
+c=waterunit,vehicle,tugboat
+d=waterpile,energy,5
+e=waterpile,blue,40,green,5
+f=waterpile,yellow,25,red,25
+g=waterpile,yellow,40,red,10,blue,10
+h=waterunit,vehicle,fish
+i=waterunit,vehicle,frog
+s=waterunit,monster,shark
+t=waterplan,fish,1
+z=waterunit,monster,gator
+
+1=goal,guard_tower
+2=bonusgoal,fish,water
+
+
+[inventory]
+speedboat=15
+freighter=10
+tugboat=10
+guard_tower=10
+marina=10

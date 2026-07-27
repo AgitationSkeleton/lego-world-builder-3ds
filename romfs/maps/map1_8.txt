@@ -1,0 +1,37 @@
+[map]
+name=BRIDGE BUILDER
+
+ map=wwww.T...a.@~... 
+ map=3wrww.T......2.. 
+ map=wrwwwwwww...T... 
+ map=wwwwrwwwwwwww...
+ map=.wwwwwwwwwwwwww.
+ map=T..wwwwwwwwwwwww
+ map=..T1.T...wwwwwww
+ map=.TT....T...wwwww
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+center=15,2
+ 
+[mapitems]
+a=pile,energy,1,yellow,25,wheel,6
+
+2=unit,vehicle,steamshovel
+1=goal,anything
+3=bonusgoal,steamshovel
+
+[inventory]
+steamshovel=10

@@ -1,0 +1,58 @@
+﻿[map]
+name=WATERING HOLE
+
+ map=j...................@@@@@@
+ map=..wwwwwww.i.wwwwwwk.@@@@@@
+ map=.wwww..wwwwwwb..www.......
+ map=.www.cww..e..ww.dww.wwww..
+ map=..ww.wwww.w.wwww.ww..wwww.
+ map=..wwwww2wwwwwwbwwww..ww1w.
+ map=..ww..wwww.wwww..ww..waww.
+ map=.www...ww.f.ww...ww..wwww.
+ map=.www.h.b.....wg..ww.wwww..
+ map=.wwwwwwwwwwwwwwwwww.......
+ map=.lwwwwwww...wwwwww..@@@@@@
+ map=...................j@@@@@@
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+--   @ = hole
+
+center=20,5
+ 
+[mapitems]
+a=waterunit,monster,shark
+b=waterunit,monster,water_crab
+c=pile,blue,5,red,5
+d=pile,white,10
+e=pile,yellow,25,energy,1
+f=pile,yellow,25,wheel,4,energy,1
+g=plan,freezebot,10
+h=plan,dumptruck,10
+i=pile,yellow,20,wheel,6,energy,1
+j=unit,building,gas_station
+k=plan,buggy,5
+l=pile,red,10,energy,1,wheel,4
+
+
+
+
+
+
+1=goal,buggy,water
+2=bonusgoal,shark,water
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+
+steamshovel=10
+

@@ -1,0 +1,59 @@
+[map]
+name=DOUBLE TROUBLE
+
+ map=e1nmrwwww@@@@@
+ map=@wmwmwwwwb@@@@
+ map=@@3mwwrwwba@@@
+ map=@@@@@@@@@@@@@@
+ map=@@@2Td..l.hT@@
+ map=@@@@cd...kzji@
+ map=@@@@@....fgTw3
+
+center=9,5
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   C = crab
+
+center=5,5
+ 
+[mapitems]
+
+3=whirlpool,1
+z=unit,monster,boulder
+a=waterunit,building,marina
+b=waterunit,vehicle,speedboat
+c=unit,building,robot_lab
+d=unit,vehicle,defender
+e=plan,dozer,10
+f=plan,freighter,10
+g=plan,forklift,10
+h=pile,wheel,6
+i=plan,treebot,10
+j=unit,monster,trex
+k=unit,monster,scorpion
+l=unit,monster,crab
+m=waterunit,monster,gator
+n=waterpile,wheel,4
+
+
+
+
+1=goal,forklift
+2=bonusgoal,treebot
+
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+marina=1
+robot_lab=1
+speedboat=3
+defender=3
+
+
+

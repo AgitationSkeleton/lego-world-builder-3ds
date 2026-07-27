@@ -1,0 +1,51 @@
+[map]
+name=PERPETUAL MOTION
+
+ map=@@@@@@@@@@@@@@@@@@@.......
+ map=@###..##..#..#@@@@@.@@@@@.
+ map=@.@@@@@@@@@@@#@...@.@2Ti..
+ map=@......@@..#@.@.@.@.@@@@@@
+ map=@@@@.@.@@#@##.@.@.@.......
+ map=@....@..@#@@@@@.@f@@@@@@@T
+ map=@.@@.@@.@...@@@.@.@.h.hhh.
+ map=@Tc@.@@.@@@.@@@.@g@Mhh.hhM
+ map=@@@@.@@.Tb@T@@@.@.@MMMTMMM
+ map=@MM...@@@@@.@@@.@f@_e...e_
+ map=@.a.......@.@@@.@.@_d_T_d_
+ map=@.c.M.@@@.@..1..@g@_._._._
+ map=@@@@@@@...@@@@@@@.@.......
+ map=........@@@@@b@@@.@.......
+ map=.@@@@@@@@@@@@T@@@.T.@@@@@@
+ map=..............@@@@@@@@@@@@
+
+
+--   H = HQ 
+--   B = BUGGY
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   C = crab
+
+center=13,10
+ 
+[mapitems]
+a=unit,vehicle,treebot
+b=plan,repairbot,1
+c=pile,green,10,blue,20,yellow,5,energy,1
+d=pile,yellow,25,blue,25,green,10
+e=pile,blue,40,yellow,25,energy,1
+f=plan,defender,1
+g=plan,robot_lab,1
+h=unit,monster,crab
+i=plan,treebot,1
+
+1=goal,treebot
+2=bonusgoal,treebot
+
+[inventory]
+
+
+

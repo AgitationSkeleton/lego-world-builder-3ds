@@ -1,0 +1,47 @@
+[map]
+name=ANIMAL RECYCLING
+
+ map=.T.wwww....www.T..1 
+ map=...dwwkwj..www....@
+ map=.ab.wwwzwwwkwwwe.T@
+ map=..c.....wwwwwwwwww@
+ map=TT...wwwjw....wwww@
+ map=2.T.wwwwwwww...www@
+
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+
+
+center=3,3
+ 
+[mapitems]
+a=pile,red,5,energy,1
+z=waterpile,blue,5
+c=plan,fish,10
+d=plan,duck,10
+e=pile,yellow,5
+b=unit,vehicle,buggy
+k=whirlpool,1
+j=whirlpool,2
+
+1=goal,anything
+2=bonusgoal,duck
+
+[inventory]
+snail=10
+
+

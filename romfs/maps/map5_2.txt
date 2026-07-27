@@ -1,0 +1,38 @@
+[map]
+name=OFF ROAD RACING
+
+ map=.a.@#.Mbb...@@M
+ map=....#.M######MM
+ map=.##..MM####.##1
+ map=.#...###.#####.
+ map=@..MM#####@##..
+ map=@..MM#b######.@
+ map=.c.M###.#######
+ map=.2.@##b####b##M
+
+
+center=3,3
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   @ = hole
+
+ 
+ 
+[mapitems]
+a=unit,vehicle,buggy
+b=pile,energy,1
+c=plan,buggy,3
+
+1=goal,buggy
+2=bonusgoal,buggy
+
+[inventory]

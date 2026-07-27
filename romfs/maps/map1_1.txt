@@ -1,0 +1,47 @@
+[map]
+name=TUTORIAL
+
+ map=........................
+ map=.T.....TT_......__..TT..
+ map=...T.......i.T.......T.. 
+ map=.TT........a...c.....T.2
+ map=__..........q......T..TT
+ map=......T.........._TT_.TT
+ map=..TT............d1..TT..
+ map=......TT.T_..TT.....T.T.
+ map=..............TT....T...
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+ 
+ 
+[mapitems]
+a=pile,red,10,wheel,4,energy,1
+c=plan,buggy,10
+d=pile,yellow,3
+e=pile,wheel,4
+f=pile,energy,1
+h=pile,yellow,1
+i=pile,blue,3
+
+b=unit,vehicle,buggy
+q=unit,vehicle,duck
+
+1=goal,buggy
+2=bonusgoal,buggy
+3=bonusgoal,anything
+
+[inventory]

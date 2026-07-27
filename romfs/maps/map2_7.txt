@@ -1,0 +1,50 @@
+[map]
+name=LEAP FROGS
+
+ map=ww.ghwwww
+ map=wwT1Twwww
+ map=wwwd.bwww
+ map=wwwwwfwww
+ map=wbwwwww.b
+ map=.e.wwwwwe
+ map=.wwwbwwww
+ map=www..ww..
+ map=ww.ewwww.
+ map=wwwwwwwww
+ map=wwwe2awww
+ map=wccccccww
+
+
+--   H = HQ 
+--   B = BUGGY
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   C = crab
+
+center=5,3
+ 
+[mapitems]
+a=unit,vehicle,frog
+b=unit,monster,gator
+c=pile,green,5,energy,1
+d=pile,blue,25
+e=plan,frog,3
+f=plan,treebot,10
+g=pile,yellow,5
+h=plan,duck,3
+
+
+
+b=unit,vehicle,buggy
+
+1=goal,treebot
+2=bonusgoal,duck
+
+[inventory]
+
+
+

@@ -1,0 +1,68 @@
+[map]
+name=THE FINAL SHOWDOWN
+
+ map=...u___....@.2.@..u...._...T
+ map=TTT......__@@w@@._____u..TTT
+ map=qwTTTT__..u..b.....u...TTTtw
+ map=wrr._TTT.__....___u.__TTwrrw
+ map=wrw____T.u..TTTTTTT..TT_rwww
+ map=vwwrww_TTTTTTv1__TTTTTwwwwrr
+ map=rrww.v._wwwww_vuuwwwwww.w.__
+ map=.v_wwwww..__wwwwwww..v..www_
+ map=wwww.v.wwwT._T_Tv.w..wwww.v.
+ map=T____...._..m...T.._T___....
+ map=_...lT____T____TT__l...._.ww
+ map=_T_TTT_..........._TTTTT____
+ map=_........ywwwwww..........._
+ map=wwwy..wwww.o.z.wy.wwywwwww._
+ map=_zcwwyw.c..f...gwww..z.c.yww
+ map=_d..cz.e..z...c....c..bbz.d_
+ map=.bbbbb.....c......h.bb..bbb.
+ map=bi.j..bb............b...j.ib
+ map=..k....b..aa.....aa..bb..k..
+ map=.n.p..b_______________b.p.n.
+
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   r = water rocks
+
+
+center=14,5
+
+ 
+[mapitems]
+a=pile,yellow,10,wheel,4,energy,1
+b=unit,monster,boulder
+c=pile,energy,3
+d=plan,defender,10
+e=plan,steamshovel,10
+f=plan,treebot,10
+g=plan,dozer,10
+h=plan,dumptruck,10
+i=pile,yellow,250
+j=pile,blue,250
+k=pile,wheel,20
+l=unit,building,robot_lab
+m=unit,building,gas_station
+n=pile,green,250
+o=plan,dirtbuggy,10
+p=pile,red,250
+q=plan,gas_station,10
+t=plan,robot_lab,10
+u=unit,monster,scorpion
+v=unit,monster,gator
+y=waterunit,monster,water_crab
+z=unit,monster,crab
+
+
+
+1=goal,defender
+2=bonusgoal,defender
+
+[inventory]
+dirtbuggy=10

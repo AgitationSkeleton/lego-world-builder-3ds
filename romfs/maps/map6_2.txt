@@ -1,0 +1,64 @@
+﻿[map]
+name=OUT OF GAS
+
+ map=.!...!.....w...j2
+ map=!!'!i..!.1.!.!.!'
+ map=wwwwwwrwrwrwrwrww
+ map=...%.w...w.......
+ map=.!.*...%...%@@@@.
+ map=.*.%.@@w%w%w.....
+ map=.!.%.@@......%rrr
+ map=.%.&%*%.%%%!*'...
+ map=.!.%....@....%.@.
+ map=.%.%.%%@@@*%.'.@.
+ map=.!.&.........&.@.
+ map=.%.%wwwfwwwww%.@.
+ map=e!.......!.....@d
+ map='!!%*'%!.'.!%&@@@
+ map=.........!.......
+ map=.!%&%!!%*'%!%&%!.
+ map=.!.........!...!.
+ map=.!.@@@.@@@.!.%.!.
+ map=...@..a..@...%...
+ map=@@.@ahhha@@@@@@@@
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+center=5,16
+ 
+[mapitems]
+a=unit,vehicle,dumptruck
+b=waterpile,energy,12
+c=unit,monster,boulder
+d=plan,guard_tower,5
+e=plan,steamshovel,5
+f=plan,duck,10
+g=unit,vehicle,steamshovel
+h=waterpile,red,20,energy,5
+i=plan,dumptruck,5
+j=unit,monster,lion
+
+1=goal,guard_tower
+2=bonusgoal,duck
+
+[inventory]

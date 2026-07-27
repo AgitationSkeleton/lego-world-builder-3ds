@@ -1,0 +1,43 @@
+[map]
+name=PUSH COMES TO SHOVE
+
+ map=T.T.TTT.TT.b...T
+ map=T...TT.TT...Tb.T
+ map=..gTaTTTT.T..b..
+ map=T.b.b.2.T.Tbb..T
+ map=..T...T.T1T.TTTT
+ map=..T..g..TTT...TT
+ map=TgT..T..T@~TT.TT
+ map=..T.Tg.....T..TT
+ map=..g...T..b..bb.T
+ map=TT...Tf.bdb.b..T
+ 
+
+
+center=9,7
+
+--   H = HQ 
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   ~ = space bar billboard - should be to right of a hole
+
+
+center=15,2
+ 
+[mapitems]
+a=plan,frog,10
+b=unit,monster,boulder
+d=unit,vehicle,dozer
+e=pile,blue,1
+f=unit,building,gas_station
+g=pile,green,1
+h=waterpile,blue,2,energy,1
+
+1=goal,dozer
+2=bonusgoal,frog
+
+[inventory]

@@ -1,0 +1,48 @@
+[map]
+name=DEFENDER SAVES THE DAY
+
+ map=@@@~T@@@wwwwwwwwww@@@@@@@...@@@@
+ map=@.h..Twwwwwwww...wwwwwww.T..T@ww
+ map=......w.c....w..dw....w.......ww
+ map=aT...fw...z..w...w..z.w...1...w2
+ map=@.....wwwwwwwwk..wwwwwww...Te@ww
+ map=@@a..@@@wwwwwwwwww@@@@@@@...@@@@
+ 
+
+center=26,3
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   @ = hole
+
+ 
+ 
+[mapitems]
+a=pile,yellow,25,blue,40,energy,1
+c=plan,defender,5
+d=pile,blue,20
+e=plan,forklift,10
+f=plan,defender,5
+g=plan,buggy,10
+h=pile,energy,1,wheel,4,yellow,25
+i=pile,red,15,wheel,4,energy,1
+j=pile,energy,1
+k=pile,yellow,25
+y=unit,vehicle,defender2
+z=unit,monster,crab
+q=unit,vehicle,duck
+
+1=goal,defender
+2=bonusgoal,forklift,water
+
+
+[inventory]
+steamshovel=10

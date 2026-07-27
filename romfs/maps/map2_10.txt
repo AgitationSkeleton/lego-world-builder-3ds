@@ -1,0 +1,50 @@
+[map]
+name=CRAB ISLANDS
+
+ map=wwwwwww@@@@@@@@@@@@@@@@@@@@@
+ map=wwh.wwwwwwwwwwwwwwwwwwwwwww@
+ map=wwcf.@@@@@@@@@@@@@@@@@@@@@w@
+ map=wwwd.www@@wwgww@@wwwic.ww@w@
+ map=wwwwwwwbwwwwwwwwwwww.fwww@w@
+ map=wewwwwwwwww..d.wwaww..dww@w@
+ map=@@@@@@@ww...1..wwwwwwwwwj@w@
+ map=@@www@@wwwwc..www@@@@@@@@@w@
+ map=@@w@2@@wwwwwwwwew@@wwwww@@w@
+ map=@@w@@@@@@@@@@@@@@@@w@@@w@@w@
+ map=@@wwwwwwwwwwwwwwwwww@@@wwww@
+ map=@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+
+center=12,6
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   C = crab
+
+
+ 
+[mapitems]
+a=waterunit,vehicle,freighter
+b=waterplan,defender,10
+c=unit,monster,crab
+d=pile,blue,40,energy,1
+e=waterpile,yellow,25
+f=pile,wheel,4,energy,1
+g=waterunit,building,marina
+h=plan,forklift,10
+i=plan,snail,10
+j=waterplan,marina,10
+
+
+1=goal,snail
+2=bonusgoal,marina,water
+
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+freighter=10

@@ -1,0 +1,6 @@
+--atlas -f rgba8888 -z auto
+resource_white_1.png
+resource_white_2.png
+resource_white_3.png
+resource_white_4.png
+carry_white.png

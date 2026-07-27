@@ -1,0 +1,42 @@
+[map]
+name=TAKE APART THE DUCK
+
+ map=_.....e.
+ map=........
+ map=..z..___
+ map=...___..
+ map=__..c_..
+ map=_2_.__.1
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+
+ 
+[mapitems]
+a=pile,yellow,10
+z=unit,vehicle,duck
+c=plan,dirtbuggy,10
+d=pile,yellow,10
+e=pile,wheel,4,yellow,5,energy,1
+f=pile,energy,1
+h=pile,yellow,1
+b=unit,vehicle,buggy
+
+1=goal,anything
+2=bonusgoal,duck,water
+
+[inventory]
+duck=10

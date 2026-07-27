@@ -1,0 +1,55 @@
+[map]
+name=FOSSIL FUELING
+
+ map=_..iwwwwwwwwwMMMMMwww
+ map=_wwwwwrwww2wwM.MMwwcw
+ map=.www1wrwwwwwww.awwwww
+ map=.wwwwwTTMMTTTTbMMMwww
+ map=..TT_.jp...._l.._wwTT
+ map=___l_________...TTTTd
+ map=................___..
+ map=.MM.....k.o.....l____
+ map=.MMM..m....TTTT___...
+ map=.M..b....T....wwwwMM.
+ map=.MMhMwwwwwwww.b..w_M.
+ map=.lMMMMg...._wwewww__.
+ map=.__..MMMMM.._wwww....
+ map=.n__.........wwwf._MM
+
+
+center=10,7
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+
+ 
+[mapitems]
+a=plan,steamshovel,20
+b=unit,monster,boulder
+c=waterpile,green,20,energy,2
+d=plan,gas_station,10
+e=plan,treebot,20
+f=plan,dozer,20
+g=pile,yellow,5
+h=pile,blue,25
+i=pile,red,20
+j=pile,red,20
+k=pile,green,5
+l=pile,yellow,3
+m=pile,yellow,8,wheel,2
+n=plan,dumptruck,20
+o=unit,vehicle,buggy
+p=pile,energy,1
+
+1=goal,treebot
+2=bonusgoal,boulder,water
+
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+buggy=10

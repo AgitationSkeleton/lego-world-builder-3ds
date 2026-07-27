@@ -1,0 +1,65 @@
+﻿[map]
+name=DEFORESTATION
+
+ map=@%.....`/.>@@@@@@@@@@@@
+ map=!%.!.!.`/b>/@@@@@@@@@@@
+ map=!'%e!.``{\\}@@-/-@@@@@@
+ map=!!.!d!`1....a\\=\\\..2.
+ map=!'%f!.``[\\]@@-/-@@@@@@
+ map=!%.!.!.`/c>/@@@@@@@@@@@
+ map=@%.....`/.>@@@@@@@@@@@@
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+--   @ = hole
+
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers 
+
+-- ` = cement
+-- > = road block
+-- ( = street 1
+-- [ = street 2
+-- { = street 3
+-- \ = street 4
+-- / = street 5
+-- ) = street 6
+-- ] = street 7
+-- } = street 8
+-- + = street 9
+-- = = street 10
+-- - = street undiggable
+
+ 
+[mapitems]
+a=unit,vehicle,forklift
+b=pile,white,25,green,10,yellow,10,energy,1
+c=pile,blue,10,red,15,energy,1
+d=plan,gas_station,5
+e=pile,energy,1
+f=plan,forklift,1
+
+1=goal,house
+2=bonusgoal,gas_station
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+
+factory=5
+house=1

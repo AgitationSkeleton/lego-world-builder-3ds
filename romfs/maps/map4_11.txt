@@ -1,0 +1,54 @@
+[map]
+name=ARCHIPELAGO
+
+ map=wwwwwrwrzwwwxxxxaz
+ map=wbcwwwwywwwzwwxxxw
+ map=wdewrww.z..ywwzwww
+ map=wwwwww....wwwrwwwz
+ map=wwxwww.wz.ywzwwywr
+ map=xxwww..wwwwwwyw.ww
+ map=xwwww..Mwwzw....rr
+ map=www.M.....ww.wwrww
+ map=wwwff.1.M....wrrrr
+ map=wwwf..MMwwwwwwrhh2
+ map=x34ww..wwwwwwrgwww
+ map=xxwwwwwwwwwwwwwwww
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+
+--   @ = hole
+--   ~ = space bar billboard - should be to right of a hole
+
+
+ 
+[mapitems]
+a=waterplan,fish,10
+b=pile,wheel,4
+c=plan,defender,10
+d=plan,freighter,10
+e=plan,steamshovel,10
+f=pile,yellow,25,blue,40,energy,1
+g=waterplan,speedboat,10
+h=waterpile,yellow,40,red,10,blue,10,energy,1
+
+
+y=unit,monster,crab
+z=waterunit,monster,water_crab
+
+
+1=goal,fish,water
+2=bonusgoal,buggy,water
+3=waterunit,vehicle,frog
+4=waterunit,vehicle,duck
+
+[inventory]
+buggy=10

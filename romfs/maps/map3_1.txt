@@ -1,0 +1,39 @@
+[map]
+name=STONE WALL
+
+ map=TT.......T...fwwww 
+ map=..aaa..aa...wwwwww
+ map=.a...aa..a....ww1w
+ map=a2.c..T..a...zzwww
+ map=a..c.....a....zwwg
+ map=Ta...aa.ea....wwww
+ map=.Taaa..aa..Twwwwww
+ map=T.........TT..bwww 
+
+
+
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   C = crab
+
+[mapitems]
+a=unit,monster,boulder
+b=plan,duck,10
+c=unit,vehicle,dozer
+d=unit,vehicle,buggy
+e=pile,green,5,energy,1
+f=plan,frog,10
+g=waterunit,monster,water_crab
+z=unit,monster,scorpion
+
+
+1=goal,duck,water
+2=bonusgoal,frog
+
+[inventory]
+dozer=5

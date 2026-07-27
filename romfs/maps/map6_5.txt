@@ -1,0 +1,66 @@
+﻿[map]
+name=THE LION SLEEPS TONIGHT
+
+ map=@@@@@@@@@@@@@2l%@
+ map=.f@@@@@@@@@@.*..@
+ map=d.b....b.......1.
+ map=.bb.c...b@@@@...%
+ map=b........b..@@@@@
+ map=.b.m.b%b%mww*%i@@
+ map=..@@@@.j.wweh*.@@
+ map=...g.@...%www%.@@
+ map=.....@.%.k.%*.a@@
+ map=@....@@@@@@@@@@@@
+ map=@.n.@@@@@@@@@@@@@
+
+
+-- MAP TERRAIN KEY
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal, undiggable (rocky)
+--   x = water, unfillable (deep)
+--   r = water with reefs
+--   T = tree
+--   # = swamp
+--   @ = hole
+
+--   ! = cypress
+--   ' = little pine
+--   ? = palm tree
+
+-- Jungle obstacles:
+-- % = flowery plant
+-- & = lumpy root
+-- $ = cauliflowers
+-- * = rocks and flowers
+
+center=15,0
+ 
+[mapitems]
+
+a=unit,vehicle,buggy
+b=unit,monster,boulder
+c=unit,monster,lion
+d=pile,yellow,15,wheel,6,energy,1
+e=plan,dozer,10
+f=plan,freezebot,10
+g=pile,white,10,yellow,25,red,5,blue,5,energy,1
+h=waterunit,monster,gator
+i=plan,defender,10
+j=plan,frog,10
+k=pile,blue,40,yellow,25,energy,1
+l=plan,buggy,5
+m=pile,energy,1
+n=unit,monster,crab
+
+
+1=goal,lion
+2=bonusgoal,buggy
+
+
+-- inventory: which plans does user get at start of level?
+[inventory]
+
+

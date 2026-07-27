@@ -1,0 +1,49 @@
+[map]
+name=MEET REPAIRBOT
+
+ map=..............@@@@@@@@@@
+ map=.ac.........k.@@@@@@@@@@
+ map=..............@@@@@@@@@@
+ map=w#www#www#wwww@@M......@
+ map=w#www#www#wwww@....MM...
+ map=w#www#www#ww1ww...f.Mg2.
+ map=w#wjw#wjw#wwww@MM.......
+ map=w#wjw#wjw#wwww@@..M..MM@
+ map=###@###@###www@@@@@@@@@@
+ map=###@###@###www@@@@@@@@@@
+ map=...@...@...www@@@@@@@@@@
+ map=.b.@.h.@.i.www@@@@@@@@@@
+ 
+--   H = HQ 
+--   B = BUGGY
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+
+
+
+center=3,3
+ 
+[mapitems]
+a=unit,vehicle,defender
+b=plan,repairbot,10
+c=pile,blue,20,green,10,yellow,5,energy,1
+d=pile,wheel,4,energy,1
+e=plan,buggy,10
+f=plan,forklift,10
+g=unit,monster,scorpion
+h=plan,steamshovel,10
+i=plan,duck,10
+j=waterpile,yellow,5,energy,1
+k=pile,yellow,5,wheel,4
+
+
+1=goal,steamshovel
+2=bonusgoal,forklift
+
+[inventory]
+
+

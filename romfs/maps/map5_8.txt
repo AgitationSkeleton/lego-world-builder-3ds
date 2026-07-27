@@ -1,0 +1,41 @@
+[map]
+name=HUNGRY PREDATORS
+
+ map=.##b.c#.b##b..#.w.b.wwwdww
+ map=a...####...wc#.b##c#w1www3
+ map=.b#c..b..###.b..#b..wwweww
+ map=@@@@@@@@@@@@@@@@@@@@@@@@@@
+ map=..ewwwwwrrwefrrrwwewwrrwww
+ map=2.wr.rwwfwg.wwwfgr.rwwww.3
+ map=..wfwewrewwwerrwwwewwrew.w
+
+
+center=1,1
+
+--   H = HQ 
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   ~ = space bar billboard - should be to right of a hole
+
+
+
+ 
+[mapitems]
+a=pile,yellow,5,energy,1
+b=plan,duck,1
+c=unit,monster,trex
+d=waterpile,green,5,energy,1
+e=waterplan,frog,1
+f=waterunit,monster,shark
+3=whirlpool,1
+1=goal,duck,water
+2=bonusgoal,frog
+9=waterunit,vehicle,frog
+g=waterpile,energy,1
+
+[inventory]
+duck=1

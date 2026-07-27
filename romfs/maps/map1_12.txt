@@ -1,0 +1,59 @@
+[map]
+name=WHEN CRABS ATTACK
+
+ map=T__.2..._j@@@@
+ map=k._.q..__.@@@@
+ map=g..____...@@@@
+ map=@...T1_.___@@@ 
+ map=@TTT__q....@@@
+ map=@..T.......@@@
+ map=@@T.T..q....@@
+ map=@@..TTT...TT@@ 
+ map=@@.T.TTTTTTe@@
+ map=@@@eigg.de.g.@ 
+ map=@@@wwwwwwwwww@
+ map=@@@wwwwwwwwww@ 
+ map=@@@@ef.gece..e
+ map=@@@@ebae.g.ig. 
+ map=@@@@.hege..ege
+
+
+
+--   M = mountain
+--   . = normal
+--   w = water
+--   _ = normal undiggable
+--   x = water undiggable
+--   T = tree
+--   r = water rocks
+
+--   @ = hole
+--   / = waterfall to the left
+--   \ = waterfall to the right
+--   | = waterfall to the bottom
+--   ^ = waterfall to the top
+
+center=6,4
+
+ 
+[mapitems]
+a=unit,vehicle,forklift
+b=plan,duck,10
+c=plan,steamshovel,10
+d=plan,treebot,10
+j=plan,dirtbuggy,10
+k=plan,buggy,10
+
+e=pile,yellow,5
+f=pile,wheel,4
+g=pile,energy,1
+h=pile,blue,25,energy,1
+i=pile,green,10
+
+q=unit,monster,crab
+
+1=goal,duck
+2=bonusgoal,dirtbuggy
+
+[inventory]
+forklift=10
