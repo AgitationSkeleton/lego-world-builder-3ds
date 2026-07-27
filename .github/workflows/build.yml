@@ -14,8 +14,10 @@ jobs:
   build:
     name: 3dsx and cia
     runs-on: ubuntu-latest
-    # Carries devkitARM, libctru, citro3d, citro2d and the 3DS tools.
-    container: devkitpro/devkitarm:latest
+    # Carries devkitARM, libctru, citro3d, citro2d and the 3DS tools. Pinned
+    # to a dated tag rather than latest: the binaries a tag publishes should
+    # not change because devkitPro pushed a new toolchain that afternoon.
+    container: devkitpro/devkitarm:20251231
 
     steps:
       - name: Check out
@@ -31,6 +33,10 @@ jobs:
       # what is needed, than have builders pull the same packages repeatedly.
       - name: Check the toolchain
         run: |
+          arm-none-eabi-gcc --version | head -1
+          for p in devkitARM libctru citro3d citro2d; do
+            dkp-pacman -Q "$p" 2>/dev/null || true
+          done
           missing=
           for lib in libctru.a libcitro3d.a libcitro2d.a; do
             [ -f "/opt/devkitpro/libctru/lib/$lib" ] || missing="$missing $lib"
