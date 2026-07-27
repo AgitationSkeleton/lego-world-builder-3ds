@@ -17,7 +17,7 @@ jobs:
     # Carries devkitARM, libctru, citro3d, citro2d and the 3DS tools. Pinned
     # to a dated tag rather than latest: the binaries a tag publishes should
     # not change because devkitPro pushed a new toolchain that afternoon.
-    container: devkitpro/devkitarm:20251231
+    container: devkitpro/devkitarm:20260221
 
     steps:
       - name: Check out
