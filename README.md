@@ -51,8 +51,8 @@ In a mission:
 
 | Button | Action |
 | --- | --- |
-| D-pad, Circle Pad | Scroll the map |
-| Touch | Tap a tile to select it, drag to scroll |
+| D-pad, Circle Pad | Scroll the map, a tile at a time as the original's scroll buttons do |
+| Touch | Tap a tile to select it, drag to scroll. Tap a pile to see its bricks |
 | L | Act with the selected unit: pick up, drop, build. On a factory, cycles its colour |
 | B | Cancel, and dismiss a goal popup |
 | X | Disassemble what is selected |
@@ -66,7 +66,13 @@ On the world select screen:
 | --- | --- |
 | L, ZL | Previous world |
 | R, ZR | Next world |
+| D-pad | Point at a mission, showing its name |
+| A | Play the mission pointed at |
+| Touch | Tap a mission to play it, or an arrow to change world |
 | Select | Show your licence, once you have earned it |
+
+World 1 Mission 1 runs the original's tutorial. Its bubble's buttons are A and
+B, and Start leaves it.
 
 There is a cheat, entered the way you would expect a game from that era to
 want it.

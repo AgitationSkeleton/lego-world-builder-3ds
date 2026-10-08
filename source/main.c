@@ -42,11 +42,8 @@ static const u32 g_konamiSeq[] = {
 #define SFX_CHANNEL   1
 #define SFX2_CHANNEL  1  /* use same channel as SFX; channel 2 unreliable in emulators */
 #define WB_MAX_WORLD_EFFECTS 32
-#define WB_MAX_PENDING_UNIT_BREAKS 16
 #define WB_DAMAGE_EFFECT_DURATION_MS 320
 #define WB_CLOUD_EFFECT_FRAME_MS 70
-#define WB_SWAMP_DAMAGE_PERIOD_MS 700
-#define WB_SWAMP_DAMAGE_AMOUNT 500
 #define WB_MUSIC_INTRO_VARIANTS 2
 #define WB_MUSIC_GAME6_VARIANTS 4
 #define WB_MUSIC_GAME8_VARIANTS 3
@@ -206,6 +203,21 @@ typedef enum WBAssetId {
     ASSET_MAP_MOUNTAIN,
     ASSET_MAP_ROCKS,
     ASSET_MAP_TREE,
+    /* Appended to worldicons.t3s for the world-select screen (tools/gen_worldmap_data.py). */
+    ASSET_QUESTION_MARK_BLINK,
+    ASSET_FLAG_ROLLOVER_BLINK,
+    ASSET_DIRTBUGGY_MINI,
+    ASSET_BOAT_MINI,
+    ASSET_FORKLIFT_MINI,
+    ASSET_STEAMSHOVEL_MINI,
+    ASSET_DEFENDER_MINI,
+    ASSET_FROG_MINI,
+    ASSET_DOZER_MINI,
+    ASSET_FREIGHTER_MINI,
+    ASSET_WB2_MAP_ROCKS,
+    ASSET_WB2_MAP_MINITREE2,
+    ASSET_WB2_MAP_TREE1,
+    ASSET_WB2_MAP_TREE2,
 
     /* ── vehicles_land.t3x ── index 0 from this sheet ── */
     ASSET_VEHICLES_LAND_BASE,
@@ -633,7 +645,8 @@ typedef enum WBActionMode {
     WB_ACTION_FILL,
     WB_ACTION_UPROOT,
     WB_ACTION_PLANT,
-    WB_ACTION_PUSH
+    WB_ACTION_PUSH,
+    WB_ACTION_ATTACK
 } WBActionMode;
 
 typedef enum WBScreenMode {
@@ -642,64 +655,146 @@ typedef enum WBScreenMode {
     WB_SCREEN_GAME
 } WBScreenMode;
 
-typedef struct WBMoveState {
-    bool active;
-    bool blockedWaiting;
-    bool resumeGoalAfterStop;
-    bool pendingActionValid;
-    int pendingActionX;
-    int pendingActionY;
-    bool queuedMoveValid;
-    int queuedMoveX;
-    int queuedMoveY;
-    WBUnitType unitType;
-    int unitEnergy;
-    int unitEnergyDeci;
-    WBResourcePile unitCargo;
-    int unitCargoEnergyValue;  /* charge level (0-100) of any carried energy brick */
-    WBDirection finalDirection;
+/* ─── Original object model ──────────────────────────────────────────────────
+   Units and monsters are 'vehicle.generic parent' objects and buildings are
+   'building.generic parent' objects, all stepped once per movie frame (15 fps,
+   the actorList order) exactly as the original's stepFrame handlers run. An
+   object always occupies one tile: a step claims the destination tile at once
+   (MoveObject) and the sprite then slides there over 1000/speed ms. */
+
+#define WB_FRAME_MS (1000.0 / 15.0)
+#define WB_PATH_MAX (WB_MAX_MAP_W * WB_MAX_MAP_H)
+#define WB_MAX_AGENTS 96
+#define WB_MAX_ACTORS 256
+
+typedef enum WBObjKind { WB_OBJ_NONE = 0, WB_OBJ_UNIT, WB_OBJ_MONSTER, WB_OBJ_BUILDING } WBObjKind;
+
+/* A reference to a live object (the original holds object references; pDead
+   says whether one has gone). The generation makes a reused slot never match. */
+typedef struct WBObjRef {
+    u8 kind;
+    u8 index;       /* unit: agent slot; monster: g_monsters index */
+    u16 gen;
+    s8 x;           /* building tile */
+    s8 y;
+} WBObjRef;
+
+typedef enum WBReason {
+    WB_REASON_NONE = 0,
+    WB_REASON_PICK,
+    WB_REASON_DROP,
+    WB_REASON_DIG,
+    WB_REASON_FILL,
+    WB_REASON_UPROOT,
+    WB_REASON_PLANT,
+    WB_REASON_ATTACK
+} WBReason;
+
+typedef struct WBAttackProfile {
+    int hitsPerMinute;
+    int chanceOfSuccess;
+    int damageMin;          /* original 0-100 energy units */
+    int damageMax;
+    int searchRange;
+} WBAttackProfile;
+
+/* vehicle.generic parent's movement properties. */
+typedef struct WBMotion {
+    int curX;               /* pTile */
+    int curY;
+    int fromX;              /* pOldPos */
+    int fromY;
+    bool sliding;           /* pMovePixelTime is set */
+    double slideStartMs;
+    float moveIndex;        /* pMoveIndex: 1 at step start, 0 once the slide is done */
+    bool teleportStep;      /* the pop out of a whirlpool: no slide */
+    double moveTimeMs;      /* pMoveTime */
+    bool hasPath;           /* pPath */
+    bool pathValid;         /* pPath.path */
+    bool teleport;          /* pPath.teleport */
     int goalX;
     int goalY;
+    int step;               /* index in path of the tile we stand on */
     int pathLen;
-    int pathIndex;
-    WBDirection direction;
-    int pathX[WB_MAX_MAP_W * WB_MAX_MAP_H];
-    int pathY[WB_MAX_MAP_W * WB_MAX_MAP_H];
-    float progress;
-    u64 stepStartMs;
-    u64 blockedRetryMs;
-    u64 swampDamageTickMs;
-    int blockedTryNum;
-} WBMoveState;
+    u8 pathX[WB_PATH_MAX];
+    u8 pathY[WB_PATH_MAX];
+    u8 reason;              /* pPath.options */
+    bool nextto;
+    bool chase;
+    int tryNum;
+    bool tryAgainSet;
+    double tryAgainMs;
+    int randomizeNum;
+    double randomizeMs;
+    bool checkDest;         /* pCheckDestination */
+    int checkX;
+    int checkY;
+    u8 checkReason;
+    float pixelOffX;        /* pPixelOffset (stage px) */
+    float pixelOffY;
+} WBMotion;
+
+/* Everything the original keeps on a unit object besides what the cell holds. */
+typedef struct WBUnitAgent {
+    bool used;
+    u16 gen;
+    WBMotion m;
+    bool hasTarget;         /* pAttack */
+    WBObjRef target;
+    bool nextAttackSet;
+    double nextAttackMs;
+    WBAttackProfile stats;
+    u8 actionAnim;          /* pActionCycle */
+    double actionWhenMs;
+    bool recharging;        /* pRechargingFrom */
+    WBObjRef charger;
+    bool checkRechargerSet;
+    double checkRechargerMs;
+    bool swampSet;          /* pSwampTime */
+    double swampMs;
+    bool dying;             /* pDying */
+    double damageMs;
+    bool pushWaiting;       /* pPushWaiting */
+    bool stopPushing;       /* pStopPushing: the pushed thing no longer follows our slide */
+    int pushX;
+    int pushY;
+    u8 freezeState;         /* freezebot: 0 ready, 1 targeted, 2 recharging */
+    double freezeMs;
+    WBObjRef freezeTarget;
+    int repairFrame;        /* repairbot pRepairingFrame, 0 = VOID */
+    u8 repairShow;          /* the repair frame (1/2) its getMember picked this frame, 0 = none */
+} WBUnitAgent;
 
 typedef struct WBMonsterState {
     bool active;
+    u16 gen;
     int row;
     int col;
     WBMonsterType type;
     WBDirection dir;
-    int hp;            /* 1000 = full health */
-    int wanderTimer;   /* per-monster speed scale percentage (80..120) */
-    bool onWater;      /* gator: use water sprite set */
-    bool dying;
-    u64 breakResolveMs;
-    bool hasTarget;
-    int targetX;
-    int targetY;
-    u64 nextAttackMs;
-    u64 lastAttackMs;
-    u64 swampDamageTickMs;
-    /* smooth movement */
-    bool isMoving;
-    int destRow;
-    int destCol;
-    u64 moveStartMs;
-    u64 moveDurationMs;
-    float moveProgress; /* 0..1 interpolation progress */
-    /* wander timing */
-    u64 nextWanderMs;   /* time when monster next picks a new destination */
-    bool resting;       /* true = waiting before next step */
-    bool targetIsBuilding; /* true = current target is a building, not a unit */
+    int hp;             /* battery charge, 0-1000 */
+    int wanderTimer;    /* speed scale percentage (80..120) */
+    float speed;        /* #speed x that scale */
+    bool onWater;       /* gator: use water sprite set */
+    bool dying;         /* pDying */
+    double damageMs;
+    WBMotion m;         /* it moves with vehicle.generic's code */
+    bool resting;       /* pWandering[#rest] */
+    double restUntilMs;
+    bool swampInTerrain;/* #swamp currently added to its terrain list */
+    bool hasTarget;     /* pAttack */
+    WBObjRef target;
+    bool nextAttackSet;
+    double nextAttackMs;
+    WBAttackProfile stats;
+    bool actionActive;  /* pActionCycle (#attack) */
+    double actionWhenMs;
+    bool swampSet;      /* pSwampTime */
+    double swampMs;
+    u8 frozenState;     /* WB2 pFrozenState: 0 none, 1 #waiting, 2 #frozen, 3 #recovering */
+    double frozenMs;
+    bool pushed;        /* being pushed by the dozer: rides its slide */
+    WBObjRef pushedBy;
 } WBMonsterState;
 
 #define WB_MAX_MONSTERS 32
@@ -739,28 +834,19 @@ typedef struct WBWorldEffect {
     int particleKinds[5];
 } WBWorldEffect;
 
-typedef struct WBPendingUnitBreak {
-    bool active;
-    int tileX;
-    int tileY;
-    u64 resolveMs;
-} WBPendingUnitBreak;
-
+/* One 'mini-unit behavior' sprite on the world map. Position is in map-image space
+   (the original's stage px minus the map's origin), stepped at the movie's 15 fps. */
+#define WB_MAX_WORLD_MINIS 40
 typedef struct WBMiniWalker {
     bool active;
     int world;
-    int mission;
-    bool bonus;
-    bool lake;
-    int spriteAssetId;
-    float homeX;
-    float homeY;
-    float x;
+    int def;        /* index into g_worldMapDefs[world].minis */
+    float x;        /* pp */
     float y;
-    float dirX;
-    float dirY;
-    bool stopped;
-    u64 nextDecisionMs;
+    int dirX;       /* dp; 0,0 until first shown (the original's VOID) */
+    int dirY;
+    bool stopped;   /* mode #stop */
+    bool flipH;
 } WBMiniWalker;
 
 typedef struct WBPlanSwoop {
@@ -792,7 +878,6 @@ typedef struct AppState {
     int selectedX;
     int selectedY;
     bool hasSelection;
-    int selectedMover;
     bool infoOverlayOpen;
     bool planMenuOpen;
     bool startMenuOpen;
@@ -803,9 +888,6 @@ typedef struct AppState {
     int planMenuCursor;
     bool touchActiveLast;
     WBActionMode actionMode;
-    bool pendingActionValid;
-    int pendingActionX;
-    int pendingActionY;
     bool buildPreviewValid;
     int buildPreviewX;
     int buildPreviewY;
@@ -852,17 +934,65 @@ typedef struct AppState {
     C2D_TextBuf dynamicBuf;
     C2D_Text titleText;
     C2D_Text screenTitleText;
-    WBMoveState moves[32];
     WBWorldEffect worldEffects[WB_MAX_WORLD_EFFECTS];
-    WBPendingUnitBreak pendingUnitBreaks[WB_MAX_PENDING_UNIT_BREAKS];
-    u64 cellAttackCooldownMs[WB_MAX_MAP_H][WB_MAX_MAP_W];
-    u64 unitSwampDamageTickMs[WB_MAX_MAP_H][WB_MAX_MAP_W];
-    u64 unitRechargeTickMs[WB_MAX_MAP_H][WB_MAX_MAP_W];
-    u64 buildingTickMs[WB_MAX_MAP_H][WB_MAX_MAP_W];
-    u64 unitActionUntilMs[WB_MAX_MAP_H][WB_MAX_MAP_W];
-    u8 unitActionAnim[WB_MAX_MAP_H][WB_MAX_MAP_W];
-    u64 selectedShudderUntilMs;
-    WBMiniWalker miniWalkers[10];
+    /* ── the original's objects (see 'Original object model') ── */
+    WBUnitAgent agents[WB_MAX_AGENTS];
+    WBObjRef actorList[WB_MAX_ACTORS];          /* stepFrame order: the order objects were made */
+    int actorCount;
+    double simMs;                               /* the movie's clock, advanced 1000/15 ms a frame */
+    double simAccumMs;
+    u64 simLastMs;
+    WBObjRef whirlpoolUser[WB_MAX_MAP_H][WB_MAX_MAP_W];
+    u16 buildingGen[WB_MAX_MAP_H][WB_MAX_MAP_W];
+    bool buildingHasTarget[WB_MAX_MAP_H][WB_MAX_MAP_W];
+    WBObjRef buildingTarget[WB_MAX_MAP_H][WB_MAX_MAP_W];
+    bool buildingNextAttackSet[WB_MAX_MAP_H][WB_MAX_MAP_W];
+    double buildingNextAttackMs[WB_MAX_MAP_H][WB_MAX_MAP_W];
+    WBAttackProfile buildingAttackStats[WB_MAX_MAP_H][WB_MAX_MAP_W];
+    bool buildingDying[WB_MAX_MAP_H][WB_MAX_MAP_W];
+    double buildingDamageMs[WB_MAX_MAP_H][WB_MAX_MAP_W];
+    double buildingReadyMs[WB_MAX_MAP_H][WB_MAX_MAP_W]; /* windmill/garage/nursery pReadyTime */
+    u8 factoryWhat[WB_MAX_MAP_H][WB_MAX_MAP_W][4];      /* factory: what each side holds (1 boulder, 2 tree) */
+    double factoryWhen[WB_MAX_MAP_H][WB_MAX_MAP_W][4];
+    WBTerrainType mapTreeTypes[4];              /* tree kinds on the map, for the nursery */
+    int mapTreeTypeCount;
+    bool centerGoalActive;                      /* map display pCenterGoal: the vehicle the view follows */
+    WBObjRef centerGoal;
+    bool buildSelectPending;                    /* build cloud: click the new object after 750 ms */
+    double buildSelectMs;
+    WBObjRef buildSelectRef;
+    bool pilePushed;                            /* a pile the dozer pushed, riding its slide */
+    int pilePushX;
+    int pilePushY;
+    WBObjRef pilePushedBy;
+    bool pushOverrideActive;                    /* mapclickOverride: the dozer's push waits for a click */
+    int pushOverrideX;
+    int pushOverrideY;
+    WBObjRef pushOverrideUnit;
+    bool spikeActive;                           /* click spike on the ordered tile */
+    int spikeX;
+    int spikeY;
+    double spikeMs;
+    u64 musicStartMs;                           /* glob.musicStartTime: the selection arrow bobs on its beat */
+    WBMiniWalker miniWalkers[WB_MAX_WORLD_MINIS];
+    int miniWalkerWorld;           /* world the walkers (and icon flag frames) were set up for */
+    u8 missionFlagFrame[13];       /* mission icon 'flagframe', random(6) at beginSprite */
+    u64 worldSelectLastMs;
+    float worldSelectTickAccum;    /* ms toward the next 15 fps world-map frame */
+    u8* walkMask;                  /* romfs:/meta/worldmask_wN.bin, 2 bits per map pixel */
+    int walkMaskW;
+    int walkMaskH;
+    int walkMaskWorld;
+    u64 lastScrollMs;              /* clickToScroll(): at most one tile per 150 ms */
+    bool pileInspectValid;         /* pile whose bricks are shown (the original's rollover) */
+    int pileInspectX;
+    int pileInspectY;
+    bool tutorialActive;           /* World 1 Mission 1: 'tutorial manager' */
+    int tutorialStep;
+    u64 tutorialAdvanceAtMs;       /* pending gonext() timeout, 0 when none */
+    bool tutorialCatcherLive;      /* the step's click hole still waits for its trigger */
+    u64 tutorialDialogShownMs;
+    u64 tutorialDialogHiddenMs;
     WBAudioClip musicIntro;
     WBAudioClip musicGame;
     WBAudioClip musicIntroVariants[WB_MUSIC_INTRO_VARIANTS];
@@ -911,20 +1041,9 @@ typedef struct AppState {
 static AppState g_app;
 static WBMonsterState g_monsters[WB_MAX_MONSTERS];
 static int g_monsterCount = 0;
-static int g_pathScratchX[WB_MAX_MAP_W * WB_MAX_MAP_H];
-static int g_pathScratchY[WB_MAX_MAP_W * WB_MAX_MAP_H];
-static int g_queueX[WB_MAX_MAP_W * WB_MAX_MAP_H * 4]; /* 4× for lazy-deletion A* */
-static int g_queueY[WB_MAX_MAP_W * WB_MAX_MAP_H * 4];
-static float g_queueF[WB_MAX_MAP_W * WB_MAX_MAP_H * 4]; /* f-cost heap (parallel to g_queueX/Y) */
+static int g_queueX[WB_MAX_MAP_W * WB_MAX_MAP_H]; /* collect-goal flood fill */
+static int g_queueY[WB_MAX_MAP_W * WB_MAX_MAP_H];
 static bool g_visited[WB_MAX_MAP_H][WB_MAX_MAP_W];
-static int g_parentX[WB_MAX_MAP_H][WB_MAX_MAP_W];
-static int g_parentY[WB_MAX_MAP_H][WB_MAX_MAP_W];
-static float g_gCost[WB_MAX_MAP_H][WB_MAX_MAP_W]; /* A* g-cost from start */
-static u8 g_monVisited[WB_MAX_MAP_H][WB_MAX_MAP_W];
-static s16 g_monFirstX[WB_MAX_MAP_H][WB_MAX_MAP_W];
-static s16 g_monFirstY[WB_MAX_MAP_H][WB_MAX_MAP_W];
-static s16 g_monQx[WB_MAX_MAP_W * WB_MAX_MAP_H];
-static s16 g_monQy[WB_MAX_MAP_W * WB_MAX_MAP_H];
 
 static const WBAnchor g_terrainAnchors[] = {
     [ASSET_TERRAIN_NORMAL] = { 24.0f, 0.0f },
@@ -1377,16 +1496,7 @@ static const WBAnchor g_pileRegPoints[] = {
 typedef struct WBMissionPoint {
     float x;
     float y;
-    bool lake;
 } WBMissionPoint;
-
-typedef struct WBMiniSeed {
-    int world;
-    int mission;
-    bool bonus;
-    bool lake;
-    int assetId;
-} WBMiniSeed;
 
 static const int g_worldSkyAssets[8] = {
     0,
@@ -1410,85 +1520,13 @@ static const int g_worldMapAssets[8] = {
     ASSET_WORLDMAP7
 };
 
-static const WBAnchor g_worldMapSourceSize[8] = {
-    { 0.0f, 0.0f },
-    { 516.0f, 335.0f },
-    { 610.0f, 366.0f },
-    { 610.0f, 366.0f },
-    { 610.0f, 366.0f },
-    { 610.0f, 366.0f },
-    { 505.0f, 280.0f },
-    { 506.0f, 279.0f }
-};
+/* Mission icon points, decorations, mini-units, obstacles: taken from the original
+   Director scores by tools/gen_worldmap_data.py rather than estimated. */
+#include "wb_worldmap_data.h"
 
-static const WBMissionPoint g_worldMissionPoints[8][13] = {
-    { {0} },
-    {
-        {0},
-        {118.0f, 246.0f, false}, {36.0f, 155.0f, false}, {104.0f, 222.0f, false}, {185.0f, 76.0f, false},
-        {182.0f, 132.0f, true},  {240.0f, 96.0f, false}, {305.0f, 148.0f, false}, {217.0f, 212.0f, true},
-        {454.0f, 95.0f, false},  {436.0f, 148.0f, false}, {365.0f, 248.0f, false}, {27.0f, 198.0f, false}
-    },
-    {
-        {0},
-        {95.0f, 150.0f, true},   {145.0f, 102.0f, false}, {212.0f, 86.0f, false}, {285.0f, 112.0f, true},
-        {355.0f, 74.0f, false},  {438.0f, 67.0f, false},  {515.0f, 86.0f, false}, {520.0f, 154.0f, false},
-        {458.0f, 214.0f, false}, {377.0f, 238.0f, false}, {274.0f, 228.0f, false}, {154.0f, 225.0f, false}
-    },
-    {
-        {0},
-        {100.0f, 170.0f, true},  {146.0f, 146.0f, false}, {197.0f, 118.0f, false}, {259.0f, 94.0f, true},
-        {335.0f, 98.0f, true},   {404.0f, 126.0f, false}, {483.0f, 152.0f, true}, {467.0f, 221.0f, false},
-        {386.0f, 251.0f, false}, {300.0f, 276.0f, true},  {212.0f, 255.0f, false}, {142.0f, 226.0f, false}
-    },
-    {
-        {0},
-        {202.0f, 90.0f, true},   {292.0f, 82.0f, true},   {400.0f, 86.0f, true},   {425.0f, 140.0f, true},
-        {332.0f, 160.0f, true},  {218.0f, 152.0f, true},  {138.0f, 176.0f, true},  {260.0f, 230.0f, true},
-        {372.0f, 242.0f, true},  {470.0f, 232.0f, true},  {515.0f, 174.0f, true},  {126.0f, 110.0f, true}
-    },
-    {
-        {0},
-        {83.0f, 205.0f, false},  {107.0f, 151.0f, false}, {154.0f, 94.0f, false},  {205.0f, 155.0f, false},
-        {238.0f, 97.0f, false},  {288.0f, 183.0f, false}, {346.0f, 142.0f, false}, {396.0f, 109.0f, false},
-        {443.0f, 155.0f, false}, {494.0f, 88.0f, false},  {552.0f, 142.0f, false}, {468.0f, 215.0f, false}
-    },
-    /* WB2 World 1 (jungle) -- positions estimated from worldmap6.png (505x280, scale=0.857, mapX=-56.4) */
-    {
-        {0},
-        {165.0f, 245.0f, false}, {130.0f, 210.0f, false}, {215.0f, 215.0f, false}, {260.0f, 180.0f, false},
-        {220.0f, 147.0f, false}, {180.0f, 112.0f, false}, {270.0f, 132.0f, false}, {140.0f,  80.0f, false},
-        {335.0f, 105.0f, false}, {375.0f, 152.0f, false}, {413.0f, 197.0f, false}, {418.0f, 248.0f, false}
-    },
-    /* WB2 World 2 (urban) -- positions estimated from worldmap7.png (506x279, scale=0.860, mapX=-57.65) */
-    {
-        {0},
-        {175.0f, 240.0f, false}, {108.0f, 205.0f, false}, {220.0f, 218.0f, false}, {260.0f, 185.0f, false},
-        {220.0f, 150.0f, false}, {178.0f, 115.0f, false}, {268.0f, 132.0f, false}, {137.0f,  83.0f, false},
-        {332.0f, 108.0f, false}, {376.0f, 155.0f, false}, {410.0f, 200.0f, false}, {416.0f, 248.0f, false}
-    }
-};
-
-static const WBMiniSeed g_worldMiniSeeds[] = {
-    {1, 1, false, false, ASSET_BUGGY_MINI},
-    {1, 5, false, false, ASSET_DUCK_MINI},
-    {2, 1, false, false, ASSET_BUGGY_MINI},
-    {2, 6, false, true, ASSET_FISH_MINI},
-    {3, 1, false, false, ASSET_SNAIL_MINI},
-    {4, 1, false, true, ASSET_DUCK_WATER_MINI},
-    {4, 5, false, true, ASSET_FISH_MINI},
-    {5, 1, false, false, ASSET_SNAIL_MINI},
-    {6, 1, false, false, ASSET_BUGGY_MINI},
-    {7, 1, false, false, ASSET_BUGGY_MINI}
-};
-
-static bool tryPickUpAt(AppState* app, int tx, int ty);
-static bool tryDropAt(AppState* app, int tx, int ty);
-static void resolvePendingAction(AppState* app);
 static bool getSelectedUnitView(const AppState* app, WBSelectedUnitView* outView);
 static void clampCamera(AppState* app);
 static void loadGameplaySheets(AppState* app);
-static bool activeMonsterAt(const WBMonsterState* self, int row, int col);
 static WBUnitType planTypeToUnit(WBPlanType planType);
 static void saveLevelProgress(const AppState* app);
 static bool parseWorldMetadata(AppState* app);
@@ -1498,6 +1536,11 @@ static void startPlanSwoop(AppState* app, WBPlanType planType, float fromX, floa
 static void drawPlanSwoop(AppState* app);
 static void appendDebugLog(const char* msg);
 static void tickCollectGoals(AppState* app);
+static void applyMissionSuccess(AppState* app, int world, int mission, int state);
+static void tutorialStart(AppState* app);
+static void drawClickSpike(AppState* app);
+static bool pointInRect(float px, float py, float x, float y, float w, float h);
+static void drawUnitCargoOverlay(AppState* app, const WBCell* cell, float unitX, float unitY);
 
 static int worldSheetIndexForWorld(int world) {
     if (world <= 2) return 0;
@@ -1894,6 +1937,7 @@ static void playMusicClip(AppState* app, WBAudioClip* clip, bool looped) {
         u64 durationMs = nsamples * 1000ULL / (u64)clip->sampleRate;
         app->musicRetryAtMs = osGetTime() + durationMs + 150ULL;
     }
+    app->musicStartMs = osGetTime();
     playClip(app, MUSIC_CHANNEL, clip, looped);
 }
 
@@ -2507,10 +2551,37 @@ static void clampCamera(AppState* app) {
     if (app->cameraY > maxY) app->cameraY = maxY;
 }
 
-static void centerCameraOn(AppState* app, int tileX, int tileY) {
-    app->cameraX = (tileX + 1) - (VIEW_TILE_W / 2) + 1;
-    app->cameraY = (tileY + 1) - (VIEW_TILE_H / 2);
+/* readmap() in 'map display manager' opens on the middle of the map, or on its
+   [map] center=x,y, scrolling the top-left of the 12x9 window from (1,1) by
+   (c - 12/2 + 1, c - 9/2) in Lingo integer arithmetic, then clamping as clampCamera(). */
+static void resetCameraForMap(AppState* app) {
+    if (app->map.hasCenter) {
+        app->cameraX = 1 + (app->map.centerX - (VIEW_TILE_W / 2) + 1);
+        app->cameraY = 1 + (app->map.centerY - (VIEW_TILE_H / 2));
+    } else {
+        app->cameraX = 1 + ((app->map.width / 2) - (VIEW_TILE_W / 2) + 1);
+        app->cameraY = 1 + ((app->map.height / 2) - (VIEW_TILE_H / 2));
+    }
     clampCamera(app);
+}
+
+/* clickToScroll(): one tile per press of a scroll button, repeating while it is held
+   but no faster than every 150 ms. (The pad used to move the view a tile per frame.) */
+static bool scrollCameraStep(AppState* app, int dx, int dy) {
+    u64 now = osGetTime();
+    int oldX = app->cameraX;
+    int oldY = app->cameraY;
+    if (dx == 0 && dy == 0) {
+        return false;
+    }
+    if (app->lastScrollMs != 0 && now - app->lastScrollMs < 150) {
+        return false;
+    }
+    app->lastScrollMs = now;
+    app->cameraX += dx;
+    app->cameraY += dy;
+    clampCamera(app);
+    return app->cameraX != oldX || app->cameraY != oldY;
 }
 
 static void posToLoc(const AppState* app, int posX, int posY, float* outX, float* outY) {
@@ -2594,8 +2665,10 @@ static int worldPlanAssetId(WBPlanType planType) {
     }
 }
 
+/* string(terrain) contains "water" */
 static bool terrainUsesWaterSprite(WBTerrainType terrain) {
-    return terrain == WB_TERRAIN_WATER || terrain == WB_TERRAIN_WATER_REEFS || terrain == WB_TERRAIN_WATER_UNFILLABLE;
+    return terrain == WB_TERRAIN_WATER || terrain == WB_TERRAIN_WATER_REEFS || terrain == WB_TERRAIN_WATER_UNFILLABLE ||
+           terrain == WB_TERRAIN_WATER_WHIRLPOOL;
 }
 
 #define WB_UNIT_ANIM_NONE   0
@@ -2604,175 +2677,119 @@ static bool terrainUsesWaterSprite(WBTerrainType terrain) {
 #define WB_UNIT_ANIM_UPROOT 3
 #define WB_UNIT_ANIM_PLANT  4
 #define WB_UNIT_ANIM_REPAIR 5
+#define WB_UNIT_ANIM_ATTACK 6
 
-static bool unitUsesVisibleBob(WBUnitType unitType) {
-    switch (unitType) {
-        case WB_UNIT_BUGGY:
-        case WB_UNIT_DUCK:
-        case WB_UNIT_DIRTBUGGY:
-        case WB_UNIT_STEAMSHOVEL:
-        case WB_UNIT_DUMPTRUCK:
-        case WB_UNIT_FORKLIFT:
-        case WB_UNIT_DOZER:
-        case WB_UNIT_SPEEDBOAT:
-        case WB_UNIT_TUGBOAT:
-        case WB_UNIT_FREIGHTER:
-        case WB_UNIT_FISH:
-        case WB_UNIT_SNAIL:
-        case WB_UNIT_DEFENDER2:
-            return true;
-        default:
-            return false;
+/* Lingo integer(): round to nearest, halves away from zero. */
+static int lingoInteger(double v) {
+    return (int) (v < 0.0 ? -floor(-v + 0.5) : floor(v + 0.5));
+}
+
+/* energyStatus(): the battery's charge rounded to a whole number (0-100). */
+static int energyStatusFromDeci(int deci) {
+    if (deci <= 0) {
+        return 0;
     }
+    return (deci + 5) / 10;
 }
 
-static WBDirection directionFromStep(int fromX, int fromY, int toX, int toY) {
-    if (toX < fromX) return WB_DIR_LEFT;
-    if (toX > fromX) return WB_DIR_RIGHT;
-    if (toY < fromY) return WB_DIR_UP;
-    return WB_DIR_DOWN;
+static int pileBatteryCount(const WBCell* c) {
+    return c->pile.energy < WB_MAX_PILE_BATTERIES ? c->pile.energy : WB_MAX_PILE_BATTERIES;
 }
 
-static int unitAnimFrame(WBUnitType unitType, float progress) {
-    switch (unitType) {
-        case WB_UNIT_TREEBOT: return (int)(progress * 6.0f) % 6;
-        case WB_UNIT_FREEZEBOT:
-        case WB_UNIT_DEFENDER:
-        case WB_UNIT_DEFENDER2:
-            return (int)(progress * 4.0f) % 4;
-        case WB_UNIT_REPAIRBOT:
-            return (int)(progress * 2.0f) % 2;
-        case WB_UNIT_FROG:    return (progress > 0.2f && progress < 0.8f) ? 1 : 0;
-        default: return 0;
-    }
+/* The pile's last battery: what its sprite shows and what is taken first. */
+static int pileLastBattery(const WBCell* c) {
+    int n = pileBatteryCount(c);
+    return n > 0 ? c->pileBatteries[n - 1] : -1;
 }
 
-static int unitAnimAssetId(WBUnitType unitType, WBDirection direction, bool waterVersion, float progress, const WBResourcePile* cargo, u8 actionAnim) {
-    int frame = unitAnimFrame(unitType, progress);
-    switch (unitType) {
+
+/* What a unit's getMember() picks this frame. moveIndex is pMoveIndex (1 at the start
+   of a step, 0 once it has landed); sliding says pMovePixelTime is set. */
+typedef struct WBUnitPose {
+    WBUnitType type;
+    WBDirection dir;
+    bool water;         /* the ".water" member set (waterversion units) */
+    bool tileWater;     /* the tile it stands on is water (the frog's hop rule) */
+    bool sliding;
+    float moveIndex;
+    bool full;          /* steamshovel with dirt/swamp, treebot with a tree: ".full" */
+    u8 action;          /* WB_UNIT_ANIM_*: the running pActionCycle, freeze or repair */
+    int actionFrame;    /* 1-based frame of that action */
+} WBUnitPose;
+
+static WBUnitPose unitStandPose(WBUnitType type, WBDirection dir, bool water) {
+    WBUnitPose p;
+    memset(&p, 0, sizeof(p));
+    p.type = type;
+    p.dir = dir;
+    p.water = water;
+    p.tileWater = water;
+    return p;
+}
+
+#define WB_DIR4(d, U, D, L, R) ((d) == WB_DIR_UP ? (U) : (d) == WB_DIR_DOWN ? (D) : (d) == WB_DIR_LEFT ? (L) : (R))
+
+/* Walk frame of the subclasses that count from 1.2: integer((1.2 - pMoveIndex) * n), 1..n. */
+static int walkFrameFrom12(float moveIndex, int n) {
+    int f = lingoInteger((1.2 - (double) moveIndex) * n);
+    if (f < 1) f = 1;
+    if (f > n) f = n;
+    return f;
+}
+
+static int unitPoseAssetId(const WBUnitPose* p) {
+    WBDirection d = p->dir;
+    switch (p->type) {
         case WB_UNIT_BUGGY:
-            switch (direction) {
-                case WB_DIR_UP: return ASSET_VEHICLE_BUGGY_UP;
-                case WB_DIR_DOWN: return ASSET_VEHICLE_BUGGY_DOWN;
-                case WB_DIR_LEFT: return ASSET_VEHICLE_BUGGY_LEFT;
-                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_BUGGY_RIGHT;
-            }
+            return WB_DIR4(d, ASSET_VEHICLE_BUGGY_UP, ASSET_VEHICLE_BUGGY_DOWN, ASSET_VEHICLE_BUGGY_LEFT, ASSET_VEHICLE_BUGGY_RIGHT);
         case WB_UNIT_DUCK:
-            if (waterVersion) {
-                switch (direction) {
-                    case WB_DIR_UP: return ASSET_VEHICLE_DUCK_WATER_UP;
-                    case WB_DIR_DOWN: return ASSET_VEHICLE_DUCK_WATER_DOWN;
-                    case WB_DIR_LEFT: return ASSET_VEHICLE_DUCK_WATER_LEFT;
-                    case WB_DIR_RIGHT: default: return ASSET_VEHICLE_DUCK_WATER_RIGHT;
-                }
+            if (p->water) {
+                return WB_DIR4(d, ASSET_VEHICLE_DUCK_WATER_UP, ASSET_VEHICLE_DUCK_WATER_DOWN, ASSET_VEHICLE_DUCK_WATER_LEFT, ASSET_VEHICLE_DUCK_WATER_RIGHT);
             }
-            switch (direction) {
-                case WB_DIR_UP: return ASSET_VEHICLE_DUCK_UP;
-                case WB_DIR_DOWN: return ASSET_VEHICLE_DUCK_DOWN;
-                case WB_DIR_LEFT: return ASSET_VEHICLE_DUCK_LEFT;
-                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_DUCK_RIGHT;
-            }
+            return WB_DIR4(d, ASSET_VEHICLE_DUCK_UP, ASSET_VEHICLE_DUCK_DOWN, ASSET_VEHICLE_DUCK_LEFT, ASSET_VEHICLE_DUCK_RIGHT);
         case WB_UNIT_DIRTBUGGY:
-            switch (direction) {
-                case WB_DIR_UP: return ASSET_VEHICLE_DIRTBUGGY_UP;
-                case WB_DIR_DOWN: return ASSET_VEHICLE_DIRTBUGGY_DOWN;
-                case WB_DIR_LEFT: return ASSET_VEHICLE_DIRTBUGGY_LEFT;
-                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_DIRTBUGGY_RIGHT;
-            }
+            return WB_DIR4(d, ASSET_VEHICLE_DIRTBUGGY_UP, ASSET_VEHICLE_DIRTBUGGY_DOWN, ASSET_VEHICLE_DIRTBUGGY_LEFT, ASSET_VEHICLE_DIRTBUGGY_RIGHT);
         case WB_UNIT_STEAMSHOVEL:
-            if (actionAnim == 1 || actionAnim == 2) {
-                switch (direction) {
-                    case WB_DIR_UP: return ASSET_VEHICLE_STEAMSHOVEL_UP_DIG;
-                    case WB_DIR_DOWN: return ASSET_VEHICLE_STEAMSHOVEL_DOWN_DIG;
-                    case WB_DIR_LEFT: return ASSET_VEHICLE_STEAMSHOVEL_LEFT_DIG;
-                    case WB_DIR_RIGHT: default: return ASSET_VEHICLE_STEAMSHOVEL_RIGHT_DIG;
-                }
+            /* ".dig" for 200 ms after digging or filling */
+            if (p->action == WB_UNIT_ANIM_DIG || p->action == WB_UNIT_ANIM_FILL) {
+                return WB_DIR4(d, ASSET_VEHICLE_STEAMSHOVEL_UP_DIG, ASSET_VEHICLE_STEAMSHOVEL_DOWN_DIG, ASSET_VEHICLE_STEAMSHOVEL_LEFT_DIG, ASSET_VEHICLE_STEAMSHOVEL_RIGHT_DIG);
             }
-            if (cargo && (cargo->red > 0 || cargo->blue > 0)) {
-                switch (direction) {
-                    case WB_DIR_UP: return ASSET_VEHICLE_STEAMSHOVEL_UP_FULL;
-                    case WB_DIR_DOWN: return ASSET_VEHICLE_STEAMSHOVEL_DOWN_FULL;
-                    case WB_DIR_LEFT: return ASSET_VEHICLE_STEAMSHOVEL_LEFT_FULL;
-                    case WB_DIR_RIGHT: default: return ASSET_VEHICLE_STEAMSHOVEL_RIGHT_FULL;
-                }
+            if (p->full) {
+                return WB_DIR4(d, ASSET_VEHICLE_STEAMSHOVEL_UP_FULL, ASSET_VEHICLE_STEAMSHOVEL_DOWN_FULL, ASSET_VEHICLE_STEAMSHOVEL_LEFT_FULL, ASSET_VEHICLE_STEAMSHOVEL_RIGHT_FULL);
             }
-            switch (direction) {
-                case WB_DIR_UP: return ASSET_VEHICLE_STEAMSHOVEL_UP;
-                case WB_DIR_DOWN: return ASSET_VEHICLE_STEAMSHOVEL_DOWN;
-                case WB_DIR_LEFT: return ASSET_VEHICLE_STEAMSHOVEL_LEFT;
-                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_STEAMSHOVEL_RIGHT;
-            }
+            return WB_DIR4(d, ASSET_VEHICLE_STEAMSHOVEL_UP, ASSET_VEHICLE_STEAMSHOVEL_DOWN, ASSET_VEHICLE_STEAMSHOVEL_LEFT, ASSET_VEHICLE_STEAMSHOVEL_RIGHT);
         case WB_UNIT_DUMPTRUCK:
-            switch (direction) {
-                case WB_DIR_UP: return ASSET_VEHICLE_DUMPTRUCK_UP;
-                case WB_DIR_DOWN: return ASSET_VEHICLE_DUMPTRUCK_DOWN;
-                case WB_DIR_LEFT: return ASSET_VEHICLE_DUMPTRUCK_LEFT;
-                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_DUMPTRUCK_RIGHT;
-            }
+            return WB_DIR4(d, ASSET_VEHICLE_DUMPTRUCK_UP, ASSET_VEHICLE_DUMPTRUCK_DOWN, ASSET_VEHICLE_DUMPTRUCK_LEFT, ASSET_VEHICLE_DUMPTRUCK_RIGHT);
         case WB_UNIT_FORKLIFT:
-            switch (direction) {
-                case WB_DIR_UP: return ASSET_VEHICLE_FORKLIFT_UP;
-                case WB_DIR_DOWN: return ASSET_VEHICLE_FORKLIFT_DOWN;
-                case WB_DIR_LEFT: return ASSET_VEHICLE_FORKLIFT_LEFT;
-                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_FORKLIFT_RIGHT;
-            }
+            return WB_DIR4(d, ASSET_VEHICLE_FORKLIFT_UP, ASSET_VEHICLE_FORKLIFT_DOWN, ASSET_VEHICLE_FORKLIFT_LEFT, ASSET_VEHICLE_FORKLIFT_RIGHT);
         case WB_UNIT_DOZER:
-            switch (direction) {
-                case WB_DIR_UP: return ASSET_VEHICLE_DOZER_UP;
-                case WB_DIR_DOWN: return ASSET_VEHICLE_DOZER_DOWN;
-                case WB_DIR_LEFT: return ASSET_VEHICLE_DOZER_LEFT;
-                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_DOZER_RIGHT;
-            }
+            return WB_DIR4(d, ASSET_VEHICLE_DOZER_UP, ASSET_VEHICLE_DOZER_DOWN, ASSET_VEHICLE_DOZER_LEFT, ASSET_VEHICLE_DOZER_RIGHT);
         case WB_UNIT_SPEEDBOAT:
-            switch (direction) {
-                case WB_DIR_UP: return ASSET_VEHICLE_SPEEDBOAT_UP;
-                case WB_DIR_DOWN: return ASSET_VEHICLE_SPEEDBOAT_DOWN;
-                case WB_DIR_LEFT: return ASSET_VEHICLE_SPEEDBOAT_LEFT;
-                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_SPEEDBOAT_RIGHT;
-            }
+            return WB_DIR4(d, ASSET_VEHICLE_SPEEDBOAT_UP, ASSET_VEHICLE_SPEEDBOAT_DOWN, ASSET_VEHICLE_SPEEDBOAT_LEFT, ASSET_VEHICLE_SPEEDBOAT_RIGHT);
         case WB_UNIT_TUGBOAT:
-            switch (direction) {
-                case WB_DIR_UP: return ASSET_VEHICLE_TUGBOAT_UP;
-                case WB_DIR_DOWN: return ASSET_VEHICLE_TUGBOAT_DOWN;
-                case WB_DIR_LEFT: return ASSET_VEHICLE_TUGBOAT_LEFT;
-                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_TUGBOAT_RIGHT;
-            }
+            return WB_DIR4(d, ASSET_VEHICLE_TUGBOAT_UP, ASSET_VEHICLE_TUGBOAT_DOWN, ASSET_VEHICLE_TUGBOAT_LEFT, ASSET_VEHICLE_TUGBOAT_RIGHT);
         case WB_UNIT_FREIGHTER:
-            switch (direction) {
-                case WB_DIR_UP: return ASSET_VEHICLE_FREIGHTER_UP;
-                case WB_DIR_DOWN: return ASSET_VEHICLE_FREIGHTER_DOWN;
-                case WB_DIR_LEFT: return ASSET_VEHICLE_FREIGHTER_LEFT;
-                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_FREIGHTER_RIGHT;
+            return WB_DIR4(d, ASSET_VEHICLE_FREIGHTER_UP, ASSET_VEHICLE_FREIGHTER_DOWN, ASSET_VEHICLE_FREIGHTER_LEFT, ASSET_VEHICLE_FREIGHTER_RIGHT);
+        case WB_UNIT_FROG: {
+            /* vehicle.frog: four quarter-steps; on water it hops on 2 and 4, on land on 1 and 3 */
+            bool jump = false;
+            if (p->sliding) {
+                int f = lingoInteger((1.0 - (double) p->moveIndex) * 4.0);
+                if (f < 1) f = 1;
+                if (f > 4) f -= 4;
+                jump = p->tileWater ? (f == 2 || f == 4) : (f == 1 || f == 3);
             }
-        case WB_UNIT_FROG:
-            if (waterVersion) {
-                switch (direction) {
-                    case WB_DIR_UP:    return frame ? ASSET_VEHICLE_FROG_WATER_UP_JUMP    : ASSET_VEHICLE_FROG_WATER_UP;
-                    case WB_DIR_DOWN:  return frame ? ASSET_VEHICLE_FROG_WATER_DOWN_JUMP  : ASSET_VEHICLE_FROG_WATER_DOWN;
-                    case WB_DIR_LEFT:  return frame ? ASSET_VEHICLE_FROG_WATER_LEFT_JUMP  : ASSET_VEHICLE_FROG_WATER_LEFT;
-                    case WB_DIR_RIGHT: default: return frame ? ASSET_VEHICLE_FROG_WATER_RIGHT_JUMP : ASSET_VEHICLE_FROG_WATER_RIGHT;
-                }
+            if (p->water) {
+                return jump ? WB_DIR4(d, ASSET_VEHICLE_FROG_WATER_UP_JUMP, ASSET_VEHICLE_FROG_WATER_DOWN_JUMP, ASSET_VEHICLE_FROG_WATER_LEFT_JUMP, ASSET_VEHICLE_FROG_WATER_RIGHT_JUMP)
+                            : WB_DIR4(d, ASSET_VEHICLE_FROG_WATER_UP, ASSET_VEHICLE_FROG_WATER_DOWN, ASSET_VEHICLE_FROG_WATER_LEFT, ASSET_VEHICLE_FROG_WATER_RIGHT);
             }
-            switch (direction) {
-                case WB_DIR_UP:    return frame ? ASSET_VEHICLE_FROG_UP_JUMP    : ASSET_VEHICLE_FROG_UP;
-                case WB_DIR_DOWN:  return frame ? ASSET_VEHICLE_FROG_DOWN_JUMP  : ASSET_VEHICLE_FROG_DOWN;
-                case WB_DIR_LEFT:  return frame ? ASSET_VEHICLE_FROG_LEFT_JUMP  : ASSET_VEHICLE_FROG_LEFT;
-                case WB_DIR_RIGHT: default: return frame ? ASSET_VEHICLE_FROG_RIGHT_JUMP : ASSET_VEHICLE_FROG_RIGHT;
-            }
+            return jump ? WB_DIR4(d, ASSET_VEHICLE_FROG_UP_JUMP, ASSET_VEHICLE_FROG_DOWN_JUMP, ASSET_VEHICLE_FROG_LEFT_JUMP, ASSET_VEHICLE_FROG_RIGHT_JUMP)
+                        : WB_DIR4(d, ASSET_VEHICLE_FROG_UP, ASSET_VEHICLE_FROG_DOWN, ASSET_VEHICLE_FROG_LEFT, ASSET_VEHICLE_FROG_RIGHT);
+        }
         case WB_UNIT_FISH:
-            switch (direction) {
-                case WB_DIR_UP:    return ASSET_VEHICLE_FISH_WATER_UP;
-                case WB_DIR_DOWN:  return ASSET_VEHICLE_FISH_WATER_DOWN;
-                case WB_DIR_LEFT:  return ASSET_VEHICLE_FISH_WATER_LEFT;
-                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_FISH_WATER_RIGHT;
-            }
+            return WB_DIR4(d, ASSET_VEHICLE_FISH_WATER_UP, ASSET_VEHICLE_FISH_WATER_DOWN, ASSET_VEHICLE_FISH_WATER_LEFT, ASSET_VEHICLE_FISH_WATER_RIGHT);
         case WB_UNIT_SNAIL:
-            switch (direction) {
-                case WB_DIR_UP:    return ASSET_VEHICLE_SNAIL_UP;
-                case WB_DIR_DOWN:  return ASSET_VEHICLE_SNAIL_DOWN;
-                case WB_DIR_LEFT:  return ASSET_VEHICLE_SNAIL_LEFT;
-                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_SNAIL_RIGHT;
-            }
+            return WB_DIR4(d, ASSET_VEHICLE_SNAIL_UP, ASSET_VEHICLE_SNAIL_DOWN, ASSET_VEHICLE_SNAIL_LEFT, ASSET_VEHICLE_SNAIL_RIGHT);
         case WB_UNIT_TREEBOT: {
             static const int upWalk[6]    = { ASSET_VEHICLE_TREEBOT_UP_WALK1,    ASSET_VEHICLE_TREEBOT_UP_WALK2,    ASSET_VEHICLE_TREEBOT_UP_WALK3,    ASSET_VEHICLE_TREEBOT_UP_WALK4,    ASSET_VEHICLE_TREEBOT_UP_WALK5,    ASSET_VEHICLE_TREEBOT_UP_WALK6    };
             static const int downWalk[6]  = { ASSET_VEHICLE_TREEBOT_DOWN_WALK1,  ASSET_VEHICLE_TREEBOT_DOWN_WALK2,  ASSET_VEHICLE_TREEBOT_DOWN_WALK3,  ASSET_VEHICLE_TREEBOT_DOWN_WALK4,  ASSET_VEHICLE_TREEBOT_DOWN_WALK5,  ASSET_VEHICLE_TREEBOT_DOWN_WALK6  };
@@ -2782,179 +2799,83 @@ static int unitAnimAssetId(WBUnitType unitType, WBDirection direction, bool wate
             static const int downFullWalk[4]  = { ASSET_VEHICLE_TREEBOT_DOWN_FULL_WALK1,  ASSET_VEHICLE_TREEBOT_DOWN_FULL_WALK2,  ASSET_VEHICLE_TREEBOT_DOWN_FULL_WALK3,  ASSET_VEHICLE_TREEBOT_DOWN_FULL_WALK4 };
             static const int leftFullWalk[4]  = { ASSET_VEHICLE_TREEBOT_LEFT_FULL_WALK1,  ASSET_VEHICLE_TREEBOT_LEFT_FULL_WALK2,  ASSET_VEHICLE_TREEBOT_LEFT_FULL_WALK3,  ASSET_VEHICLE_TREEBOT_LEFT_FULL_WALK4 };
             static const int rightFullWalk[4] = { ASSET_VEHICLE_TREEBOT_RIGHT_FULL_WALK1, ASSET_VEHICLE_TREEBOT_RIGHT_FULL_WALK2, ASSET_VEHICLE_TREEBOT_RIGHT_FULL_WALK3, ASSET_VEHICLE_TREEBOT_RIGHT_FULL_WALK4 };
-            bool hasTree = cargo && cargo->green > 0;
-            if (actionAnim == 3 || actionAnim == 4) {
-                int liftFrame = ((int)(osGetTime() / 180)) & 1;
-                if (actionAnim == 4) {
-                    liftFrame = 1 - liftFrame;
-                }
-                if (hasTree) {
-                    switch (direction) {
-                        case WB_DIR_UP:    return liftFrame == 0 ? ASSET_VEHICLE_TREEBOT_UP_FULL_LIFT1 : ASSET_VEHICLE_TREEBOT_UP_FULL_LIFT2;
-                        case WB_DIR_DOWN:  return liftFrame == 0 ? ASSET_VEHICLE_TREEBOT_DOWN_FULL_LIFT1 : ASSET_VEHICLE_TREEBOT_DOWN_FULL_LIFT2;
-                        case WB_DIR_LEFT:  return liftFrame == 0 ? ASSET_VEHICLE_TREEBOT_LEFT_FULL_LIFT1 : ASSET_VEHICLE_TREEBOT_LEFT_FULL_LIFT2;
-                        case WB_DIR_RIGHT: default: return liftFrame == 0 ? ASSET_VEHICLE_TREEBOT_RIGHT_FULL_LIFT1 : ASSET_VEHICLE_TREEBOT_RIGHT_FULL_LIFT2;
-                    }
-                }
-                switch (direction) {
-                    case WB_DIR_UP:    return liftFrame == 0 ? ASSET_VEHICLE_TREEBOT_UP_LIFT1 : ASSET_VEHICLE_TREEBOT_UP_LIFT2;
-                    case WB_DIR_DOWN:  return liftFrame == 0 ? ASSET_VEHICLE_TREEBOT_DOWN_LIFT1 : ASSET_VEHICLE_TREEBOT_DOWN_LIFT2;
-                    case WB_DIR_LEFT:  return liftFrame == 0 ? ASSET_VEHICLE_TREEBOT_LEFT_LIFT1 : ASSET_VEHICLE_TREEBOT_LEFT_LIFT2;
-                    case WB_DIR_RIGHT: default: return liftFrame == 0 ? ASSET_VEHICLE_TREEBOT_RIGHT_LIFT1 : ASSET_VEHICLE_TREEBOT_RIGHT_LIFT2;
+            if (p->sliding) {
+                if (p->full) {
+                    int f = walkFrameFrom12(p->moveIndex, 4) - 1;
+                    return WB_DIR4(d, upFullWalk[f], downFullWalk[f], leftFullWalk[f], rightFullWalk[f]);
+                } else {
+                    int f = walkFrameFrom12(p->moveIndex, 6) - 1;
+                    return WB_DIR4(d, upWalk[f], downWalk[f], leftWalk[f], rightWalk[f]);
                 }
             }
-            if (progress <= 0.0f) {
-                if (hasTree) {
-                    switch (direction) {
-                        case WB_DIR_UP:    return ASSET_VEHICLE_TREEBOT_UP_FULL;
-                        case WB_DIR_DOWN:  return ASSET_VEHICLE_TREEBOT_DOWN_FULL;
-                        case WB_DIR_LEFT:  return ASSET_VEHICLE_TREEBOT_LEFT_FULL;
-                        case WB_DIR_RIGHT: default: return ASSET_VEHICLE_TREEBOT_RIGHT_FULL;
-                    }
+            if (p->action == WB_UNIT_ANIM_UPROOT || p->action == WB_UNIT_ANIM_PLANT) {
+                /* uproot shows lift.1 then lift.2; plant runs it backwards */
+                int lift = p->action == WB_UNIT_ANIM_UPROOT ? p->actionFrame : 3 - p->actionFrame;
+                if (p->full) {
+                    return lift == 1 ? WB_DIR4(d, ASSET_VEHICLE_TREEBOT_UP_FULL_LIFT1, ASSET_VEHICLE_TREEBOT_DOWN_FULL_LIFT1, ASSET_VEHICLE_TREEBOT_LEFT_FULL_LIFT1, ASSET_VEHICLE_TREEBOT_RIGHT_FULL_LIFT1)
+                                     : WB_DIR4(d, ASSET_VEHICLE_TREEBOT_UP_FULL_LIFT2, ASSET_VEHICLE_TREEBOT_DOWN_FULL_LIFT2, ASSET_VEHICLE_TREEBOT_LEFT_FULL_LIFT2, ASSET_VEHICLE_TREEBOT_RIGHT_FULL_LIFT2);
                 }
-                switch (direction) {
-                    case WB_DIR_UP:    return ASSET_VEHICLE_TREEBOT_UP;
-                    case WB_DIR_DOWN:  return ASSET_VEHICLE_TREEBOT_DOWN;
-                    case WB_DIR_LEFT:  return ASSET_VEHICLE_TREEBOT_LEFT;
-                    case WB_DIR_RIGHT: default: return ASSET_VEHICLE_TREEBOT_RIGHT;
-                }
+                return lift == 1 ? WB_DIR4(d, ASSET_VEHICLE_TREEBOT_UP_LIFT1, ASSET_VEHICLE_TREEBOT_DOWN_LIFT1, ASSET_VEHICLE_TREEBOT_LEFT_LIFT1, ASSET_VEHICLE_TREEBOT_RIGHT_LIFT1)
+                                 : WB_DIR4(d, ASSET_VEHICLE_TREEBOT_UP_LIFT2, ASSET_VEHICLE_TREEBOT_DOWN_LIFT2, ASSET_VEHICLE_TREEBOT_LEFT_LIFT2, ASSET_VEHICLE_TREEBOT_RIGHT_LIFT2);
             }
-            if (hasTree) {
-                int fullFrame = (int)(progress * 4.0f) % 4;
-                switch (direction) {
-                    case WB_DIR_UP:    return upFullWalk[fullFrame];
-                    case WB_DIR_DOWN:  return downFullWalk[fullFrame];
-                    case WB_DIR_LEFT:  return leftFullWalk[fullFrame];
-                    case WB_DIR_RIGHT: default: return rightFullWalk[fullFrame];
-                }
+            if (p->full) {
+                return WB_DIR4(d, ASSET_VEHICLE_TREEBOT_UP_FULL, ASSET_VEHICLE_TREEBOT_DOWN_FULL, ASSET_VEHICLE_TREEBOT_LEFT_FULL, ASSET_VEHICLE_TREEBOT_RIGHT_FULL);
             }
-            switch (direction) {
-                case WB_DIR_UP:    return upWalk[frame];
-                case WB_DIR_DOWN:  return downWalk[frame];
-                case WB_DIR_LEFT:  return leftWalk[frame];
-                case WB_DIR_RIGHT: default: return rightWalk[frame];
-            }
+            return WB_DIR4(d, ASSET_VEHICLE_TREEBOT_UP, ASSET_VEHICLE_TREEBOT_DOWN, ASSET_VEHICLE_TREEBOT_LEFT, ASSET_VEHICLE_TREEBOT_RIGHT);
         }
         case WB_UNIT_REPAIRBOT:
-            if (progress > 0.0f) {
-                switch (direction) {
-                    case WB_DIR_UP:    return frame ? ASSET_VEHICLE_REPAIRBOT_UP_WALK2 : ASSET_VEHICLE_REPAIRBOT_UP_WALK1;
-                    case WB_DIR_DOWN:  return frame ? ASSET_VEHICLE_REPAIRBOT_DOWN_WALK2 : ASSET_VEHICLE_REPAIRBOT_DOWN_WALK1;
-                    case WB_DIR_LEFT:  return frame ? ASSET_VEHICLE_REPAIRBOT_LEFT_WALK2 : ASSET_VEHICLE_REPAIRBOT_LEFT_WALK1;
-                    case WB_DIR_RIGHT: default: return frame ? ASSET_VEHICLE_REPAIRBOT_RIGHT_WALK2 : ASSET_VEHICLE_REPAIRBOT_RIGHT_WALK1;
-                }
+            if (p->sliding) {
+                int f = walkFrameFrom12(p->moveIndex, 2);
+                return f == 1 ? WB_DIR4(d, ASSET_VEHICLE_REPAIRBOT_UP_WALK1, ASSET_VEHICLE_REPAIRBOT_DOWN_WALK1, ASSET_VEHICLE_REPAIRBOT_LEFT_WALK1, ASSET_VEHICLE_REPAIRBOT_RIGHT_WALK1)
+                              : WB_DIR4(d, ASSET_VEHICLE_REPAIRBOT_UP_WALK2, ASSET_VEHICLE_REPAIRBOT_DOWN_WALK2, ASSET_VEHICLE_REPAIRBOT_LEFT_WALK2, ASSET_VEHICLE_REPAIRBOT_RIGHT_WALK2);
             }
-            if (actionAnim == 5) {
-                int repairFrame = ((int)(osGetTime() / 120)) & 1;
-                switch (direction) {
-                    case WB_DIR_UP:    return repairFrame ? ASSET_VEHICLE_REPAIRBOT_UP_REPAIR2 : ASSET_VEHICLE_REPAIRBOT_UP_REPAIR1;
-                    case WB_DIR_DOWN:  return repairFrame ? ASSET_VEHICLE_REPAIRBOT_DOWN_REPAIR2 : ASSET_VEHICLE_REPAIRBOT_DOWN_REPAIR1;
-                    case WB_DIR_LEFT:  return repairFrame ? ASSET_VEHICLE_REPAIRBOT_LEFT_REPAIR2 : ASSET_VEHICLE_REPAIRBOT_LEFT_REPAIR1;
-                    case WB_DIR_RIGHT: default: return repairFrame ? ASSET_VEHICLE_REPAIRBOT_RIGHT_REPAIR2 : ASSET_VEHICLE_REPAIRBOT_RIGHT_REPAIR1;
-                }
+            if (p->action == WB_UNIT_ANIM_REPAIR) {
+                return p->actionFrame == 1 ? WB_DIR4(d, ASSET_VEHICLE_REPAIRBOT_UP_REPAIR1, ASSET_VEHICLE_REPAIRBOT_DOWN_REPAIR1, ASSET_VEHICLE_REPAIRBOT_LEFT_REPAIR1, ASSET_VEHICLE_REPAIRBOT_RIGHT_REPAIR1)
+                                           : WB_DIR4(d, ASSET_VEHICLE_REPAIRBOT_UP_REPAIR2, ASSET_VEHICLE_REPAIRBOT_DOWN_REPAIR2, ASSET_VEHICLE_REPAIRBOT_LEFT_REPAIR2, ASSET_VEHICLE_REPAIRBOT_RIGHT_REPAIR2);
             }
-            switch (direction) {
-                case WB_DIR_UP:    return ASSET_VEHICLE_REPAIRBOT_UP;
-                case WB_DIR_DOWN:  return ASSET_VEHICLE_REPAIRBOT_DOWN;
-                case WB_DIR_LEFT:  return ASSET_VEHICLE_REPAIRBOT_LEFT;
-                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_REPAIRBOT_RIGHT;
-            }
+            return WB_DIR4(d, ASSET_VEHICLE_REPAIRBOT_UP, ASSET_VEHICLE_REPAIRBOT_DOWN, ASSET_VEHICLE_REPAIRBOT_LEFT, ASSET_VEHICLE_REPAIRBOT_RIGHT);
         case WB_UNIT_DEFENDER:
+            /* vehicle.defender: frameNum = integer((1 - pMoveIndex) * 4), 1..4 (the attack
+               frames it shows standing have no sprites in the port's sheets) */
+            if (p->sliding) {
+                int f = lingoInteger((1.0 - (double) p->moveIndex) * 4.0);
+                if (f < 1) f = 1;
+                if (f > 4) f -= 4;
+                switch (d) {
+                    case WB_DIR_UP:   return ASSET_VEHICLE_DEFENDER_UP_WALK1 + (f - 1);
+                    case WB_DIR_DOWN: return ASSET_VEHICLE_DEFENDER_DOWN_WALK1 + (f - 1);
+                    case WB_DIR_LEFT: return ASSET_VEHICLE_DEFENDER_LEFT_WALK1 + (f - 1);
+                    default:          return ASSET_VEHICLE_DEFENDER_RIGHT_WALK1 + (f - 1);
+                }
+            }
+            return WB_DIR4(d, ASSET_VEHICLE_DEFENDER_UP, ASSET_VEHICLE_DEFENDER_DOWN, ASSET_VEHICLE_DEFENDER_LEFT, ASSET_VEHICLE_DEFENDER_RIGHT);
         case WB_UNIT_DEFENDER2:
-            if (progress > 0.0f) {
-                switch (direction) {
-                    case WB_DIR_UP:
-                        switch (frame) {
-                            case 0: return ASSET_VEHICLE_DEFENDER_UP_WALK1;
-                            case 1: return ASSET_VEHICLE_DEFENDER_UP_WALK2;
-                            case 2: return ASSET_VEHICLE_DEFENDER_UP_WALK3;
-                            default: return ASSET_VEHICLE_DEFENDER_UP_WALK4;
-                        }
-                    case WB_DIR_DOWN:
-                        switch (frame) {
-                            case 0: return ASSET_VEHICLE_DEFENDER_DOWN_WALK1;
-                            case 1: return ASSET_VEHICLE_DEFENDER_DOWN_WALK2;
-                            case 2: return ASSET_VEHICLE_DEFENDER_DOWN_WALK3;
-                            default: return ASSET_VEHICLE_DEFENDER_DOWN_WALK4;
-                        }
-                    case WB_DIR_LEFT:
-                        switch (frame) {
-                            case 0: return ASSET_VEHICLE_DEFENDER_LEFT_WALK1;
-                            case 1: return ASSET_VEHICLE_DEFENDER_LEFT_WALK2;
-                            case 2: return ASSET_VEHICLE_DEFENDER_LEFT_WALK3;
-                            default: return ASSET_VEHICLE_DEFENDER_LEFT_WALK4;
-                        }
-                    case WB_DIR_RIGHT:
-                    default:
-                        switch (frame) {
-                            case 0: return ASSET_VEHICLE_DEFENDER_RIGHT_WALK1;
-                            case 1: return ASSET_VEHICLE_DEFENDER_RIGHT_WALK2;
-                            case 2: return ASSET_VEHICLE_DEFENDER_RIGHT_WALK3;
-                            default: return ASSET_VEHICLE_DEFENDER_RIGHT_WALK4;
-                        }
+            /* vehicle.defender2 has no getMember of its own: no walk cycle */
+            return WB_DIR4(d, ASSET_VEHICLE_DEFENDER_UP, ASSET_VEHICLE_DEFENDER_DOWN, ASSET_VEHICLE_DEFENDER_LEFT, ASSET_VEHICLE_DEFENDER_RIGHT);
+        case WB_UNIT_FREEZEBOT:
+            /* attack.1/2 for 600 ms after freezing, else walk 1..4 (from 1.2), else stand */
+            if (p->action == WB_UNIT_ANIM_ATTACK) {
+                return p->actionFrame == 1 ? WB_DIR4(d, ASSET_VEHICLE_FREEZEBOT_UP_ATK1, ASSET_VEHICLE_FREEZEBOT_DOWN_ATK1, ASSET_VEHICLE_FREEZEBOT_LEFT_ATK1, ASSET_VEHICLE_FREEZEBOT_RIGHT_ATK1)
+                                           : WB_DIR4(d, ASSET_VEHICLE_FREEZEBOT_UP_ATK2, ASSET_VEHICLE_FREEZEBOT_DOWN_ATK2, ASSET_VEHICLE_FREEZEBOT_LEFT_ATK2, ASSET_VEHICLE_FREEZEBOT_RIGHT_ATK2);
+            }
+            if (p->sliding) {
+                int f = walkFrameFrom12(p->moveIndex, 4);
+                switch (d) {
+                    case WB_DIR_UP:   return ASSET_VEHICLE_FREEZEBOT_UP_WALK1 + (f - 1);
+                    case WB_DIR_DOWN: return ASSET_VEHICLE_FREEZEBOT_DOWN_WALK1 + (f - 1);
+                    case WB_DIR_LEFT: return ASSET_VEHICLE_FREEZEBOT_LEFT_WALK1 + (f - 1);
+                    default:          return ASSET_VEHICLE_FREEZEBOT_RIGHT_WALK1 + (f - 1);
                 }
             }
-            switch (direction) {
-                case WB_DIR_UP:    return ASSET_VEHICLE_DEFENDER_UP;
-                case WB_DIR_DOWN:  return ASSET_VEHICLE_DEFENDER_DOWN;
-                case WB_DIR_LEFT:  return ASSET_VEHICLE_DEFENDER_LEFT;
-                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_DEFENDER_RIGHT;
-            }
-        case WB_UNIT_FREEZEBOT: {
-            /* Use ATK frames when attacking (actionAnim used as attack flag), walk otherwise. */
-            bool attacking = (actionAnim != 0 && progress <= 0.0f);
-            if (progress > 0.0f) {
-                switch (direction) {
-                    case WB_DIR_UP:
-                        switch (frame) {
-                            case 0: return ASSET_VEHICLE_FREEZEBOT_UP_WALK1;
-                            case 1: return ASSET_VEHICLE_FREEZEBOT_UP_WALK2;
-                            case 2: return ASSET_VEHICLE_FREEZEBOT_UP_WALK3;
-                            default: return ASSET_VEHICLE_FREEZEBOT_UP_WALK4;
-                        }
-                    case WB_DIR_DOWN:
-                        switch (frame) {
-                            case 0: return ASSET_VEHICLE_FREEZEBOT_DOWN_WALK1;
-                            case 1: return ASSET_VEHICLE_FREEZEBOT_DOWN_WALK2;
-                            case 2: return ASSET_VEHICLE_FREEZEBOT_DOWN_WALK3;
-                            default: return ASSET_VEHICLE_FREEZEBOT_DOWN_WALK4;
-                        }
-                    case WB_DIR_LEFT:
-                        switch (frame) {
-                            case 0: return ASSET_VEHICLE_FREEZEBOT_LEFT_WALK1;
-                            case 1: return ASSET_VEHICLE_FREEZEBOT_LEFT_WALK2;
-                            case 2: return ASSET_VEHICLE_FREEZEBOT_LEFT_WALK3;
-                            default: return ASSET_VEHICLE_FREEZEBOT_LEFT_WALK4;
-                        }
-                    case WB_DIR_RIGHT:
-                    default:
-                        switch (frame) {
-                            case 0: return ASSET_VEHICLE_FREEZEBOT_RIGHT_WALK1;
-                            case 1: return ASSET_VEHICLE_FREEZEBOT_RIGHT_WALK2;
-                            case 2: return ASSET_VEHICLE_FREEZEBOT_RIGHT_WALK3;
-                            default: return ASSET_VEHICLE_FREEZEBOT_RIGHT_WALK4;
-                        }
-                }
-            }
-            if (attacking) {
-                int atkFrame = ((int)(osGetTime() / 200)) & 1;
-                switch (direction) {
-                    case WB_DIR_UP:    return atkFrame ? ASSET_VEHICLE_FREEZEBOT_UP_ATK2    : ASSET_VEHICLE_FREEZEBOT_UP_ATK1;
-                    case WB_DIR_DOWN:  return atkFrame ? ASSET_VEHICLE_FREEZEBOT_DOWN_ATK2  : ASSET_VEHICLE_FREEZEBOT_DOWN_ATK1;
-                    case WB_DIR_LEFT:  return atkFrame ? ASSET_VEHICLE_FREEZEBOT_LEFT_ATK2  : ASSET_VEHICLE_FREEZEBOT_LEFT_ATK1;
-                    case WB_DIR_RIGHT: default: return atkFrame ? ASSET_VEHICLE_FREEZEBOT_RIGHT_ATK2 : ASSET_VEHICLE_FREEZEBOT_RIGHT_ATK1;
-                }
-            }
-            switch (direction) {
-                case WB_DIR_UP:    return ASSET_VEHICLE_FREEZEBOT_UP;
-                case WB_DIR_DOWN:  return ASSET_VEHICLE_FREEZEBOT_DOWN;
-                case WB_DIR_LEFT:  return ASSET_VEHICLE_FREEZEBOT_LEFT;
-                case WB_DIR_RIGHT: default: return ASSET_VEHICLE_FREEZEBOT_RIGHT;
-            }
-        }
+            return WB_DIR4(d, ASSET_VEHICLE_FREEZEBOT_UP, ASSET_VEHICLE_FREEZEBOT_DOWN, ASSET_VEHICLE_FREEZEBOT_LEFT, ASSET_VEHICLE_FREEZEBOT_RIGHT);
         default:
-            return unitAssetId(unitType);
+            return unitAssetId(p->type);
     }
+}
+
+static int unitStandAssetId(WBUnitType type, WBDirection dir, bool water) {
+    WBUnitPose p = unitStandPose(type, dir, water);
+    return unitPoseAssetId(&p);
 }
 
 static int heroAssetIdForUnit(WBUnitType unitType) {
@@ -3077,435 +2998,8 @@ static int energyAssetForValue(int energyValue) {
     return ASSET_RESOURCE_ENERGY_DEAD;
 }
 
-static bool unitIsAdjacentToCharger(const AppState* app, int ux, int uy, WBUnitType unitType) {
-    static const int offsets[4][2] = {{1,0},{-1,0},{0,1},{0,-1}};
-    bool needGas, needMarina, needLab;
-    int i;
-    switch (unitType) {
-        case WB_UNIT_TUGBOAT:
-        case WB_UNIT_FREIGHTER:
-        case WB_UNIT_SPEEDBOAT:
-        case WB_UNIT_FISH:
-            needGas = false; needMarina = true; needLab = false; break;
-        case WB_UNIT_TREEBOT:
-        case WB_UNIT_REPAIRBOT:
-        case WB_UNIT_DEFENDER:
-        case WB_UNIT_DEFENDER2:
-        case WB_UNIT_FREEZEBOT:
-            needGas = false; needMarina = false; needLab = true; break;
-        default:
-            needGas = true; needMarina = false; needLab = false; break;
-    }
-    for (i = 0; i < 4; ++i) {
-        int nx = ux + offsets[i][0];
-        int ny = uy + offsets[i][1];
-        const WBCell* nc;
-        if (!inBounds(app, nx, ny)) continue;
-        nc = &app->map.cells[ny][nx];
-        if (nc->hasBuilding) {
-            if (needGas && (nc->buildingType == WB_BUILDING_GAS_STATION || nc->buildingType == WB_BUILDING_GARAGE)) return true;
-            if (needMarina && nc->buildingType == WB_BUILDING_MARINA) return true;
-            if (needLab && nc->buildingType == WB_BUILDING_ROBOT_LAB) return true;
-        }
-        if (nc->hasUnit && nc->unitType == WB_UNIT_REPAIRBOT && nc->unitEnergyDeci > 0 && needLab) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool findAdjacentCharger(AppState* app, int ux, int uy, WBUnitType unitType, int* outX, int* outY, bool* outIsRepairbot) {
-    static const int offsets[4][2] = {{1,0},{-1,0},{0,1},{0,-1}};
-    bool needGas, needMarina, needLab;
-    int i;
-    switch (unitType) {
-        case WB_UNIT_TUGBOAT:
-        case WB_UNIT_FREIGHTER:
-        case WB_UNIT_SPEEDBOAT:
-        case WB_UNIT_FISH:
-            needGas = false; needMarina = true; needLab = false; break;
-        case WB_UNIT_TREEBOT:
-        case WB_UNIT_REPAIRBOT:
-        case WB_UNIT_DEFENDER:
-        case WB_UNIT_DEFENDER2:
-        case WB_UNIT_FREEZEBOT:
-            needGas = false; needMarina = false; needLab = true; break;
-        default:
-            needGas = true; needMarina = false; needLab = false; break;
-    }
-    for (i = 0; i < 4; ++i) {
-        int nx = ux + offsets[i][0];
-        int ny = uy + offsets[i][1];
-        WBCell* nc;
-        if (!inBounds(app, nx, ny)) continue;
-        nc = &app->map.cells[ny][nx];
-        if (nc->hasBuilding) {
-            if (needGas && (nc->buildingType == WB_BUILDING_GAS_STATION || nc->buildingType == WB_BUILDING_GARAGE)) {
-                if (outX) *outX = nx;
-                if (outY) *outY = ny;
-                if (outIsRepairbot) *outIsRepairbot = false;
-                return true;
-            }
-            if (needMarina && nc->buildingType == WB_BUILDING_MARINA) {
-                if (outX) *outX = nx;
-                if (outY) *outY = ny;
-                if (outIsRepairbot) *outIsRepairbot = false;
-                return true;
-            }
-            if (needLab && nc->buildingType == WB_BUILDING_ROBOT_LAB) {
-                if (outX) *outX = nx;
-                if (outY) *outY = ny;
-                if (outIsRepairbot) *outIsRepairbot = false;
-                return true;
-            }
-        }
-        if (nc->hasUnit && nc->unitType == WB_UNIT_REPAIRBOT && nc->unitEnergyDeci > 0 && needLab) {
-            if (outX) *outX = nx;
-            if (outY) *outY = ny;
-            if (outIsRepairbot) *outIsRepairbot = true;
-            return true;
-        }
-    }
-    return false;
-}
-
-/* Factory: consumes an adjacent boulder or tree after 2 s, then produces 25 colored
-   bricks (color set by factoryColor) on that same neighbor tile.
-   Windmill: produces 1 energy brick on a random adjacent empty normal tile every 2 s,
-   but only when no energy brick already exists on an adjacent tile.
-   Garage:   produces 4 wheel bricks on a random adjacent empty normal tile every 2 s,
-   but only when no wheel brick already exists on an adjacent tile.
-   Nursery:  converts a random adjacent empty normal tile into a random tree every 2 s. */
 static void spawnWorldEffect(AppState* app, WBWorldEffectKind kind, int tileX, int tileY); /* forward decl */
 static void cleanupResourceCell(WBCell* cell); /* forward decl */
-static void tickBuildings(AppState* app) {
-    static const int dx4[4] = {1, -1, 0,  0};
-    static const int dy4[4] = {0,  0, -1, 1};
-    int y;
-    int x;
-    u64 now = osGetTime();
-    for (y = 0; y < app->map.height; ++y) {
-        for (x = 0; x < app->map.width; ++x) {
-            WBCell* cell = &app->map.cells[y][x];
-            if (!cell->hasBuilding) {
-                app->buildingTickMs[y][x] = 0;
-                continue;
-            }
-            switch (cell->buildingType) {
-
-            case WB_BUILDING_FACTORY: {
-                /* WB2 config: energy[#make]:7.5 — each production cycle costs 7.5% (75/1000).
-                   If the factory is out of energy, it auto-consumes an adjacent energy brick
-                   to recharge (players can refuel by dropping energy bricks next to it). */
-                int fi;
-                int foundX = -1;
-                int foundY = -1;
-                bool foundBoulder = false;
-
-                /* Initialise energy if this is the first tick (legacy maps). */
-                if (cell->buildingEnergy <= 0) {
-                    /* Try to consume an adjacent energy brick to recharge */
-                    int ei;
-                    for (ei = 0; ei < 4; ++ei) {
-                        int ex = x + dx4[ei];
-                        int ey = y + dy4[ei];
-                        WBCell* ec;
-                        if (!inBounds(app, ex, ey)) continue;
-                        ec = &app->map.cells[ey][ex];
-                        if (ec->hasResource && !ec->resourceIsPlan && ec->pile.energy > 0) {
-                            ec->pile.energy--;
-                            cell->buildingEnergy = 1000;
-                            cleanupResourceCell(ec);
-                            spawnWorldEffect(app, WB_WORLD_EFFECT_TAKE_APART_CLOUD, ex, ey);
-                            break;
-                        }
-                    }
-                    if (cell->buildingEnergy <= 0) {
-                        app->buildingTickMs[y][x] = 0;
-                        break; /* no energy, dormant */
-                    }
-                }
-
-                /* Find the first adjacent boulder (monster) or tree terrain */
-                for (fi = 0; fi < 4 && foundX < 0; ++fi) {
-                    int nx = x + dx4[fi];
-                    int ny = y + dy4[fi];
-                    int mi2;
-                    WBTerrainType tt;
-                    if (!inBounds(app, nx, ny)) {
-                        continue;
-                    }
-                    /* Check for an active, non-dying boulder monster */
-                    for (mi2 = 0; mi2 < g_monsterCount && foundX < 0; ++mi2) {
-                        WBMonsterState* ms2 = &g_monsters[mi2];
-                        if (ms2->active && !ms2->dying && ms2->type == WB_MONSTER_BOULDER
-                                && ms2->col == nx && ms2->row == ny) {
-                            foundX = nx;
-                            foundY = ny;
-                            foundBoulder = true;
-                        }
-                    }
-                    if (foundX >= 0) {
-                        break;
-                    }
-                    /* Check for tree terrain */
-                    tt = app->map.cells[ny][nx].terrain;
-                    if (tt == WB_TERRAIN_TREE || tt == WB_TERRAIN_TREE2 ||
-                            tt == WB_TERRAIN_TREE3 || tt == WB_TERRAIN_TREE4) {
-                        foundX = nx;
-                        foundY = ny;
-                    }
-                }
-                if (foundX < 0) {
-                    app->buildingTickMs[y][x] = 0;
-                    break;
-                }
-                if (app->buildingTickMs[y][x] == 0) {
-                    app->buildingTickMs[y][x] = now;
-                    break;
-                }
-                if ((now - app->buildingTickMs[y][x]) < 2000ULL) {
-                    break;
-                }
-                /* Timer fired: consume the boulder or tree */
-                app->buildingTickMs[y][x] = 0;
-                /* Deduct factory energy for this production cycle (7.5% = 75/1000) */
-                cell->buildingEnergy -= 75;
-                if (cell->buildingEnergy < 0) cell->buildingEnergy = 0;
-                if (foundBoulder) {
-                    int mi2;
-                    for (mi2 = 0; mi2 < g_monsterCount; ++mi2) {
-                        WBMonsterState* ms2 = &g_monsters[mi2];
-                        if (ms2->active && !ms2->dying && ms2->type == WB_MONSTER_BOULDER
-                                && ms2->col == foundX && ms2->row == foundY) {
-                            ms2->active = false;
-                            app->map.cells[foundY][foundX].hasMonster = false;
-                            app->map.cells[foundY][foundX].monsterType = WB_MONSTER_NONE;
-                            spawnWorldEffect(app, WB_WORLD_EFFECT_TAKE_APART_CLOUD, foundX, foundY);
-                            playSfxClipWorld(app, &app->sfxDisassemble);
-                            break;
-                        }
-                    }
-                } else {
-                    app->map.cells[foundY][foundX].terrain = WB_TERRAIN_NORMAL;
-                    spawnWorldEffect(app, WB_WORLD_EFFECT_TAKE_APART_CLOUD, foundX, foundY);
-                    playSfxClipWorld(app, &app->sfxDisassemble);
-                }
-                /* Produce 25 colored bricks on that tile */
-                {
-                    /* 0=RED, 1=YELLOW, 2=GREEN, 3=BLUE, 4=WHITE */
-                    WBCell* tc = &app->map.cells[foundY][foundX];
-                    int fci = (cell->factoryColor < 0 || cell->factoryColor > 4) ? 0 : cell->factoryColor;
-                    if (!tc->hasResource || tc->resourceIsPlan) {
-                        tc->hasResource = true;
-                        tc->resourceIsPlan = false;
-                        memset(&tc->pile, 0, sizeof(tc->pile));
-                    }
-                    switch (fci) {
-                        case 0: tc->pile.red    += 25; if (tc->pile.red    > 100) tc->pile.red    = 100; break;
-                        case 1: tc->pile.yellow += 25; if (tc->pile.yellow > 100) tc->pile.yellow = 100; break;
-                        case 2: tc->pile.green  += 25; if (tc->pile.green  > 100) tc->pile.green  = 100; break;
-                        case 3: tc->pile.blue   += 25; if (tc->pile.blue   > 100) tc->pile.blue   = 100; break;
-                        case 4: tc->pile.white  += 25; if (tc->pile.white  > 100) tc->pile.white  = 100; break;
-                        default: break;
-                    }
-                }
-                break;
-            }
-
-            case WB_BUILDING_WINDMILL: {
-                /* Find adjacent empty normal tiles; check for existing adjacent energy */
-                int wi;
-                bool hasAdjEnergy = false;
-                int emptyX[4];
-                int emptyY[4];
-                int emptyCount = 0;
-                for (wi = 0; wi < 4; ++wi) {
-                    int nx = x + dx4[wi];
-                    int ny = y + dy4[wi];
-                    const WBCell* nc;
-                    if (!inBounds(app, nx, ny)) {
-                        continue;
-                    }
-                    nc = &app->map.cells[ny][nx];
-                    if (nc->hasResource && !nc->resourceIsPlan && nc->pile.energy > 0) {
-                        hasAdjEnergy = true;
-                        break;
-                    }
-                    if (nc->terrain == WB_TERRAIN_NORMAL && !nc->hasUnit && !nc->hasBuilding
-                            && !activeMonsterAt(NULL, ny, nx) && !nc->hasResource) {
-                        emptyX[emptyCount] = nx;
-                        emptyY[emptyCount] = ny;
-                        ++emptyCount;
-                    }
-                }
-                if (hasAdjEnergy || emptyCount == 0) {
-                    app->buildingTickMs[y][x] = 0;
-                    break;
-                }
-                if (app->buildingTickMs[y][x] == 0) {
-                    app->buildingTickMs[y][x] = now;
-                    break;
-                }
-                if ((now - app->buildingTickMs[y][x]) < 2000ULL) {
-                    break;
-                }
-                app->buildingTickMs[y][x] = 0;
-                {
-                    int pick = (int)(now % (u64)emptyCount);
-                    WBCell* tc = &app->map.cells[emptyY[pick]][emptyX[pick]];
-                    tc->hasResource = true;
-                    tc->resourceIsPlan = false;
-                    memset(&tc->pile, 0, sizeof(tc->pile));
-                    tc->pile.energy = 1;
-                    tc->pileEnergyValue = 100;
-                }
-                break;
-            }
-
-            case WB_BUILDING_GARAGE: {
-                /* Find adjacent empty normal tiles; check for existing adjacent wheel bricks */
-                int gi;
-                bool hasAdjWheels = false;
-                int garEmptyX[4];
-                int garEmptyY[4];
-                int garEmptyCount = 0;
-                for (gi = 0; gi < 4; ++gi) {
-                    int nx = x + dx4[gi];
-                    int ny = y + dy4[gi];
-                    const WBCell* nc;
-                    if (!inBounds(app, nx, ny)) {
-                        continue;
-                    }
-                    nc = &app->map.cells[ny][nx];
-                    if (nc->hasResource && !nc->resourceIsPlan && nc->pile.wheel > 0) {
-                        hasAdjWheels = true;
-                        break;
-                    }
-                    if (nc->terrain == WB_TERRAIN_NORMAL && !nc->hasUnit && !nc->hasBuilding
-                            && !activeMonsterAt(NULL, ny, nx) && !nc->hasResource) {
-                        garEmptyX[garEmptyCount] = nx;
-                        garEmptyY[garEmptyCount] = ny;
-                        ++garEmptyCount;
-                    }
-                }
-                if (hasAdjWheels || garEmptyCount == 0) {
-                    app->buildingTickMs[y][x] = 0;
-                    break;
-                }
-                if (app->buildingTickMs[y][x] == 0) {
-                    app->buildingTickMs[y][x] = now;
-                    break;
-                }
-                if ((now - app->buildingTickMs[y][x]) < 2000ULL) {
-                    break;
-                }
-                app->buildingTickMs[y][x] = 0;
-                {
-                    int pick = (int)(now % (u64)garEmptyCount);
-                    WBCell* tc = &app->map.cells[garEmptyY[pick]][garEmptyX[pick]];
-                    tc->hasResource = true;
-                    tc->resourceIsPlan = false;
-                    memset(&tc->pile, 0, sizeof(tc->pile));
-                    tc->pile.wheel = 4;
-                }
-                break;
-            }
-
-            case WB_BUILDING_NURSERY: {
-                /* Find adjacent empty normal tiles; convert one to a random tree type */
-                static const WBTerrainType s_nurseryTreeTypes[4] = {
-                    WB_TERRAIN_TREE, WB_TERRAIN_TREE2, WB_TERRAIN_TREE3, WB_TERRAIN_TREE4
-                };
-                int ni;
-                int nurEmptyX[4];
-                int nurEmptyY[4];
-                int nurEmptyCount = 0;
-                for (ni = 0; ni < 4; ++ni) {
-                    int nx = x + dx4[ni];
-                    int ny = y + dy4[ni];
-                    const WBCell* nc;
-                    if (!inBounds(app, nx, ny)) {
-                        continue;
-                    }
-                    nc = &app->map.cells[ny][nx];
-                    if (nc->terrain == WB_TERRAIN_NORMAL && !nc->hasUnit && !nc->hasBuilding
-                            && !activeMonsterAt(NULL, ny, nx) && !nc->hasResource) {
-                        nurEmptyX[nurEmptyCount] = nx;
-                        nurEmptyY[nurEmptyCount] = ny;
-                        ++nurEmptyCount;
-                    }
-                }
-                if (nurEmptyCount == 0) {
-                    app->buildingTickMs[y][x] = 0;
-                    break;
-                }
-                if (app->buildingTickMs[y][x] == 0) {
-                    app->buildingTickMs[y][x] = now;
-                    break;
-                }
-                if ((now - app->buildingTickMs[y][x]) < 2000ULL) {
-                    break;
-                }
-                app->buildingTickMs[y][x] = 0;
-                {
-                    int pick = (int)(now % (u64)nurEmptyCount);
-                    int treePick = (int)((now / 7) % 4);
-                    WBCell* tc = &app->map.cells[nurEmptyY[pick]][nurEmptyX[pick]];
-                    tc->terrain = s_nurseryTreeTypes[treePick];
-                }
-                break;
-            }
-
-            default:
-                app->buildingTickMs[y][x] = 0;
-                break;
-            }
-        }
-    }
-}
-
-static void tickUnitRecharging(AppState* app) {
-    int y;
-    int x;
-    u64 now = osGetTime();
-    for (y = 0; y < app->map.height; ++y) {
-        for (x = 0; x < app->map.width; ++x) {
-            WBCell* cell = &app->map.cells[y][x];
-            int chargerX;
-            int chargerY;
-            bool chargerIsRepairbot = false;
-            if (!cell->hasUnit || cell->unitEnergyDeci >= 1000) {
-                app->unitRechargeTickMs[y][x] = 0;
-                continue;
-            }
-            if (!findAdjacentCharger(app, x, y, cell->unitType, &chargerX, &chargerY, &chargerIsRepairbot)) {
-                app->unitRechargeTickMs[y][x] = 0;
-                continue;
-            }
-            if (app->unitRechargeTickMs[y][x] == 0) {
-                app->unitRechargeTickMs[y][x] = now;
-                continue;
-            }
-            if ((now - app->unitRechargeTickMs[y][x]) < 300) {
-                continue;
-            }
-            app->unitRechargeTickMs[y][x] = now;
-            cell->unitEnergyDeci += 60;
-            if (cell->unitEnergyDeci > 1000) {
-                cell->unitEnergyDeci = 1000;
-            }
-            cell->unitEnergy = (cell->unitEnergyDeci + 9) / 10;
-            if (chargerIsRepairbot && inBounds(app, chargerX, chargerY)) {
-                WBCell* chargerCell = &app->map.cells[chargerY][chargerX];
-                chargerCell->unitDirection = directionFromStep(chargerX, chargerY, x, y);
-                app->unitActionAnim[chargerY][chargerX] = WB_UNIT_ANIM_REPAIR;
-                app->unitActionUntilMs[chargerY][chargerX] = now + 350;
-            }
-        }
-    }
-}
-
 static void drawUnitEnergyBadge(AppState* app, int energyDeci, float unitX, float unitY) {
     /* Charging animation: cycle ASSET_UI_ENERGY_ICON at ~230ms per frame.
        Only possible for stationary units (we don't have position in moving path here),
@@ -3539,33 +3033,6 @@ static void drawUnitEnergyBadge(AppState* app, int energyDeci, float unitX, floa
                 g_objectAnchors[assetId].y);
         }
     }
-}
-
-/* Variant that also draws a charging animation when the unit is adjacent to a charger. */
-static void drawUnitEnergyBadgeAt(AppState* app, int energyDeci, float unitX, float unitY, int cellX, int cellY, WBUnitType unitType) {
-    if (energyDeci > 0 && energyDeci < 1000 && unitIsAdjacentToCharger(app, cellX, cellY, unitType)) {
-        /* Cycling animation: icon.charging.0/1/2 @ ~230ms each. */
-        int frame = (int)(osGetTime() / 230) % 3;
-        int idx = (frame == 0) ? WB_EXTRA_UI_CHARGE_0_IDX :
-                  (frame == 1) ? WB_EXTRA_UI_CHARGE_1_IDX : WB_EXTRA_UI_CHARGE_2_IDX;
-        C2D_Image chargeImg = getWorldbuilderExtraImage(app, idx);
-        if (chargeImg.subtex) {
-            drawAnchoredImage(chargeImg,
-                unitX + (12.0f * DIRECTOR_SCALE),
-                unitY + (8.0f * DIRECTOR_SCALE),
-                DIRECTOR_SCALE,
-                chargeImg.subtex->width * 0.5f,
-                chargeImg.subtex->height * 0.5f);
-        } else {
-            int assetId = (frame == 0) ? ASSET_UI_ENERGY_ICON : ASSET_UI_ENERGY_STRIPE_BG;
-            C2D_DrawImageAt(getImage(app, assetId),
-                unitX + (12.0f * DIRECTOR_SCALE),
-                unitY + (8.0f * DIRECTOR_SCALE),
-                0.0f, NULL, DIRECTOR_SCALE, DIRECTOR_SCALE);
-        }
-        return;
-    }
-    drawUnitEnergyBadge(app, energyDeci, unitX, unitY);
 }
 
 static int pileEntryAmount(const WBResourcePile* pile, int kind) {
@@ -3625,34 +3092,6 @@ static bool unitSupportsPickDrop(WBUnitType unitType) {
     }
 }
 
-static bool unitSupportsDigFill(WBUnitType unitType) {
-    return unitType == WB_UNIT_STEAMSHOVEL;
-}
-
-static bool unitSupportsTransplant(WBUnitType unitType) {
-    return unitType == WB_UNIT_TREEBOT;
-}
-
-static bool unitSupportsPush(WBUnitType unitType) {
-    return unitType == WB_UNIT_DOZER;
-}
-
-static bool steamshovelHasFillCargo(const WBCell* cell) {
-    return cell && (cell->unitCargo.red > 0 || cell->unitCargo.blue > 0);
-}
-
-static void setSelectedUnitActionAnim(AppState* app, u8 anim, u64 durationMs) {
-    if (!app || !app->hasSelection || !inBounds(app, app->selectedX, app->selectedY)) {
-        return;
-    }
-    app->unitActionAnim[app->selectedY][app->selectedX] = anim;
-    app->unitActionUntilMs[app->selectedY][app->selectedX] = osGetTime() + durationMs;
-}
-
-static bool treebotHasSapling(const WBCell* cell) {
-    return cell && (cell->unitCargo.green > 0);
-}
-
 static int unitCarryCapacity(WBUnitType unitType) {
     switch (unitType) {
         case WB_UNIT_BUGGY:     return 3;
@@ -3675,6 +3114,7 @@ static const char* actionModeName(WBActionMode mode) {
         case WB_ACTION_UPROOT: return "uproot";
         case WB_ACTION_PLANT: return "plant";
         case WB_ACTION_PUSH: return "push";
+        case WB_ACTION_ATTACK: return "attack";
         case WB_ACTION_MOVE:
         default: return "move";
     }
@@ -3699,7 +3139,7 @@ static int unitMoveCostDeci(WBUnitType unitType) {
         case WB_UNIT_REPAIRBOT:  return 7;
         case WB_UNIT_DEFENDER:   return 10;
         case WB_UNIT_DEFENDER2:  return 10;
-        case WB_UNIT_FREEZEBOT:  return 10;
+        case WB_UNIT_FREEZEBOT:  return 12;   /* WB2 #move:1.2 */
         default: return 0;
     }
 }
@@ -3863,261 +3303,6 @@ static void spawnBuildCloudEffect(AppState* app, int tileX, int tileY, const WBR
     }
 }
 
-static void clearSelectionAt(AppState* app, int x, int y) {
-    if (app->hasSelection && app->selectedMover < 0 && app->selectedX == x && app->selectedY == y) {
-        app->hasSelection = false;
-        app->selectedMover = -1;
-        app->infoOverlayOpen = false;
-        app->actionMode = WB_ACTION_MOVE;
-    }
-}
-
-static void disassembleUnitAtCell(AppState* app, int x, int y) {
-    WBCell* cell;
-    const WBResourcePile* recipe;
-
-    if (!inBounds(app, x, y)) {
-        return;
-    }
-
-    cell = &app->map.cells[y][x];
-    if (!cell->hasUnit) {
-        return;
-    }
-
-    recipe = wbUnitRecipe(cell->unitType);
-    if (!recipe) {
-        return;
-    }
-
-    if (!cell->hasResource || cell->resourceIsPlan) {
-        cell->hasResource = true;
-        cell->resourceIsPlan = false;
-        memset(&cell->pile, 0, sizeof(cell->pile));
-        cell->pileEnergyValue = 0;  /* reset stale charge from any previous pile */
-    }
-
-    addPile(&cell->pile, recipe);
-    addPile(&cell->pile, &cell->unitCargo);
-    if (recipe->energy > 0) {
-        /* Take the MAX so an existing high-value battery on the pile is not downgraded. */
-        int newVal = cell->unitEnergy;
-        if (newVal > cell->pileEnergyValue) {
-            cell->pileEnergyValue = newVal;
-        }
-    }
-
-    spawnWorldEffect(app, WB_WORLD_EFFECT_TAKE_APART_CLOUD, x, y);
-    playSfxClip(app, &app->sfxDisassemble);
-
-    cell->hasUnit = false;
-    cell->unitType = WB_UNIT_NONE;
-    cell->unitEnergy = 0;
-    cell->unitEnergyDeci = 0;
-    memset(&cell->unitCargo, 0, sizeof(cell->unitCargo));
-    clearSelectionAt(app, x, y);
-}
-
-static void disassembleBuildingAtCell(AppState* app, int x, int y) {
-    WBCell* cell;
-    const WBResourcePile* recipe;
-    if (!inBounds(app, x, y)) {
-        return;
-    }
-    cell = &app->map.cells[y][x];
-    if (!cell->hasBuilding) {
-        return;
-    }
-    recipe = wbBuildingRecipe(cell->buildingType);
-    if (!recipe) {
-        return;
-    }
-    if (!cell->hasResource || cell->resourceIsPlan) {
-        cell->hasResource = true;
-        cell->resourceIsPlan = false;
-        memset(&cell->pile, 0, sizeof(cell->pile));
-    }
-    addPile(&cell->pile, recipe);
-    spawnWorldEffect(app, WB_WORLD_EFFECT_TAKE_APART_CLOUD, x, y);
-    playSfxClip(app, &app->sfxDisassemble);
-    cell->hasBuilding = false;
-    cell->buildingType = WB_BUILDING_NONE;
-    clearSelectionAt(app, x, y);
-}
-
-static void queueUnitBreak(AppState* app, int x, int y) {
-    int slot = -1;
-    int i;
-
-    for (i = 0; i < WB_MAX_PENDING_UNIT_BREAKS; ++i) {
-        if (app->pendingUnitBreaks[i].active &&
-            app->pendingUnitBreaks[i].tileX == x &&
-            app->pendingUnitBreaks[i].tileY == y) {
-            return;
-        }
-        if (slot < 0 && !app->pendingUnitBreaks[i].active) {
-            slot = i;
-        }
-    }
-
-    if (slot < 0) {
-        return;
-    }
-
-    app->pendingUnitBreaks[slot].active = true;
-    app->pendingUnitBreaks[slot].tileX = x;
-    app->pendingUnitBreaks[slot].tileY = y;
-    app->pendingUnitBreaks[slot].resolveMs = osGetTime() + WB_DAMAGE_EFFECT_DURATION_MS;
-}
-
-static void resolvePendingUnitBreaks(AppState* app) {
-    int i;
-    u64 now = osGetTime();
-
-    for (i = 0; i < WB_MAX_PENDING_UNIT_BREAKS; ++i) {
-        WBPendingUnitBreak* pending = &app->pendingUnitBreaks[i];
-        if (!pending->active || now < pending->resolveMs) {
-            continue;
-        }
-        if (inBounds(app, pending->tileX, pending->tileY)) {
-            WBCell* cell = &app->map.cells[pending->tileY][pending->tileX];
-            if (cell->hasUnit && cell->unitEnergyDeci <= 0) {
-                disassembleUnitAtCell(app, pending->tileX, pending->tileY);
-            }
-        }
-        pending->active = false;
-    }
-}
-
-/* Shield factors reduce damage received by the entity.
-   Original Lingo: damage = integer(damage * shield)
-   Values from WB1/WB2 config: unit shield applies vs monster attacks on units,
-   building shield applies vs monster attacks on buildings,
-   monster shield applies vs defender/guard tower attacks on monsters. */
-static float unitShieldFactor(WBUnitType t) {
-    switch (t) {
-        case WB_UNIT_DEFENDER:   return 0.05f;
-        case WB_UNIT_DEFENDER2:  return 0.05f;
-        case WB_UNIT_SPEEDBOAT:  return 0.05f;
-        default:                 return 1.0f;
-    }
-}
-
-static float buildingShieldFactor(WBBuildingType t) {
-    return (t == WB_BUILDING_GUARD_TOWER) ? 0.02f : 1.0f;
-}
-
-static float monsterShieldFactor(WBMonsterType t) {
-    switch (t) {
-        case WB_MONSTER_CRAB:       return 0.1f;
-        case WB_MONSTER_WATER_CRAB: return 0.1f;
-        case WB_MONSTER_GATOR:      return 0.1f;
-        case WB_MONSTER_SCORPION:   return 0.045f;
-        case WB_MONSTER_SHARK:      return 0.05f;
-        case WB_MONSTER_TREX:       return 0.02f;
-        case WB_MONSTER_LION:       return 0.03f;
-        case WB_MONSTER_BOULDER:    return 0.00000001f;
-        default:                    return 1.0f;
-    }
-}
-
-static void applyUnitDamageAtCell(AppState* app, int x, int y, int damageDeci, bool playSound) {
-    WBCell* cell;
-
-    if (!inBounds(app, x, y) || damageDeci <= 0) {
-        return;
-    }
-
-    cell = &app->map.cells[y][x];
-    if (!cell->hasUnit) {
-        return;
-    }
-
-    /* Apply unit shield: reduce incoming damage per original config (e.g. Defender 0.05) */
-    damageDeci = (int)(damageDeci * unitShieldFactor(cell->unitType) + 0.5f);
-    if (damageDeci <= 0) {
-        return;
-    }
-
-    cell->unitEnergyDeci -= damageDeci;
-    if (cell->unitEnergyDeci < 0) {
-        cell->unitEnergyDeci = 0;
-    }
-    cell->unitEnergy = (cell->unitEnergyDeci + 9) / 10;
-
-    spawnWorldEffect(app, WB_WORLD_EFFECT_DAMAGE_SMALL, x, y);
-    if (playSound) {
-        playSfxClipWorld(app, &app->sfxDamage);
-    }
-    if (cell->unitEnergyDeci <= 0) {
-        queueUnitBreak(app, x, y);
-    }
-}
-
-static void applyBuildingDamageAtCell(AppState* app, int x, int y, int damage, bool playSound) {
-    WBCell* cell;
-
-    if (!inBounds(app, x, y) || damage <= 0) {
-        return;
-    }
-
-    cell = &app->map.cells[y][x];
-    if (!cell->hasBuilding) {
-        return;
-    }
-
-    /* Apply building shield: e.g. Guard Tower 0.02 — nearly indestructible vs crabs */
-    damage = (int)(damage * buildingShieldFactor(cell->buildingType) + 0.5f);
-    if (damage <= 0) {
-        return;
-    }
-
-    cell->buildingHp -= damage;
-    if (cell->buildingHp < 0) {
-        cell->buildingHp = 0;
-    }
-
-    spawnWorldEffect(app, WB_WORLD_EFFECT_DAMAGE_SMALL, x, y);
-    if (playSound) {
-        playSfxClipWorld(app, &app->sfxDamage);
-    }
-    if (cell->buildingHp <= 0) {
-        spawnWorldEffect(app, WB_WORLD_EFFECT_TAKE_APART_CLOUD, x, y);
-        playSfxClipWorld(app, &app->sfxDisassemble);
-        cell->hasBuilding = false;
-        cell->buildingType = WB_BUILDING_NONE;
-        cell->buildingHp = 0;
-    }
-}
-
-static void damageMonster(AppState* app, WBMonsterState* monster, int damage, bool playSound) {
-    if (!monster || !monster->active || monster->dying || damage <= 0) {
-        return;
-    }
-
-    /* Apply monster shield: e.g. T-Rex 0.02, Crab/Gator 0.1, Boulder ~0 */
-    damage = (int)(damage * monsterShieldFactor(monster->type) + 0.5f);
-    if (damage <= 0) {
-        return;
-    }
-
-    monster->hp -= damage;
-    if (monster->hp < 0) {
-        monster->hp = 0;
-    }
-
-    spawnWorldEffect(app, WB_WORLD_EFFECT_DAMAGE_SMALL, monster->col, monster->row);
-    if (playSound) {
-        playSfxClipWorld(app, &app->sfxDamage);
-    }
-
-    if (monster->hp <= 0) {
-        monster->dying = true;
-        monster->breakResolveMs = osGetTime() + WB_DAMAGE_EFFECT_DURATION_MS;
-        monster->isMoving = false;
-    }
-}
-
 static void drawWorldEffectsBottom(AppState* app) {
     int i;
     u64 now = osGetTime();
@@ -4156,9 +3341,7 @@ static void drawWorldEffectsBottom(AppState* app) {
                     g_objectAnchors[assetId].x, g_objectAnchors[assetId].y, BOTTOM_W, BOTTOM_H)) {
                 continue;
             }
-            if (frame == 4) {
-                alpha = 0x8C;
-            }
+            alpha = (frame == 4) ? 0x80 : 0xE6;   /* blend 90, the last frame 50 */
             C2D_PlainImageTint(&tint, C2D_Color32(0xFF, 0xFF, 0xFF, alpha), 1.0f);
             C2D_DrawImageAt(image,
                 locX - (g_objectAnchors[assetId].x * DIRECTOR_SCALE),
@@ -4250,134 +3433,27 @@ static void drawWorldEffectsBottom(AppState* app) {
     }
 }
 
-static bool anyMoveActive(const AppState* app) {
-    int i;
-    for (i = 0; i < (int) (sizeof(app->moves) / sizeof(app->moves[0])); ++i) {
-        if (app->moves[i].active) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static const WBMoveState* selectedMove(const AppState* app) {
-    if (app->selectedMover < 0 || app->selectedMover >= (int) (sizeof(app->moves) / sizeof(app->moves[0]))) {
-        return NULL;
-    }
-    if (!app->moves[app->selectedMover].active) {
-        return NULL;
-    }
-    return &app->moves[app->selectedMover];
-}
-
-static WBMoveState* selectedMoveMutable(AppState* app) {
-    if (app->selectedMover < 0 || app->selectedMover >= (int) (sizeof(app->moves) / sizeof(app->moves[0]))) {
-        return NULL;
-    }
-    if (!app->moves[app->selectedMover].active) {
-        return NULL;
-    }
-    return &app->moves[app->selectedMover];
-}
-
-static int moveOccupiedX(const WBMoveState* move) {
-    if (!move->active) {
-        return -1;
-    }
-    if (!move->blockedWaiting && move->pathIndex < move->pathLen - 1) {
-        return move->pathX[move->pathIndex + 1];
-    }
-    return move->pathX[move->pathIndex];
-}
-
-static int moveOccupiedY(const WBMoveState* move) {
-    if (!move->active) {
-        return -1;
-    }
-    if (!move->blockedWaiting && move->pathIndex < move->pathLen - 1) {
-        return move->pathY[move->pathIndex + 1];
-    }
-    return move->pathY[move->pathIndex];
-}
-
-static int findFreeMoveSlot(AppState* app) {
-    int i;
-    for (i = 0; i < (int) (sizeof(app->moves) / sizeof(app->moves[0])); ++i) {
-        if (!app->moves[i].active) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-static bool cellHasActiveMover(const AppState* app, int x, int y, int ignoreMover) {
-    int i;
-    for (i = 0; i < (int) (sizeof(app->moves) / sizeof(app->moves[0])); ++i) {
-        const WBMoveState* move = &app->moves[i];
-        if (!move->active || i == ignoreMover) {
-            continue;
-        }
-        if (moveOccupiedX(move) == x && moveOccupiedY(move) == y) {
-            return true;
-        }
-    }
-    return false;
-}
-
 static const WBCell* selectedCell(const AppState* app) {
-    if (!app->hasSelection || app->selectedMover >= 0 || !inBounds(app, app->selectedX, app->selectedY)) {
+    if (!app->hasSelection || !inBounds(app, app->selectedX, app->selectedY)) {
         return NULL;
     }
     return &app->map.cells[app->selectedY][app->selectedX];
 }
 
 static bool getSelectedUnitView(const AppState* app, WBSelectedUnitView* outView) {
+    const WBCell* cell = selectedCell(app);
     memset(outView, 0, sizeof(*outView));
-    if (!app->hasSelection) {
+    if (!cell || !cell->hasUnit) {
         return false;
     }
-    if (selectedMove(app)) {
-        const WBMoveState* move = selectedMove(app);
-        int pathIndex = move->pathIndex;
-        if (pathIndex < 0) {
-            pathIndex = 0;
-        }
-        if (pathIndex >= move->pathLen) {
-            pathIndex = move->pathLen - 1;
-        }
-        outView->valid = true;
-        outView->unitType = move->unitType;
-        outView->terrain = app->map.cells[move->pathY[pathIndex]][move->pathX[pathIndex]].terrain;
-        outView->energy = move->unitEnergy;
-        outView->energyDeci = move->unitEnergyDeci;
-        outView->cargo = move->unitCargo;
-        outView->direction = move->direction;
-        return true;
-    }
-    if (!inBounds(app, app->selectedX, app->selectedY)) {
-        return false;
-    }
-    {
-        const WBCell* cell = &app->map.cells[app->selectedY][app->selectedX];
-        if (!cell->hasUnit) {
-            return false;
-        }
-        outView->valid = true;
-        outView->unitType = cell->unitType;
-        outView->terrain = cell->terrain;
-        outView->energy = cell->unitEnergy;
-        outView->energyDeci = cell->unitEnergyDeci;
-        outView->cargo = cell->unitCargo;
-        outView->direction = cell->unitDirection;
-        return true;
-    }
-}
-
-static WBCell* selectedCellMutable(AppState* app) {
-    if (!app->hasSelection || app->selectedMover >= 0 || !inBounds(app, app->selectedX, app->selectedY)) {
-        return NULL;
-    }
-    return &app->map.cells[app->selectedY][app->selectedX];
+    outView->valid = true;
+    outView->unitType = cell->unitType;
+    outView->terrain = cell->terrain;
+    outView->energy = cell->unitEnergy;
+    outView->energyDeci = cell->unitEnergyDeci;
+    outView->cargo = cell->unitCargo;
+    outView->direction = cell->unitDirection;
+    return true;
 }
 
 static void sceneInit(AppState* app) {
@@ -4388,7 +3464,6 @@ static void sceneInit(AppState* app) {
     C2D_TextOptimize(&app->titleText);
     C2D_TextOptimize(&app->screenTitleText);
     app->musicBpm = 151;
-    app->selectedMover = -1;
     app->screenMode = WB_SCREEN_TITLE;
     app->musicUseGamePlaylist = false;
     app->musicLastGameSongIndex = -1;
@@ -4415,6 +3490,8 @@ static void sceneExit(AppState* app) {
         if (app->worldMapSheets[i]) C2D_SpriteSheetFree(app->worldMapSheets[i]);
     }
     if (app->worldIconSheet) C2D_SpriteSheetFree(app->worldIconSheet);
+    free(app->walkMask);
+    app->walkMask = NULL;
     if (app->licenseSheet)   C2D_SpriteSheetFree(app->licenseSheet);
     if (app->vehiclesLandSheet)   C2D_SpriteSheetFree(app->vehiclesLandSheet);
     if (app->vehiclesWaterSheet)  C2D_SpriteSheetFree(app->vehiclesWaterSheet);
@@ -4448,36 +3525,6 @@ static void sceneExit(AppState* app) {
     freeWavClip(&app->sfxMoveMisc);
 }
 
-static bool cellBlocksPath(const AppState* app, int x, int y, int goalX, int goalY) {
-    const WBCell* cell = &app->map.cells[y][x];
-    /* Boulders are always impassable — they block even the goal cell */
-    {
-        int mi;
-        for (mi = 0; mi < g_monsterCount; ++mi) {
-            const WBMonsterState* m = &g_monsters[mi];
-            if (m->active && !m->dying && m->row == y && m->col == x) {
-                if (m->type == WB_MONSTER_BOULDER) {
-                    return true;
-                }
-                /* Non-boulder monsters block intermediate cells only */
-                if (x != goalX || y != goalY) {
-                    return true;
-                }
-            }
-        }
-    }
-    /* Buildings are always impassable — they block even the goal cell */
-    if (cell->hasBuilding) {
-        return true;
-    }
-    if (x == goalX && y == goalY) {
-        return false;
-    }
-    /* Moving units (active movers) are passable — only idle units block intermediate cells.
-       This matches the original: vehicleStatus #going tiles are not blocked for pathfinding. */
-    return cell->hasUnit;
-}
-
 static float unitMoveSpeed(WBUnitType unitType) {
     switch (unitType) {
         case WB_UNIT_BUGGY:      return 3.0f;
@@ -4497,151 +3544,9 @@ static float unitMoveSpeed(WBUnitType unitType) {
         case WB_UNIT_REPAIRBOT:  return 3.0f;
         case WB_UNIT_DEFENDER:   return 2.0f;
         case WB_UNIT_DEFENDER2:  return 2.0f;
-        case WB_UNIT_FREEZEBOT:  return 2.0f;
+        case WB_UNIT_FREEZEBOT:  return 2.5f;  /* WB2 #speed:2.5 */
         default: return 2.0f;
     }
-}
-
-static void astarPush(int* qx, int* qy, float* qf, int* sz, int x, int y, float f) {
-    int i = (*sz)++;
-    int parent;
-    qx[i] = x; qy[i] = y; qf[i] = f;
-    while (i > 0) {
-        int tx, ty; float tf;
-        parent = (i - 1) >> 1;
-        if (qf[parent] <= qf[i]) break;
-        tx = qx[parent]; ty = qy[parent]; tf = qf[parent];
-        qx[parent] = qx[i]; qy[parent] = qy[i]; qf[parent] = qf[i];
-        qx[i] = tx; qy[i] = ty; qf[i] = tf;
-        i = parent;
-    }
-}
-
-static void astarPop(int* qx, int* qy, float* qf, int* sz, int* ox, int* oy) {
-    int last = --(*sz);
-    int i = 0;
-    *ox = qx[0]; *oy = qy[0];
-    if (last > 0) {
-        qx[0] = qx[last]; qy[0] = qy[last]; qf[0] = qf[last];
-        for (;;) {
-            int tx, ty; float tf;
-            int l = (i << 1) + 1, r = l + 1, s = i;
-            if (l < last && qf[l] < qf[s]) s = l;
-            if (r < last && qf[r] < qf[s]) s = r;
-            if (s == i) break;
-            tx = qx[s]; ty = qy[s]; tf = qf[s];
-            qx[s] = qx[i]; qy[s] = qy[i]; qf[s] = qf[i];
-            qx[i] = tx; qy[i] = ty; qf[i] = tf;
-            i = s;
-        }
-    }
-}
-
-/* A* pathfinding with swamp penalty matching original WB1/WB2 behaviour.
-   Heuristic: 1.5 * manhattan(node, goal) + swamp_penalty(node)
-   Step cost:  1.0 + swamp_path_penalty(FROM tile) where penalty = 6 for swamp.
-   Moving units are passable (only idle units block intermediate cells).
-   Matches original Lingo Internal_129 map display manager A* implementation. */
-static bool findPath(const AppState* app, int startX, int startY, int goalX, int goalY, WBUnitType unitType, int* outX, int* outY, int* outLen) {
-    static const float SWAMP_STEP_PENALTY  = 6.0f; /* cost added when leaving a swamp tile */
-    static const float HEURISTIC_SCALE     = 1.5f; /* admissible overestimate factor */
-    int heapSize = 0;
-    const int dirs[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
-    int len = 0;
-
-    memset(g_visited, 0, sizeof(g_visited));
-    /* Set all g-costs to a large sentinel value (0x7F bytes => ~3.39e38f per cell) */
-    memset(g_gCost, 0x7F, sizeof(g_gCost));
-
-    if (!inBounds(app, goalX, goalY)) {
-        return false;
-    }
-    if (!wbUnitCanTraverse(unitType, app->map.cells[goalY][goalX].terrain) &&
-            !app->map.cells[goalY][goalX].isWhirlpool) {
-        return false;
-    }
-    if (cellBlocksPath(app, goalX, goalY, goalX, goalY)) {
-        return false;
-    }
-
-    g_gCost[startY][startX] = 0.0f;
-    g_parentX[startY][startX] = -1;
-    g_parentY[startY][startX] = -1;
-    {
-        float swampH = (app->map.cells[startY][startX].terrain == WB_TERRAIN_SWAMP) ? SWAMP_STEP_PENALTY : 0.0f;
-        float startF = HEURISTIC_SCALE * (float)(abs(startX - goalX) + abs(startY - goalY)) + swampH;
-        astarPush(g_queueX, g_queueY, g_queueF, &heapSize, startX, startY, startF);
-    }
-
-    while (heapSize > 0) {
-        int x, y, i;
-        astarPop(g_queueX, g_queueY, g_queueF, &heapSize, &x, &y);
-
-        if (g_visited[y][x]) continue; /* stale heap entry */
-        g_visited[y][x] = true;
-
-        if (x == goalX && y == goalY) break;
-
-        for (i = 0; i < 4; ++i) {
-            int nx = x + dirs[i][0];
-            int ny = y + dirs[i][1];
-            float moveCost, newG, swampH, newF;
-            if (!inBounds(app, nx, ny) || g_visited[ny][nx]) continue;
-            if (!wbUnitCanTraverse(unitType, app->map.cells[ny][nx].terrain) &&
-                    !(nx == goalX && ny == goalY && app->map.cells[ny][nx].isWhirlpool)) continue;
-            if (cellBlocksPath(app, nx, ny, goalX, goalY)) continue;
-
-            /* Step cost: 1 + swamp penalty when leaving a swamp tile */
-            moveCost = 1.0f + ((app->map.cells[y][x].terrain == WB_TERRAIN_SWAMP) ? SWAMP_STEP_PENALTY : 0.0f);
-            newG = g_gCost[y][x] + moveCost;
-            if (newG < g_gCost[ny][nx]) {
-                g_gCost[ny][nx] = newG;
-                g_parentX[ny][nx] = x;
-                g_parentY[ny][nx] = y;
-                swampH = (app->map.cells[ny][nx].terrain == WB_TERRAIN_SWAMP) ? SWAMP_STEP_PENALTY : 0.0f;
-                newF = newG + HEURISTIC_SCALE * (float)(abs(nx - goalX) + abs(ny - goalY)) + swampH;
-                astarPush(g_queueX, g_queueY, g_queueF, &heapSize, nx, ny, newF);
-            }
-        }
-    }
-
-    if (!g_visited[goalY][goalX]) {
-        return false;
-    }
-
-    {
-        int x = goalX;
-        int y = goalY;
-        while (x >= 0 && y >= 0) {
-            outX[len] = x;
-            outY[len] = y;
-            ++len;
-            if (x == startX && y == startY) {
-                break;
-            }
-            {
-                int px = g_parentX[y][x];
-                int py = g_parentY[y][x];
-                x = px;
-                y = py;
-            }
-        }
-    }
-
-    {
-        int i;
-        for (i = 0; i < len / 2; ++i) {
-            int tx = outX[i];
-            int ty = outY[i];
-            outX[i] = outX[len - 1 - i];
-            outY[i] = outY[len - 1 - i];
-            outX[len - 1 - i] = tx;
-            outY[len - 1 - i] = ty;
-        }
-    }
-
-    *outLen = len;
-    return len > 1;
 }
 
 static bool goalMatchesUnit(WBGoalType goalType, WBUnitType unitType) {
@@ -4774,387 +3679,6 @@ static bool findWhirlpoolPair(const AppState* app, int fromX, int fromY, int* ou
     return false;
 }
 
-static bool handleUnitArrival(AppState* app, int x, int y, WBUnitType unitType) {
-    WBCell* cell = &app->map.cells[y][x];
-    bool stopHere = false;
-
-    if (cell->hasResource && cell->resourceIsPlan) {
-        float locX;
-        float locY;
-        WBPlanType pickedPlan = cell->resourcePlanType;
-        if (cell->resourcePlanType > WB_PLAN_NONE && cell->resourcePlanType < WB_PLAN_COUNT) {
-            app->map.planInventory[cell->resourcePlanType] += cell->resourcePlanCount;
-        }
-        playSfxClip(app, app->sfxPickupPlan.loaded ? &app->sfxPickupPlan : &app->sfxMove);
-        posToLoc(app, x + 1, y + 1, &locX, &locY);
-        startPlanSwoop(app, pickedPlan, locX + (10.0f * DIRECTOR_SCALE), locY + (18.0f * DIRECTOR_SCALE));
-        cell->hasResource = false;
-        cell->resourceIsPlan = false;
-        cell->resourcePlanType = WB_PLAN_NONE;
-        cell->resourcePlanCount = 0;
-    }
-
-    if (cell->hasGoal && !cell->goalSatisfied) {
-        if ((!cell->bonusGoal || app->map.bonusAvailable) && goalMatchesUnit(cell->goalType, unitType)) {
-            stopHere = true;
-            satisfyGoalAt(app, cell, x, y);
-        }
-    }
-
-    /* Swamp terrain drains energy on each arrival */
-    if (cell->terrain == WB_TERRAIN_SWAMP && cell->hasUnit) {
-        applyUnitDamageAtCell(app, x, y, 100, false);
-        if (cell->unitEnergyDeci <= 0) {
-            stopHere = true;
-        }
-    }
-
-    return stopHere;
-}
-
-static void finalizeMove(AppState* app, int moveIndex, int x, int y) {
-    WBMoveState* move = &app->moves[moveIndex];
-    WBCell* cell = &app->map.cells[y][x];
-    cell->hasUnit = true;
-    cell->unitType = move->unitType;
-    cell->unitDirection = move->finalDirection;
-    cell->unitEnergyDeci = move->unitEnergyDeci;
-    cell->unitEnergy = (move->unitEnergyDeci + 9) / 10;
-    cell->unitCargo = move->unitCargo;
-    cell->unitCargoEnergyValue = move->unitCargoEnergyValue;
-    if (app->selectedMover == moveIndex) {
-        app->selectedMover = -1;
-        app->selectedX = x;
-        app->selectedY = y;
-    }
-    memset(move, 0, sizeof(*move));
-}
-
-static int beginMove(AppState* app, int goalX, int goalY) {
-    WBCell* cell = selectedCellMutable(app);
-    int moveIndex;
-    WBMoveState* move;
-    int pathLen = 0;
-
-    if (!cell || !cell->hasUnit) {
-        return -1;
-    }
-    if (cell->unitEnergyDeci <= 0) {
-        return -1;
-    }
-    if ((goalX != app->selectedX || goalY != app->selectedY) && inBounds(app, goalX, goalY) &&
-        (app->map.cells[goalY][goalX].hasUnit || cellHasActiveMover(app, goalX, goalY, -1))) {
-        return -1;
-    }
-    if (!findPath(app, app->selectedX, app->selectedY, goalX, goalY, cell->unitType, g_pathScratchX, g_pathScratchY, &pathLen)) {
-        return -1;
-    }
-    moveIndex = findFreeMoveSlot(app);
-    if (moveIndex < 0) {
-        return -1;
-    }
-    move = &app->moves[moveIndex];
-
-    memset(move, 0, sizeof(*move));
-    move->active = true;
-    move->unitType = cell->unitType;
-    move->unitEnergy = cell->unitEnergy;
-    move->unitEnergyDeci = cell->unitEnergyDeci;
-    move->unitCargo = cell->unitCargo;
-    move->unitCargoEnergyValue = cell->unitCargoEnergyValue;
-    move->goalX = goalX;
-    move->goalY = goalY;
-    move->pathLen = pathLen;
-    move->pathIndex = 0;
-    move->progress = 0.0f;
-    move->stepStartMs = osGetTime();
-    move->blockedWaiting = false;
-    move->resumeGoalAfterStop = false;
-    move->blockedRetryMs = 0;
-    move->blockedTryNum = 0;
-    move->direction = directionFromStep(g_pathScratchX[0], g_pathScratchY[0], g_pathScratchX[1], g_pathScratchY[1]);
-    move->finalDirection = move->direction;
-    memcpy(move->pathX, g_pathScratchX, sizeof(int) * pathLen);
-    memcpy(move->pathY, g_pathScratchY, sizeof(int) * pathLen);
-    /* Transfer any pending pick/drop action from app state into this move so it
-       executes when the unit arrives at its destination. */
-    if (app->pendingActionValid) {
-        move->pendingActionValid = true;
-        move->pendingActionX = app->pendingActionX;
-        move->pendingActionY = app->pendingActionY;
-        app->pendingActionValid = false;
-    }
-    app->selectedMover = moveIndex;
-    cell->hasUnit = false;
-    cell->unitType = WB_UNIT_NONE;
-    memset(&cell->unitCargo, 0, sizeof(cell->unitCargo));
-    playSfxClip(app, &app->sfxButton);
-    return moveIndex;
-}
-
-static int getTraversableNeighbors(const AppState* app, int fromX, int fromY, WBUnitType unitType, int* outX, int* outY) {
-    static const int offsets[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
-    int count = 0;
-    int i;
-    for (i = 0; i < 4; ++i) {
-        int nx = fromX + offsets[i][0];
-        int ny = fromY + offsets[i][1];
-        if (!inBounds(app, nx, ny)) {
-            continue;
-        }
-        if (!wbUnitCanTraverse(unitType, app->map.cells[ny][nx].terrain)) {
-            continue;
-        }
-        if (app->map.cells[ny][nx].hasUnit) {
-            continue;
-        }
-        outX[count] = nx;
-        outY[count] = ny;
-        ++count;
-    }
-    return count;
-}
-
-static bool insertSidestepDetour(WBMoveState* move, int currentX, int currentY, int sidestepX, int sidestepY) {
-    int remainder;
-    int i;
-    int newLen;
-
-    if (move->pathLen <= move->pathIndex + 1) {
-        return false;
-    }
-    remainder = move->pathLen - (move->pathIndex + 1);
-    newLen = 3 + remainder;
-    if (newLen > (int) (sizeof(move->pathX) / sizeof(move->pathX[0]))) {
-        return false;
-    }
-
-    for (i = 0; i < remainder; ++i) {
-        move->pathX[newLen - 1 - i] = move->pathX[move->pathLen - 1 - i];
-        move->pathY[newLen - 1 - i] = move->pathY[move->pathLen - 1 - i];
-    }
-
-    move->pathLen = newLen;
-    move->pathIndex = 0;
-    move->pathX[0] = currentX;
-    move->pathY[0] = currentY;
-    move->pathX[1] = sidestepX;
-    move->pathY[1] = sidestepY;
-    move->pathX[2] = currentX;
-    move->pathY[2] = currentY;
-    move->direction = directionFromStep(currentX, currentY, sidestepX, sidestepY);
-    move->finalDirection = move->direction;
-    move->progress = 0.0f;
-    move->stepStartMs = osGetTime();
-    move->blockedWaiting = false;
-    move->blockedRetryMs = 0;
-    move->resumeGoalAfterStop = false;
-    return true;
-}
-
-static bool retargetMovePath(AppState* app, WBMoveState* move, int startX, int startY, int goalX, int goalY) {
-    int pathLen = 0;
-    if (!findPath(app, startX, startY, goalX, goalY, move->unitType, g_pathScratchX, g_pathScratchY, &pathLen)) {
-        return false;
-    }
-    move->goalX = goalX;
-    move->goalY = goalY;
-    move->pathLen = pathLen;
-    move->pathIndex = 0;
-    move->progress = 0.0f;
-    move->stepStartMs = osGetTime();
-    move->blockedWaiting = false;
-    move->resumeGoalAfterStop = false;
-    move->blockedRetryMs = 0;
-    move->blockedTryNum = 0;
-    move->direction = directionFromStep(g_pathScratchX[0], g_pathScratchY[0], g_pathScratchX[1], g_pathScratchY[1]);
-    move->finalDirection = move->direction;
-    memcpy(move->pathX, g_pathScratchX, sizeof(int) * pathLen);
-    memcpy(move->pathY, g_pathScratchY, sizeof(int) * pathLen);
-    return true;
-}
-
-static void updateMovement(AppState* app) {
-    int moveIndex;
-    for (moveIndex = 0; moveIndex < (int) (sizeof(app->moves) / sizeof(app->moves[0])); ++moveIndex) {
-    WBMoveState* move = &app->moves[moveIndex];
-    float stepDurationMs;
-    float elapsed;
-    int currentX;
-    int currentY;
-    if (!move->active) {
-        continue;
-    }
-
-    currentX = move->pathX[move->pathIndex];
-    currentY = move->pathY[move->pathIndex];
-
-    if (!move->blockedWaiting && move->pathIndex < move->pathLen - 1) {
-        int nextX = move->pathX[move->pathIndex + 1];
-        int nextY = move->pathY[move->pathIndex + 1];
-        if (app->map.cells[nextY][nextX].hasUnit || activeMonsterAt(NULL, nextY, nextX) ||
-                cellHasActiveMover(app, nextX, nextY, moveIndex)) {
-            move->progress = 0.0f;
-            move->blockedWaiting = true;
-            move->blockedRetryMs = (u64) osGetTime();
-            continue;
-        }
-    }
-
-    if (move->blockedWaiting) {
-        if ((u64) osGetTime() < move->blockedRetryMs) {
-            continue;
-        }
-        if (move->queuedMoveValid) {
-            move->goalX = move->queuedMoveX;
-            move->goalY = move->queuedMoveY;
-            move->queuedMoveValid = false;
-        }
-        if (!move->blockedTryNum) {
-            move->blockedTryNum = 2;
-            move->blockedRetryMs = (u64) osGetTime() + (u64) randRange(500, 1500);
-            continue;
-        }
-        {
-            int neiX[4];
-            int neiY[4];
-            int neiCount;
-            if ((move->blockedTryNum + 2) >= 6) {
-                if (retargetMovePath(app, move, currentX, currentY, move->goalX, move->goalY)) {
-                    continue;
-                }
-                move->blockedTryNum = 0;
-                move->blockedRetryMs = (u64) osGetTime() + (u64) randRange(750, 1250);
-                continue;
-            }
-            neiCount = getTraversableNeighbors(app, currentX, currentY, move->unitType, neiX, neiY);
-            move->blockedTryNum += 2;
-            if (neiCount == 0) {
-                move->blockedRetryMs = (u64) osGetTime() + (u64) randRange(1000, 3000);
-                continue;
-            }
-            {
-                int choice = rand() % neiCount;
-                int sidestepX = neiX[choice];
-                int sidestepY = neiY[choice];
-                if (insertSidestepDetour(move, currentX, currentY, sidestepX, sidestepY)) {
-                    continue;
-                }
-                move->blockedRetryMs = (u64) osGetTime() + (u64) randRange(750, 1250);
-                continue;
-            }
-        }
-    }
-
-    stepDurationMs = 1000.0f / unitMoveSpeed(move->unitType);
-    elapsed = (float) (osGetTime() - move->stepStartMs);
-    move->progress = elapsed / stepDurationMs;
-    if (move->progress < 1.0f) {
-        continue;
-    }
-
-    if (move->unitEnergyDeci <= 0) {
-        finalizeMove(app, moveIndex, move->pathX[move->pathIndex], move->pathY[move->pathIndex]);
-        continue;
-    }
-
-    move->progress = 0.0f;
-    move->stepStartMs = osGetTime();
-    move->pathIndex += 1;
-
-    {
-        int x = move->pathX[move->pathIndex];
-        int y = move->pathY[move->pathIndex];
-        int moveCost = unitMoveCostDeci(move->unitType);
-        bool warped = false;
-        int warpX = x;
-        int warpY = y;
-        if (app->map.cells[y][x].hasUnit || activeMonsterAt(NULL, y, x) || cellHasActiveMover(app, x, y, moveIndex)) {
-            /* Cell was vacated between the pre-check and our arrival — stay at new
-               pathIndex position and wait from here rather than snapping back, which
-               would cause a visible teleport. The unit occupies the contested cell
-               temporarily inside the moves array only (cell->hasUnit is never set
-               until finalizeMove). */
-            move->progress = 0.0f;
-            move->blockedWaiting = true;
-            move->blockedRetryMs = (u64) osGetTime();
-            continue;
-        }
-        if (moveCost > 0) {
-            move->unitEnergyDeci -= moveCost;
-            if (move->unitEnergyDeci < 0) {
-                move->unitEnergyDeci = 0;
-            }
-            move->unitEnergy = (move->unitEnergyDeci + 9) / 10;
-        }
-        if (app->map.cells[y][x].isWhirlpool && wbUnitCanTraverse(move->unitType, WB_TERRAIN_WATER_WHIRLPOOL)) {
-            int pairX;
-            int pairY;
-            if (findWhirlpoolPair(app, x, y, &pairX, &pairY) &&
-                !app->map.cells[pairY][pairX].hasUnit &&
-                !activeMonsterAt(NULL, pairY, pairX) &&
-                !cellHasActiveMover(app, pairX, pairY, moveIndex)) {
-                warpX = pairX;
-                warpY = pairY;
-                warped = true;
-            }
-        }
-        {
-            int arrivedX = warped ? warpX : x;
-            int arrivedY = warped ? warpY : y;
-            bool stopHere = handleUnitArrival(app, arrivedX, arrivedY, move->unitType);
-            if (stopHere || move->pathIndex >= move->pathLen - 1 || warped) {
-                bool hadPending = move->pendingActionValid;
-                int pendingX = move->pendingActionX;
-                int pendingY = move->pendingActionY;
-                bool resumeGoal = move->resumeGoalAfterStop && !stopHere && (arrivedX != move->goalX || arrivedY != move->goalY);
-                int nextGoalX = move->goalX;
-                int nextGoalY = move->goalY;
-                if (resumeGoal && retargetMovePath(app, move, arrivedX, arrivedY, nextGoalX, nextGoalY)) {
-                    continue;
-                }
-                finalizeMove(app, moveIndex, arrivedX, arrivedY);
-                if (hadPending && app->hasSelection && app->selectedMover < 0 && app->selectedX == arrivedX && app->selectedY == arrivedY) {
-                    app->pendingActionValid = true;
-                    app->pendingActionX = pendingX;
-                    app->pendingActionY = pendingY;
-                    resolvePendingAction(app);
-                }
-                continue;
-            }
-        }
-        if (move->queuedMoveValid && app->selectedMover == moveIndex) {
-            WBCell* cell = &app->map.cells[y][x];
-            int queuedX = move->queuedMoveX;
-            int queuedY = move->queuedMoveY;
-            cell->hasUnit = true;
-            cell->unitType = move->unitType;
-            cell->unitDirection = move->direction;
-            cell->unitEnergyDeci = move->unitEnergyDeci;
-            cell->unitEnergy = (move->unitEnergyDeci + 9) / 10;
-            cell->unitCargo = move->unitCargo;
-            app->selectedMover = -1;
-            app->selectedX = x;
-            app->selectedY = y;
-            memset(move, 0, sizeof(*move));
-            app->pendingActionValid = false;
-            beginMove(app, queuedX, queuedY);
-            continue;
-        }
-        move->direction = directionFromStep(
-            move->pathX[move->pathIndex],
-            move->pathY[move->pathIndex],
-            move->pathX[move->pathIndex + 1],
-            move->pathY[move->pathIndex + 1]);
-        move->finalDirection = move->direction;
-        if (app->selectedMover == moveIndex) {
-            app->selectedX = x;
-            app->selectedY = y;
-        }
-    }
-    }
-}
-
 static bool tileDiamondHit(const AppState* app, int tx, int ty, float px, float py) {
     float cx;
     float cy;
@@ -5192,10 +3716,22 @@ static bool screenToTile(const AppState* app, float px, float py, int* outX, int
     return bestScore <= 1.7f || tileDiamondHit(app, *outX, *outY, px, py);
 }
 
+/* Highlight arrow behavior: 4 px on the beat of the playing song (its 'rhythms' bpm),
+   timed from when the song started and moved once a 15 fps frame. */
 static void drawSelectionHighlight(AppState* app, float locX, float locY, bool planMode, int trackedAssetId) {
-    float theta = 2.0f * 3.14159265f * ((osGetTime() / 1000.0f) * ((float) app->musicBpm / 60.0f));
-    float bob = 4.0f * sinf(theta);
+    double frameMs = 1000.0 / 15.0;
+    double since = floor((double) (osGetTime() - app->musicStartMs) / frameMs) * frameMs;
+    double bpm;
+    float bob;
     int assetId = planMode ? ASSET_PLAN_HIGHLIGHT : ASSET_OBJECT_HIGHLIGHT;
+    switch (app->musicBpm) {            /* the game playlist's family, or a menu bpm */
+        case '8': bpm = 105.0; break;
+        case '6': bpm = 140.0; break;
+        case 'a': bpm = 120.0; break;
+        case 'i': bpm = 151.0; break;
+        default:  bpm = 120.0; break;
+    }
+    bob = (float) (4.0 * sin(2.0 * 3.14159265358979 * (since / 1000.0) * (bpm / 60.0)));
     if (!planMode && trackedAssetId >= 0) {
         locX -= 5.0f;
         locY -= imageHeight(getImage(app, trackedAssetId), DIRECTOR_SCALE) * 0.5f;
@@ -5369,7 +3905,7 @@ static void drawResourceOrPlan(AppState* app, const WBCell* cell, float locX, fl
             count = 4;
         }
         for (i = 0; i < count; ++i) {
-            int assetId = kinds[i] == 5 ? energyAssetForValue(cell->pileEnergyValue) : pileEntryAssetId(&cell->pile, kinds[i]);
+            int assetId = kinds[i] == 5 ? energyAssetForValue(energyStatusFromDeci(pileLastBattery(cell))) : pileEntryAssetId(&cell->pile, kinds[i]);
             float pileX = locX + (g_pileRegPoints[i].x * DIRECTOR_SCALE);
             float pileY = pileBaseY + (g_pileRegPoints[i].y * DIRECTOR_SCALE);
             if (kinds[i] == 2) {
@@ -5384,89 +3920,35 @@ static void drawResourceOrPlan(AppState* app, const WBCell* cell, float locX, fl
     }
 }
 
-static void drawGoal(AppState* app, const WBCell* cell, float locX, float locY) {
+/* goal.goal placeSprites(): it drifts round a 3 px circle (pDriftFreq 280-320 ms,
+   a random phase); once satisfied it floats up 10 px a frame and away. */
+static void drawGoal(AppState* app, const WBCell* cell, int x, int y, float locX, float locY) {
     int assetId;
-    float phase;
-    float cycle;
-    float t;
-    float dy;
-    if (!cell->hasGoal || cell->goalSatisfied || (cell->bonusGoal && !app->map.bonusAvailable)) {
+    double freq;
+    double phase;
+    double t;
+    float rise = 0.0f;
+    if (!cell->hasGoal || (cell->bonusGoal && !app->map.bonusAvailable && !cell->goalSatisfied)) {
         return;
+    }
+    if (cell->goalSatisfied) {
+        double frames = floor((app->simMs - cell->goalRiseStartMs) / (1000.0 / 15.0));
+        rise = (float) (1.0 + 10.0 * (frames > 0.0 ? frames : 0.0));
+        if (rise > 2000.0f) rise = 2000.0f;
+        if (rise * DIRECTOR_SCALE > locY + 64.0f) {
+            return;
+        }
     }
     assetId = cell->bonusGoal ? ASSET_GOAL_BONUS : ASSET_GOAL_MAIN;
-    phase = ((float) (((cell->rawSymbol ? cell->rawSymbol : 'a') + (cell->bonusGoal ? 7 : 0)) % 9)) / 9.0f;
-    cycle = ((float) (osGetTime() % 2200ULL)) / 2200.0f;
-    t = 2.0f * 3.14159265f * (phase + cycle);
-    dy = 2.25f * sinf(t);
-    drawAnchoredImage(getImage(app, assetId), locX, locY + dy, DIRECTOR_SCALE, g_objectAnchors[assetId].x, g_objectAnchors[assetId].y);
+    freq = 281.0 + (double) (((x * 31) + (y * 17)) % 40);
+    phase = (double) (((x * 7919) + (y * 104729)) % 628318) / 100000.0;
+    t = phase + ((double) osGetTime() / freq);
+    drawAnchoredImage(getImage(app, assetId),
+        locX + (float) (3.0 * cos(t)),
+        locY + (float) (3.0 * sin(t)) - rise * DIRECTOR_SCALE,
+        DIRECTOR_SCALE, g_objectAnchors[assetId].x, g_objectAnchors[assetId].y);
 }
 
-/* Forward declarations for cargo overlay helpers defined later (before drawObjectsBottom). */
-static void drawUnitCargoOverlay(AppState* app, const WBCell* cell, float unitX, float unitY);
-static void drawMovingUnitCargoOverlay(AppState* app, WBUnitType unitType, const WBResourcePile* cargo, float unitX, float unitY);
-
-static void drawMovingUnit(AppState* app, int moveIndex) {
-    const WBMoveState* move = &app->moves[moveIndex];
-    float fromX;
-    float fromY;
-    float toX;
-    float toY;
-    float baseX;
-    float baseY;
-    float locX;
-    float locY;
-    int assetId;
-    bool waterVersion;
-    float pixelOffsetX = 0.0f;
-    float pixelOffsetY = 0.0f;
-
-    if (!move->active) {
-        return;
-    }
-
-    posToLoc(app, move->pathX[move->pathIndex] + 1, move->pathY[move->pathIndex] + 1, &fromX, &fromY);
-    if (move->blockedWaiting || move->pathIndex >= move->pathLen - 1) {
-        toX = fromX;
-        toY = fromY;
-        pixelOffsetX = 2.0f * sinf((float) osGetTime() / 25.0f);
-    } else {
-        toX = 0.0f;
-        toY = 0.0f;
-        posToLoc(app, move->pathX[move->pathIndex + 1] + 1, move->pathY[move->pathIndex + 1] + 1, &toX, &toY);
-        if (unitUsesVisibleBob(move->unitType)) {
-            float stepTheta = move->progress * 3.14159265f;
-            // The Director bob is subtle and shadow-driven. On 3DS, use a
-            // per-step hump with the same "rise then settle" feel so animal
-            // movement reads clearly over each traversed tile.
-            pixelOffsetY = -sinf(stepTheta) * 7.0f;
-        }
-    }
-    baseX = roundf(fromX + ((toX - fromX) * move->progress) + (10.0f * DIRECTOR_SCALE));
-    baseY = roundf(fromY + ((toY - fromY) * move->progress) + (18.0f * DIRECTOR_SCALE));
-    locX = baseX + pixelOffsetX;
-    locY = baseY + pixelOffsetY;
-    waterVersion = terrainUsesWaterSprite(app->map.cells[move->pathY[move->pathIndex]][move->pathX[move->pathIndex]].terrain)
-        || (!move->blockedWaiting && move->progress > 0.5f && terrainUsesWaterSprite(app->map.cells[move->pathY[move->pathIndex + 1]][move->pathX[move->pathIndex + 1]].terrain));
-    assetId = unitAnimAssetId(move->unitType, move->direction, waterVersion, move->blockedWaiting ? 0.0f : move->progress, &move->unitCargo, WB_UNIT_ANIM_NONE);
-    if (assetId < 0) {
-        return;
-    }
-    if (!move->blockedWaiting && move->pathIndex < move->pathLen - 1 && unitUsesVisibleBob(move->unitType)) {
-        if (move->direction == WB_DIR_UP || move->direction == WB_DIR_DOWN) {
-            C2D_DrawRectSolid(baseX - 4.0f, baseY + 2.0f, 0.0f, 8.0f, 4.0f, C2D_Color32(0x00, 0x00, 0x00, 0x55));
-        } else {
-            C2D_DrawRectSolid(baseX - 6.0f, baseY + 2.0f, 0.0f, 12.0f, 3.0f, C2D_Color32(0x00, 0x00, 0x00, 0x55));
-        }
-    }
-    drawAnchoredImage(getImage(app, assetId), locX, locY, DIRECTOR_SCALE, g_objectAnchors[assetId].x, g_objectAnchors[assetId].y);
-    if (resourceTotal(&move->unitCargo) > 0) {
-        drawMovingUnitCargoOverlay(app, move->unitType, &move->unitCargo, locX, locY);
-    }
-    drawUnitEnergyBadge(app, move->unitEnergyDeci, locX, locY);
-    if (app->hasSelection && app->selectedMover == moveIndex) {
-        drawSelectionHighlight(app, locX, locY, false, assetId);
-    }
-}
 
 /* ─── Monster sheet layout constants ─── */
 /* monsters_a: crab=offset 0 (28), water_crab=28 (28), scorpion=56 (24), shark=80 (24), boulder=104 (5) */
@@ -5660,142 +4142,6 @@ static int buildingPanelIconAssetId(WBBuildingType buildingType) {
     }
 }
 
-static void populateMonstersFromMap(WBMap* map) {
-    int row;
-    int col;
-    g_monsterCount = 0;
-    for (row = 0; row < map->height; ++row) {
-        for (col = 0; col < map->width; ++col) {
-            WBCell* cell = &map->cells[row][col];
-            if (cell->hasMonster && g_monsterCount < WB_MAX_MONSTERS) {
-                WBMonsterState* ms = &g_monsters[g_monsterCount++];
-                ms->active = true;
-                ms->row = row;
-                ms->col = col;
-                ms->destRow = row;
-                ms->destCol = col;
-                ms->type = cell->monsterType;
-                ms->dir = cell->monsterDirection;
-                ms->hp = 1000;
-                ms->wanderTimer = randRange(80, 120);
-                ms->onWater = (cell->terrain == WB_TERRAIN_WATER ||
-                               cell->terrain == WB_TERRAIN_WATER_UNFILLABLE);
-                ms->dying = false;
-                ms->breakResolveMs = 0;
-                ms->hasTarget = false;
-                ms->targetX = -1;
-                ms->targetY = -1;
-                ms->targetIsBuilding = false;
-                ms->nextAttackMs = 0;
-                ms->lastAttackMs = 0;
-                ms->swampDamageTickMs = 0;
-                ms->isMoving = false;
-                ms->moveProgress = 0.0f;
-                ms->moveStartMs = 0;
-                ms->moveDurationMs = 600;
-                ms->resting = true;
-                /* Original behavior: initial random rest before first wander. */
-                ms->nextWanderMs = osGetTime() + (u64)randRange(0, 2000);
-                cell->hasMonster = false;
-                cell->monsterType = WB_MONSTER_NONE;
-            }
-        }
-    }
-}
-
-/* Monster wander speed with per-monster variance from original behavior. */
-static u64 monsterMoveDurationMs(const WBMonsterState* ms) {
-    float speed;
-    float speedScale;
-    if (!ms) {
-        return 1000;
-    }
-    speed = wbMonsterSpeed(ms->type);
-    if (speed <= 0.0f) return 0;
-    speedScale = (float)ms->wanderTimer / 100.0f;
-    if (speedScale <= 0.0f) {
-        speedScale = 1.0f;
-    }
-    return (u64)(1500.0f / (speed * speedScale));
-}
-
-typedef struct WBAttackProfile {
-    int hitsPerMinute;
-    int chanceOfSuccess;
-    int damageMin;
-    int damageMax;
-    int searchRange;
-} WBAttackProfile;
-
-static bool activeMonsterAt(const WBMonsterState* self, int row, int col) {
-    int i;
-    for (i = 0; i < g_monsterCount; ++i) {
-        const WBMonsterState* other = &g_monsters[i];
-        if (other == self || !other->active || other->dying) {
-            continue;
-        }
-        if (other->row == row && other->col == col) {
-            return true;
-        }
-        if (other->isMoving && other->destRow == row && other->destCol == col) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static WBAttackProfile monsterAttackProfile(WBMonsterType type) {
-    /* damageMin/Max are in the 0-1000 deci-energy scale (×10 vs original 0-100 values). */
-    switch (type) {
-        case WB_MONSTER_CRAB:       return (WBAttackProfile){25, 100, 1000, 2000, 4};
-        case WB_MONSTER_WATER_CRAB: return (WBAttackProfile){25, 100, 1000, 2000, 4};
-        case WB_MONSTER_GATOR:      return (WBAttackProfile){25, 100, 1000, 2000, 4};
-        case WB_MONSTER_SCORPION:   return (WBAttackProfile){25, 100, 2000, 4000, 4};
-        case WB_MONSTER_SHARK:      return (WBAttackProfile){25, 100, 3000, 5000, 4};
-        case WB_MONSTER_TREX:       return (WBAttackProfile){25, 100, 4000, 6000, 4};
-        case WB_MONSTER_LION:       return (WBAttackProfile){30, 100, 2000, 4000, 4};
-        default:                    return (WBAttackProfile){0, 0, 0, 0, 0};
-    }
-}
-
-static bool defenseAttackProfileForUnit(WBUnitType unitType, WBMonsterType monsterType, WBAttackProfile* out) {
-    if (!out) {
-        return false;
-    }
-    if (unitType == WB_UNIT_SPEEDBOAT || unitType == WB_UNIT_DEFENDER || unitType == WB_UNIT_DEFENDER2) {
-        if (monsterType == WB_MONSTER_BOULDER) {
-            return false;
-        }
-        /* damageMin/Max ×10 to match 0-1000 deci-energy scale. */
-        *out = (WBAttackProfile){25, 75, 1500, 2500, 2};
-        return true;
-    }
-    if (unitType == WB_UNIT_FREEZEBOT) {
-        if (monsterType == WB_MONSTER_BOULDER) {
-            return false;
-        }
-        /* Freezebot: freeze range 2, fires every 3 seconds (20 hits/min) matching original freeze_recharge:3, freeze_range:2 */
-        *out = (WBAttackProfile){20, 100, 0, 0, 2};
-        return true;
-    }
-    return false;
-}
-
-static bool defenseAttackProfileForBuilding(WBBuildingType buildingType, WBMonsterType monsterType, WBAttackProfile* out) {
-    if (!out) {
-        return false;
-    }
-    if (buildingType != WB_BUILDING_GUARD_TOWER) {
-        return false;
-    }
-    if (monsterType == WB_MONSTER_BOULDER) {
-        return false;
-    }
-    /* damageMin/Max ×10 to match 0-1000 deci-energy scale. */
-    *out = (WBAttackProfile){25, 75, 2000, 3000, 2};
-    return true;
-}
-
 static void monsterDropRecipe(WBMonsterType type, WBResourcePile* out) {
     if (!out) {
         return;
@@ -5813,798 +4159,2403 @@ static void monsterDropRecipe(WBMonsterType type, WBResourcePile* out) {
     }
 }
 
-static void createMonsterDrop(AppState* app, int x, int y, WBMonsterType type) {
-    WBResourcePile recipe;
-    WBCell* cell;
 
+/* ─── Object model helpers ─────────────────────────────────────────────── */
+
+/* Lingo random(n): 1..n. ScummVM's Director model returns 1..65535 for n <= 0. */
+static int lingoRandom(int n) {
+    if (n <= 0) {
+        return randRange(1, 65535);
+    }
+    return randRange(1, n);
+}
+
+static WBUnitAgent* agentAt(AppState* app, int x, int y) {
+    const WBCell* cell;
     if (!inBounds(app, x, y)) {
-        return;
+        return NULL;
     }
-
-    monsterDropRecipe(type, &recipe);
-    if (recipe.red == 0 && recipe.blue == 0 && recipe.green == 0 && recipe.yellow == 0 && recipe.wheel == 0 && recipe.energy == 0 && recipe.white == 0) {
-        return;
-    }
-
     cell = &app->map.cells[y][x];
-    if (!cell->hasResource || cell->resourceIsPlan) {
-        cell->hasResource = true;
-        cell->resourceIsPlan = false;
-        memset(&cell->pile, 0, sizeof(cell->pile));
+    if (!cell->hasUnit || cell->unitAgent == 0 || cell->unitAgent > WB_MAX_AGENTS) {
+        return NULL;
     }
-    addPile(&cell->pile, &recipe);
-    if (recipe.energy > 0) {
-        cell->pileEnergyValue = 100;
+    return &app->agents[cell->unitAgent - 1];
+}
+
+static void actorListAdd(AppState* app, WBObjRef ref) {
+    if (app->actorCount < WB_MAX_ACTORS) {
+        app->actorList[app->actorCount++] = ref;
     }
 }
 
-static bool monsterCanTraverseForPursuit(const WBMonsterState* ms, WBTerrainType terrain) {
-    if (!ms) {
-        return false;
-    }
-    if (wbMonsterCanTraverse(ms->type, terrain)) {
-        return true;
-    }
-    /* Original attacking behavior lets monsters include swamp while engaged. */
-    return terrain == WB_TERRAIN_SWAMP;
-}
-
-static bool monsterPathStepTowardTarget(const AppState* app, const WBMonsterState* ms, int targetX, int targetY, int* outCol, int* outRow) {
-    static const int dx[4] = {1, -1, 0, 0};
-    static const int dy[4] = {0, 0, -1, 1};
-    int head = 0;
-    int tail = 0;
+static void actorListRemove(AppState* app, WBObjRef ref) {
     int i;
-    int y;
-    int x;
+    for (i = 0; i < app->actorCount; ++i) {
+        const WBObjRef* r = &app->actorList[i];
+        if (r->kind == ref.kind && r->index == ref.index && r->gen == ref.gen && r->x == ref.x && r->y == ref.y) {
+            memmove(&app->actorList[i], &app->actorList[i + 1], sizeof(WBObjRef) * (size_t) (app->actorCount - i - 1));
+            --app->actorCount;
+            return;
+        }
+    }
+}
 
-    if (!app || !ms || !inBounds(app, targetX, targetY)) {
+static WBObjRef unitRefFromAgent(AppState* app, int slot) {
+    WBObjRef r;
+    memset(&r, 0, sizeof(r));
+    r.kind = WB_OBJ_UNIT;
+    r.index = (u8) slot;
+    r.gen = app->agents[slot].gen;
+    return r;
+}
+
+static WBObjRef monsterRef(int mi) {
+    WBObjRef r;
+    memset(&r, 0, sizeof(r));
+    r.kind = WB_OBJ_MONSTER;
+    r.index = (u8) mi;
+    r.gen = g_monsters[mi].gen;
+    return r;
+}
+
+static WBObjRef buildingRef(AppState* app, int x, int y) {
+    WBObjRef r;
+    memset(&r, 0, sizeof(r));
+    r.kind = WB_OBJ_BUILDING;
+    r.x = (s8) x;
+    r.y = (s8) y;
+    r.gen = app->buildingGen[y][x];
+    return r;
+}
+
+/* Give the unit in (x,y) its object: called whenever a unit appears in a cell. */
+static int attachUnitAgent(AppState* app, int x, int y) {
+    WBCell* cell = &app->map.cells[y][x];
+    int slot;
+    for (slot = 0; slot < WB_MAX_AGENTS; ++slot) {
+        if (!app->agents[slot].used) {
+            break;
+        }
+    }
+    if (slot >= WB_MAX_AGENTS) {
+        cell->unitAgent = 0;
+        return -1;
+    }
+    {
+        WBUnitAgent* a = &app->agents[slot];
+        u16 gen = (u16) (a->gen + 1);
+        memset(a, 0, sizeof(*a));
+        a->used = true;
+        a->gen = gen ? gen : 1;
+        a->m.curX = x;
+        a->m.curY = y;
+        a->m.fromX = x;
+        a->m.fromY = y;
+    }
+    cell->unitAgent = (u8) (slot + 1);
+    actorListAdd(app, unitRefFromAgent(app, slot));
+    return slot;
+}
+
+static void detachUnitAgent(AppState* app, int x, int y) {
+    WBCell* cell = &app->map.cells[y][x];
+    if (cell->unitAgent > 0 && cell->unitAgent <= WB_MAX_AGENTS) {
+        int slot = cell->unitAgent - 1;
+        actorListRemove(app, unitRefFromAgent(app, slot));
+        app->agents[slot].used = false;
+    }
+    cell->unitAgent = 0;
+}
+
+static bool refAlive(AppState* app, WBObjRef ref, int* outX, int* outY) {
+    switch (ref.kind) {
+        case WB_OBJ_UNIT: {
+            const WBUnitAgent* a;
+            if (ref.index >= WB_MAX_AGENTS) return false;
+            a = &app->agents[ref.index];
+            if (!a->used || a->gen != ref.gen) return false;
+            if (outX) *outX = a->m.curX;
+            if (outY) *outY = a->m.curY;
+            return true;
+        }
+        case WB_OBJ_MONSTER: {
+            const WBMonsterState* ms;
+            if (ref.index >= WB_MAX_MONSTERS) return false;
+            ms = &g_monsters[ref.index];
+            if (!ms->active || ms->gen != ref.gen) return false;
+            if (outX) *outX = ms->col;
+            if (outY) *outY = ms->row;
+            return true;
+        }
+        case WB_OBJ_BUILDING:
+            if (!inBounds(app, ref.x, ref.y)) return false;
+            if (!app->map.cells[ref.y][ref.x].hasBuilding || app->buildingGen[ref.y][ref.x] != ref.gen) return false;
+            if (outX) *outX = ref.x;
+            if (outY) *outY = ref.y;
+            return true;
+        default:
+            return false;
+    }
+}
+
+static int monsterIndexAt(int x, int y) {
+    int i;
+    for (i = 0; i < g_monsterCount; ++i) {
+        const WBMonsterState* ms = &g_monsters[i];
+        if (ms->active && ms->col == x && ms->row == y) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* tile[#occupant]: a unit, a monster or a building. */
+static bool tileHasOccupant(const AppState* app, int x, int y) {
+    const WBCell* cell = &app->map.cells[y][x];
+    return cell->hasUnit || cell->hasBuilding || monsterIndexAt(x, y) >= 0;
+}
+
+/* The terrain symbol the original gives the tile (whirlpools are their own terrain). */
+static WBTerrainType tileTerrain(const AppState* app, int x, int y) {
+    const WBCell* cell = &app->map.cells[y][x];
+    return cell->isWhirlpool ? WB_TERRAIN_WATER_WHIRLPOOL : cell->terrain;
+}
+
+/* vehicleStatus() of the unit in (x,y): #idle with no pPath. */
+static bool unitIsIdleAt(AppState* app, int x, int y) {
+    WBUnitAgent* a = agentAt(app, x, y);
+    return !a || !a->m.hasPath;
+}
+
+typedef struct WBTerrainOwner {
+    WBObjKind kind;
+    int type;               /* WBUnitType or WBMonsterType */
+    bool monsterSwamp;      /* monster: #swamp currently in its terrain list */
+} WBTerrainOwner;
+
+static bool ownerCanEnter(const WBTerrainOwner* o, WBTerrainType t) {
+    if (o->kind == WB_OBJ_MONSTER) {
+        if (t == WB_TERRAIN_SWAMP) {
+            return o->monsterSwamp && wbMonsterCanTraverse((WBMonsterType) o->type, t);
+        }
+        return wbMonsterCanTraverse((WBMonsterType) o->type, t);
+    }
+    return wbUnitCanTraverse((WBUnitType) o->type, t);
+}
+
+/* ─── Path-finding: map display manager findPath() ────────────────────────
+   A* over the 4-neighbourhood. Cost per step 1; the estimate is 1.5 x manhattan
+   plus the swamp penalty (swamp_path_penalty 6, or swamp_chase_penalty 1 when
+   chasing) on swamp nodes only. Equal-cost re-parents go one way or the other at
+   random, closed nodes are reopened when a cheaper way in turns up, and after
+   1000 ms it settles for the path to the node nearest the goal. A goal that is
+   occupied or whose terrain the mover can't enter ends the path beside it, as
+   does #nextto. */
+
+typedef struct WBPathNode {
+    float costFromStart;
+    float costToGoal;
+    float totalCost;
+    s16 parentX;
+    s16 parentY;
+    u8 state;           /* 0 unseen, 1 open, 2 closed */
+} WBPathNode;
+
+static WBPathNode g_pathNodes[WB_MAX_MAP_H][WB_MAX_MAP_W];
+static u16 g_openX[WB_PATH_MAX];
+static u16 g_openY[WB_PATH_MAX];
+static int g_openCount;
+
+static float pathCostEstimate(const AppState* app, int ax, int ay, int bx, int by, bool chase) {
+    float penalty = 0.0f;
+    if (app->map.cells[ay][ax].terrain == WB_TERRAIN_SWAMP) {
+        penalty = chase ? 1.0f : 6.0f;
+    }
+    return 1.5f * (float) manhattanDistance(ax, ay, bx, by) + penalty;
+}
+
+static bool openNodeLess(int ax, int ay, int bx, int by) {
+    const WBPathNode* a = &g_pathNodes[ay][ax];
+    const WBPathNode* b = &g_pathNodes[by][bx];
+    if (a->totalCost != b->totalCost) return a->totalCost < b->totalCost;
+    if (a->costFromStart != b->costFromStart) return a->costFromStart < b->costFromStart;
+    if (a->costToGoal != b->costToGoal) return a->costToGoal < b->costToGoal;
+    if (ax != bx) return ax < bx;
+    return ay < by;
+}
+
+/* qopenSort.add(): insert into the sorted open list (entries are not re-sorted
+   when their costs change later, as in the original). */
+static void openListAdd(int x, int y) {
+    int lo = 0;
+    int hi = g_openCount;
+    if (g_openCount >= WB_PATH_MAX) {
+        return;
+    }
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        if (openNodeLess(x, y, g_openX[mid], g_openY[mid])) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    memmove(&g_openX[lo + 1], &g_openX[lo], sizeof(u16) * (size_t) (g_openCount - lo));
+    memmove(&g_openY[lo + 1], &g_openY[lo], sizeof(u16) * (size_t) (g_openCount - lo));
+    g_openX[lo] = (u16) x;
+    g_openY[lo] = (u16) y;
+    ++g_openCount;
+}
+
+static int constructPath(int x, int y, u8* outX, u8* outY) {
+    int len = 0;
+    int cx = x;
+    int cy = y;
+    while (cx >= 0 && cy >= 0 && len < WB_PATH_MAX) {
+        outX[len] = (u8) cx;
+        outY[len] = (u8) cy;
+        ++len;
+        {
+            int px = g_pathNodes[cy][cx].parentX;
+            int py = g_pathNodes[cy][cx].parentY;
+            cx = px;
+            cy = py;
+        }
+    }
+    {
+        int i;
+        for (i = 0; i < len / 2; ++i) {
+            u8 t = outX[i]; outX[i] = outX[len - 1 - i]; outX[len - 1 - i] = t;
+            t = outY[i]; outY[i] = outY[len - 1 - i]; outY[len - 1 - i] = t;
+        }
+    }
+    return len;
+}
+
+/* Returns the path length (including the start tile), 0 for none. */
+static int wbFindPath(AppState* app, int ax, int ay, int bx, int by, const WBTerrainOwner* owner,
+                      bool nextto, bool chase, u8* outX, u8* outY) {
+    static const int offs[4][2] = { {1, 0}, {0, 1}, {-1, 0}, {0, -1} };
+    u64 giveUp = osGetTime() + 1000;
+    if (!inBounds(app, ax, ay) || !inBounds(app, bx, by)) {
+        return 0;
+    }
+    memset(g_pathNodes, 0, sizeof(g_pathNodes));
+    g_openCount = 0;
+    {
+        WBPathNode* s = &g_pathNodes[ay][ax];
+        s->costFromStart = 0.0f;
+        s->costToGoal = pathCostEstimate(app, ax, ay, bx, by, chase);
+        s->totalCost = s->costToGoal;
+        s->parentX = -1;
+        s->parentY = -1;
+        s->state = 1;
+        openListAdd(ax, ay);
+    }
+    while (g_openCount > 0) {
+        int nx = g_openX[0];
+        int ny = g_openY[0];
+        int k;
+        memmove(&g_openX[0], &g_openX[1], sizeof(u16) * (size_t) (g_openCount - 1));
+        memmove(&g_openY[0], &g_openY[1], sizeof(u16) * (size_t) (g_openCount - 1));
+        --g_openCount;
+        if (g_pathNodes[ny][nx].state != 1) {
+            continue;
+        }
+        if (nx == bx && ny == by && !nextto) {
+            return constructPath(nx, ny, outX, outY);
+        }
+        if (manhattanDistance(nx, ny, bx, by) == 1) {
+            if (tileHasOccupant(app, bx, by) || !ownerCanEnter(owner, tileTerrain(app, bx, by)) || nextto) {
+                return constructPath(nx, ny, outX, outY);
+            }
+        }
+        for (k = 0; k < 4; ++k) {
+            int qx = nx + offs[k][0];
+            int qy = ny + offs[k][1];
+            const WBCell* qc;
+            WBPathNode* q;
+            float g;
+            if (!inBounds(app, qx, qy)) {
+                continue;
+            }
+            qc = &app->map.cells[qy][qx];
+            /* getNeighbors(pos, terrains, #vehicle): empty tiles of our terrain, or any
+               tile holding a vehicle - and then only if that vehicle isn't idle. */
+            if (qc->hasUnit) {
+                if (unitIsIdleAt(app, qx, qy)) {
+                    continue;
+                }
+            } else if (tileHasOccupant(app, qx, qy) || !ownerCanEnter(owner, tileTerrain(app, qx, qy))) {
+                continue;
+            }
+            q = &g_pathNodes[qy][qx];
+            g = g_pathNodes[ny][nx].costFromStart + 1.0f;
+            if (q->state == 1) {
+                if (g < q->costFromStart || (g == q->costFromStart && lingoRandom(2) == 1)) {
+                    q->costFromStart = g;
+                    q->totalCost = q->costFromStart + q->costToGoal;
+                    q->parentX = (s16) nx;
+                    q->parentY = (s16) ny;
+                }
+                continue;
+            }
+            if (q->state == 2) {
+                if (g < q->costFromStart) {
+                    q->state = 1;
+                    q->costFromStart = g;
+                    q->totalCost = q->costFromStart + q->costToGoal;
+                    q->parentX = (s16) nx;
+                    q->parentY = (s16) ny;
+                    openListAdd(qx, qy);
+                }
+                continue;
+            }
+            q->costFromStart = g;
+            q->costToGoal = pathCostEstimate(app, qx, qy, bx, by, chase);
+            q->totalCost = q->costFromStart + q->costToGoal;
+            q->parentX = (s16) nx;
+            q->parentY = (s16) ny;
+            q->state = 1;
+            openListAdd(qx, qy);
+        }
+        g_pathNodes[ny][nx].state = 2;
+        if (osGetTime() > giveUp) {
+            float closest = 1.0e9f;
+            int cx = -1;
+            int cy = -1;
+            int y2;
+            int x2;
+            for (y2 = 0; y2 < app->map.height; ++y2) {
+                for (x2 = 0; x2 < app->map.width; ++x2) {
+                    const WBPathNode* n = &g_pathNodes[y2][x2];
+                    if (n->state != 0 && n->costToGoal < closest) {
+                        closest = n->costToGoal;
+                        cx = x2;
+                        cy = y2;
+                    }
+                }
+            }
+            return cx < 0 ? 0 : constructPath(cx, cy, outX, outY);
+        }
+    }
+    return 0;
+}
+/* ─── Movement: vehicle.generic parent ──────────────────────────────────── */
+
+static WBMotion* refMotion(AppState* app, WBObjRef ref) {
+    if (!refAlive(app, ref, NULL, NULL)) return NULL;
+    if (ref.kind == WB_OBJ_UNIT) return &app->agents[ref.index].m;
+    if (ref.kind == WB_OBJ_MONSTER) return &g_monsters[ref.index].m;
+    return NULL;
+}
+
+static WBTerrainOwner refTerrainOwner(AppState* app, WBObjRef ref) {
+    WBTerrainOwner o;
+    memset(&o, 0, sizeof(o));
+    o.kind = (WBObjKind) ref.kind;
+    if (ref.kind == WB_OBJ_UNIT) {
+        o.type = app->map.cells[app->agents[ref.index].m.curY][app->agents[ref.index].m.curX].unitType;
+    } else if (ref.kind == WB_OBJ_MONSTER) {
+        o.type = g_monsters[ref.index].type;
+        o.monsterSwamp = g_monsters[ref.index].swampInTerrain;
+    }
+    return o;
+}
+
+static float refSpeed(AppState* app, WBObjRef ref) {
+    if (ref.kind == WB_OBJ_UNIT) {
+        const WBUnitAgent* a = &app->agents[ref.index];
+        return unitMoveSpeed(app->map.cells[a->m.curY][a->m.curX].unitType);
+    }
+    if (ref.kind == WB_OBJ_MONSTER) {
+        return g_monsters[ref.index].speed;
+    }
+    return 0.0f;
+}
+
+/* whirlpool.generic parent: a whirlpool takes one user at a time and is only
+   active when it has a partner. */
+static bool whirlpoolUserIs(AppState* app, int x, int y, WBObjRef ref) {
+    const WBObjRef* u = &app->whirlpoolUser[y][x];
+    return u->kind == ref.kind && u->index == ref.index && u->gen == ref.gen;
+}
+
+static bool whirlpoolHasUser(AppState* app, int x, int y) {
+    return refAlive(app, app->whirlpoolUser[y][x], NULL, NULL);
+}
+
+static bool enterWhirlpool(AppState* app, int x, int y, WBObjRef unit, int* outX, int* outY) {
+    int px;
+    int py;
+    if (whirlpoolHasUser(app, x, y) || !findWhirlpoolPair(app, x, y, &px, &py)) {
         return false;
     }
-
-    for (y = 0; y < app->map.height; ++y) {
-        for (x = 0; x < app->map.width; ++x) {
-            g_monVisited[y][x] = 0;
-            g_monFirstX[y][x] = -1;
-            g_monFirstY[y][x] = -1;
-        }
+    if (tileHasOccupant(app, px, py)) {
+        return false;
     }
+    app->whirlpoolUser[y][x] = unit;
+    app->whirlpoolUser[py][px] = unit;
+    *outX = px;
+    *outY = py;
+    return true;
+}
 
-    g_monVisited[ms->row][ms->col] = 1;
-    g_monQx[tail] = (s16)ms->col;
-    g_monQy[tail] = (s16)ms->row;
-    ++tail;
+static void leaveWhirlpool(AppState* app, int x, int y, WBObjRef unit) {
+    if (app->map.cells[y][x].isWhirlpool && whirlpoolUserIs(app, x, y, unit)) {
+        memset(&app->whirlpoolUser[y][x], 0, sizeof(WBObjRef));
+    }
+}
 
-    while (head < tail) {
-        int cx = g_monQx[head];
-        int cy = g_monQy[head];
-        int fx = g_monFirstX[cy][cx];
-        int fy = g_monFirstY[cy][cx];
-        ++head;
+static void moveUnitCell(AppState* app, int fx, int fy, int tx, int ty) {
+    WBCell* f = &app->map.cells[fy][fx];
+    WBCell* t = &app->map.cells[ty][tx];
+    t->hasUnit = true;
+    t->unitType = f->unitType;
+    t->unitDirection = f->unitDirection;
+    t->unitEnergy = f->unitEnergy;
+    t->unitEnergyDeci = f->unitEnergyDeci;
+    t->unitCargo = f->unitCargo;
+    memcpy(t->unitCargoBatteries, f->unitCargoBatteries, sizeof(t->unitCargoBatteries));
+    t->unitCargoSpecial = f->unitCargoSpecial;
+    t->unitCargoStreetVariant = f->unitCargoStreetVariant;
+    t->unitCargoTreeType = f->unitCargoTreeType;
+    t->unitAgent = f->unitAgent;
+    f->hasUnit = false;
+    f->unitType = WB_UNIT_NONE;
+    f->unitEnergy = 0;
+    f->unitEnergyDeci = 0;
+    memset(&f->unitCargo, 0, sizeof(f->unitCargo));
+    memset(f->unitCargoBatteries, 0, sizeof(f->unitCargoBatteries));
+    f->unitCargoSpecial = 0;
+    f->unitCargoTreeType = WB_TERRAIN_NORMAL;
+    f->unitAgent = 0;
+    if (app->hasSelection && app->selectedX == fx && app->selectedY == fy) {
+        app->selectedX = tx;
+        app->selectedY = ty;
+    }
+}
 
-        if (manhattanDistance(cx, cy, targetX, targetY) == 1) {
-            if (fx >= 0 && fy >= 0) {
-                *outCol = fx;
-                *outRow = fy;
-                return true;
-            }
-            return false;
+/* map display manager MoveObject(): the destination must be on the map, free of
+   any occupant, of the mover's terrain, and not a whirlpool someone else is using. */
+static bool objMoveObject(AppState* app, WBObjRef ref, int tx, int ty) {
+    WBMotion* m = refMotion(app, ref);
+    WBTerrainOwner owner;
+    if (!m || !inBounds(app, tx, ty) || tileHasOccupant(app, tx, ty)) {
+        return false;
+    }
+    owner = refTerrainOwner(app, ref);
+    if (!ownerCanEnter(&owner, tileTerrain(app, tx, ty))) {
+        return false;
+    }
+    if (app->map.cells[ty][tx].isWhirlpool && whirlpoolHasUser(app, tx, ty) && !whirlpoolUserIs(app, tx, ty, ref)) {
+        return false;
+    }
+    if (ref.kind == WB_OBJ_UNIT) {
+        moveUnitCell(app, m->curX, m->curY, tx, ty);
+        m->curX = tx;
+        m->curY = ty;
+    } else if (ref.kind == WB_OBJ_MONSTER) {
+        g_monsters[ref.index].col = tx;
+        g_monsters[ref.index].row = ty;
+    }
+    return true;
+}
+
+static void stopRecharging(AppState* app, WBObjRef ref) {
+    if (ref.kind == WB_OBJ_UNIT) {
+        app->agents[ref.index].recharging = false;
+    }
+}
+
+static WBDirection directionFromOffset(int dx, int dy, WBDirection keep) {
+    if (dx > 0) return WB_DIR_RIGHT;
+    if (dx < 0) return WB_DIR_LEFT;
+    if (dy > 0) return WB_DIR_DOWN;
+    if (dy < 0) return WB_DIR_UP;
+    return keep;
+}
+
+static void setRefDirection(AppState* app, WBObjRef ref, WBDirection dir) {
+    int x;
+    int y;
+    if (!refAlive(app, ref, &x, &y)) return;
+    if (ref.kind == WB_OBJ_UNIT) app->map.cells[y][x].unitDirection = dir;
+    else if (ref.kind == WB_OBJ_MONSTER) g_monsters[ref.index].dir = dir;
+}
+
+static WBDirection refDirection(AppState* app, WBObjRef ref) {
+    int x;
+    int y;
+    if (!refAlive(app, ref, &x, &y)) return WB_DIR_RIGHT;
+    if (ref.kind == WB_OBJ_UNIT) return app->map.cells[y][x].unitDirection;
+    if (ref.kind == WB_OBJ_MONSTER) return g_monsters[ref.index].dir;
+    return WB_DIR_RIGHT;
+}
+
+static void collectPlansAt(AppState* app, int x, int y);
+
+/* moveTo(): the object now stands on its new tile; the sprite slides in from the
+   old one. A unit pays its move energy and picks up any plan lying there. */
+static void objMoveTo(AppState* app, WBObjRef ref, int fromX, int fromY) {
+    WBMotion* m = refMotion(app, ref);
+    int x;
+    int y;
+    if (!m || !refAlive(app, ref, &x, &y)) return;
+    stopRecharging(app, ref);
+    m->fromX = fromX;
+    m->fromY = fromY;
+    m->curX = x;
+    m->curY = y;
+    m->sliding = true;
+    m->slideStartMs = app->simMs;
+    m->moveIndex = 1.0f;
+    m->teleportStep = false;
+    setRefDirection(app, ref, directionFromOffset(x - fromX, y - fromY, refDirection(app, ref)));
+    if (ref.kind == WB_OBJ_UNIT) {
+        WBCell* cell = &app->map.cells[y][x];
+        int cost = unitMoveCostDeci(cell->unitType);
+        if (cost > 0) {
+            cell->unitEnergyDeci -= cost;
+            if (cell->unitEnergyDeci < 0) cell->unitEnergyDeci = 0;
+            cell->unitEnergy = energyStatusFromDeci(cell->unitEnergyDeci);
         }
+        collectPlansAt(app, x, y);
+    } else if (ref.kind == WB_OBJ_MONSTER) {
+        WBMonsterState* ms = &g_monsters[ref.index];
+        ms->onWater = (app->map.cells[y][x].terrain == WB_TERRAIN_WATER ||
+                       app->map.cells[y][x].terrain == WB_TERRAIN_WATER_UNFILLABLE);
+    }
+}
 
-        for (i = 0; i < 4; ++i) {
-            int nx = cx + dx[i];
-            int ny = cy + dy[i];
-            int stepX;
-            int stepY;
-            if (!inBounds(app, nx, ny) || g_monVisited[ny][nx]) {
-                continue;
-            }
-            if (!monsterCanTraverseForPursuit(ms, app->map.cells[ny][nx].terrain)) {
-                continue;
-            }
-            if (app->map.cells[ny][nx].hasUnit) {
-                continue;
-            }
-            if (app->map.cells[ny][nx].hasBuilding) {
-                continue;
-            }
-            if (cellHasActiveMover(app, nx, ny, -1)) {
-                continue;
-            }
-            if (activeMonsterAt(ms, ny, nx)) {
-                continue;
-            }
+/* animateTileMove(): pMoveIndex runs 1 -> 0 over 1000/speed ms. */
+static void objAnimateTileMove(AppState* app, WBObjRef ref) {
+    WBMotion* m = refMotion(app, ref);
+    float speed;
+    double d;
+    if (!m || !m->sliding) return;
+    speed = refSpeed(app, ref);
+    d = 1.0 - ((app->simMs - m->slideStartMs) * speed / 1000.0);
+    if (d > 1.0 || d < 0.0 || speed <= 0.0f) {
+        d = d > 1.0 ? 1.0 : 0.0;
+        m->sliding = false;
+        if (ref.kind == WB_OBJ_UNIT) app->agents[ref.index].stopPushing = true;
+    }
+    m->moveIndex = (float) d;
+}
 
-            g_monVisited[ny][nx] = 1;
-            if (cx == ms->col && cy == ms->row) {
-                stepX = nx;
-                stepY = ny;
+/* gotoPos(): a fresh pPath to pos; false when no path exists (pPath.path VOID). */
+static bool objGotoPos(AppState* app, WBObjRef ref, int gx, int gy, u8 reason, bool nextto, bool chase) {
+    WBMotion* m = refMotion(app, ref);
+    WBTerrainOwner owner;
+    int len;
+    if (!m) return false;
+    owner = refTerrainOwner(app, ref);
+    len = wbFindPath(app, m->curX, m->curY, gx, gy, &owner, nextto, chase, m->pathX, m->pathY);
+    m->hasPath = true;
+    m->pathValid = len > 0;
+    m->pathLen = len;
+    m->step = 0;
+    m->goalX = gx;
+    m->goalY = gy;
+    m->reason = reason;
+    m->nextto = nextto;
+    m->chase = chase;
+    m->teleport = false;
+    m->tryNum = 0;
+    m->tryAgainSet = false;
+    m->randomizeNum = 0;
+    return m->pathValid;
+}
+
+static void objStopMoving(AppState* app, WBObjRef ref) {
+    WBMotion* m = refMotion(app, ref);
+    if (m) m->hasPath = false;
+}
+
+static int refEnergyStatus(AppState* app, WBObjRef ref);
+static bool refHasBattery(AppState* app, WBObjRef ref);
+
+/* bouncyVehicle(): ordinary vehicles bob 2 px while driving; the defender,
+   treebot, frog, repairbot, freezebot and every monster override it to stand still. */
+static float unitBounceY(WBUnitType t, double ms) {
+    switch (t) {
+        case WB_UNIT_DEFENDER:
+        case WB_UNIT_TREEBOT:
+        case WB_UNIT_FROG:
+        case WB_UNIT_REPAIRBOT:
+        case WB_UNIT_FREEZEBOT:
+            return 0.0f;
+        default:
+            return (float) (2.0 * sin(ms / 50.0));
+    }
+}
+
+/* followPath(), once per frame while the object has a pPath. */
+static void objFollowPath(AppState* app, WBObjRef ref) {
+    WBMotion* m = refMotion(app, ref);
+    double t = app->simMs;
+    float speed;
+    if (!m || !m->hasPath) return;
+    if (refHasBattery(app, ref) && refEnergyStatus(app, ref) == 0) {
+        m->hasPath = false;
+        return;
+    }
+    if (ref.kind == WB_OBJ_MONSTER && g_monsters[ref.index].frozenState != 0 && g_monsters[ref.index].frozenState != 3) {
+        return;
+    }
+    if (!m->pathValid) {
+        /* No way there: shudder, try once more straight away, then once the
+           750-1250 ms wait is over, give up. */
+        m->pixelOffX = (float) (2.0 * sin(t / 25.0));
+        m->pixelOffY = 0.0f;
+        if (!m->tryAgainSet || t > m->tryAgainMs) {
+            WBTerrainOwner owner;
+            int len;
+            m->tryNum += 1;
+            if (m->tryNum >= 2) {
+                m->hasPath = false;
+                return;
+            }
+            owner = refTerrainOwner(app, ref);
+            len = wbFindPath(app, m->curX, m->curY, m->goalX, m->goalY, &owner, false, false, m->pathX, m->pathY);
+            if (len <= 0) {
+                m->tryAgainMs = t + 750 + lingoRandom(500);
+                m->tryAgainSet = true;
+                return;
+            }
+            m->tryNum = 0;
+            m->pathLen = len;
+            m->pathValid = true;
+            m->step = 0;
+            return;
+        }
+        return;
+    }
+    m->pixelOffX = 0.0f;
+    m->pixelOffY = (ref.kind == WB_OBJ_UNIT)
+        ? unitBounceY(app->map.cells[m->curY][m->curX].unitType, t) : 0.0f;
+    speed = refSpeed(app, ref);
+    if (speed <= 0.0f || (t - m->moveTimeMs) < (1000.0 / speed)) {
+        return;
+    }
+    m->moveTimeMs = t;
+    if (m->step >= m->pathLen - 1) {
+        m->hasPath = false;
+        m->checkDest = true;
+        m->checkX = m->goalX;
+        m->checkY = m->goalY;
+        m->checkReason = m->reason;
+        return;
+    }
+    {
+        int prevX = m->curX;
+        int prevY = m->curY;
+        int nx = m->pathX[m->step + 1];
+        int ny = m->pathY[m->step + 1];
+        m->step += 1;
+        if (objMoveObject(app, ref, nx, ny)) {
+            int tx;
+            int ty;
+            bool teleport = false;
+            if (app->map.cells[prevY][prevX].isWhirlpool) {
+                leaveWhirlpool(app, prevX, prevY, ref);
+            }
+            if (m->teleport) {
+                /* popping out of the partner whirlpool: no slide */
+                objMoveTo(app, ref, prevX, prevY);
+                m->teleportStep = true;
             } else {
-                stepX = fx;
-                stepY = fy;
+                if (app->map.cells[ny][nx].isWhirlpool && enterWhirlpool(app, nx, ny, ref, &tx, &ty)) {
+                    teleport = true;
+                }
+                objMoveTo(app, ref, prevX, prevY);
+                if (teleport) {
+                    m->goalX = tx;
+                    m->goalY = ty;
+                    m->pathLen = 2;
+                    m->pathX[0] = (u8) nx;
+                    m->pathY[0] = (u8) ny;
+                    m->pathX[1] = (u8) tx;
+                    m->pathY[1] = (u8) ty;
+                    m->step = 0;
+                    m->teleport = true;
+                }
             }
-            g_monFirstX[ny][nx] = (s16)stepX;
-            g_monFirstY[ny][nx] = (s16)stepY;
-            g_monQx[tail] = (s16)nx;
-            g_monQy[tail] = (s16)ny;
-            ++tail;
+            m->randomizeNum -= 1;
+            if (m->randomizeNum < 0) m->randomizeNum = 0;
+        } else {
+            m->step -= 1;
+            if (!m->randomizeNum) {
+                m->randomizeMs = t + 500 + lingoRandom(1000);
+                m->randomizeNum = 2;
+            } else if (t > m->randomizeMs) {
+                static const int offs[4][2] = { {1, 0}, {0, 1}, {-1, 0}, {0, -1} };
+                WBTerrainOwner owner = refTerrainOwner(app, ref);
+                int neiX[4];
+                int neiY[4];
+                int n = 0;
+                int k;
+                for (k = 0; k < 4; ++k) {
+                    int qx = m->curX + offs[k][0];
+                    int qy = m->curY + offs[k][1];
+                    if (!inBounds(app, qx, qy) || tileHasOccupant(app, qx, qy)) continue;
+                    if (!ownerCanEnter(&owner, tileTerrain(app, qx, qy))) continue;
+                    neiX[n] = qx;
+                    neiY[n] = qy;
+                    ++n;
+                }
+                m->randomizeNum += 2;
+                if (m->randomizeNum >= 6) {
+                    /* gotoPos(goal) then pPath.path = VOID: the next frame re-paths
+                       through the no-path branch (the options are lost, as there). */
+                    objGotoPos(app, ref, m->goalX, m->goalY, WB_REASON_NONE, false, false);
+                    m->pathValid = false;
+                } else if (n == 0) {
+                    m->randomizeMs = t + 1000 + lingoRandom(2000);
+                } else {
+                    int pick = lingoRandom(n) - 1;
+                    int oldX = m->curX;
+                    int oldY = m->curY;
+                    if (!objMoveObject(app, ref, neiX[pick], neiY[pick])) {
+                        m->pathValid = false;
+                    } else {
+                        objMoveTo(app, ref, oldX, oldY);
+                        if (m->pathLen < WB_PATH_MAX) {
+                            memmove(&m->pathX[m->step + 2], &m->pathX[m->step + 1], (size_t) (m->pathLen - m->step - 1));
+                            memmove(&m->pathY[m->step + 2], &m->pathY[m->step + 1], (size_t) (m->pathLen - m->step - 1));
+                            m->pathX[m->step + 1] = (u8) oldX;
+                            m->pathY[m->step + 1] = (u8) oldY;
+                            m->pathLen += 1;
+                        }
+                        m->moveTimeMs = t + 200 + lingoRandom(300);
+                    }
+                }
+            }
         }
     }
+}
+/* ─── Energy, batteries and piles ──────────────────────────────────────── */
 
+static bool refHasBattery(AppState* app, WBObjRef ref) {
+    int x;
+    int y;
+    if (!refAlive(app, ref, &x, &y)) return false;
+    if (ref.kind == WB_OBJ_UNIT) return true;                       /* every unit recipe has #energy:1 */
+    if (ref.kind == WB_OBJ_MONSTER) return g_monsters[ref.index].type != WB_MONSTER_BOULDER;
+    if (ref.kind == WB_OBJ_BUILDING) {
+        const WBResourcePile* r = wbBuildingRecipe(app->map.cells[y][x].buildingType);
+        return r && r->energy > 0;
+    }
     return false;
 }
 
-static bool findClosestUnitTarget(const AppState* app, const WBMonsterState* seeker, int maxDist, int* outX, int* outY) {
-    int y;
+static int* refEnergyDeciPtr(AppState* app, WBObjRef ref) {
     int x;
-    int best = 0x7FFFFFFF;
-    bool found = false;
+    int y;
+    if (!refAlive(app, ref, &x, &y) || !refHasBattery(app, ref)) return NULL;
+    if (ref.kind == WB_OBJ_UNIT) return &app->map.cells[y][x].unitEnergyDeci;
+    if (ref.kind == WB_OBJ_MONSTER) return &g_monsters[ref.index].hp;
+    if (ref.kind == WB_OBJ_BUILDING) return &app->map.cells[y][x].buildingHp;
+    return NULL;
+}
 
-    if (!app || !seeker) {
-        return false;
+/* energyStatus(); an object without batteries reads as VOID, which the original's
+   "= 0" tests treat as 0. */
+static int refEnergyStatus(AppState* app, WBObjRef ref) {
+    int* e = refEnergyDeciPtr(app, ref);
+    return e ? energyStatusFromDeci(*e) : 0;
+}
+
+static void syncUnitEnergy(AppState* app, WBObjRef ref) {
+    int x;
+    int y;
+    if (ref.kind == WB_OBJ_UNIT && refAlive(app, ref, &x, &y)) {
+        app->map.cells[y][x].unitEnergy = energyStatusFromDeci(app->map.cells[y][x].unitEnergyDeci);
     }
+}
 
-    for (y = 0; y < app->map.height; ++y) {
-        for (x = 0; x < app->map.width; ++x) {
-            const WBCell* cell = &app->map.cells[y][x];
-            int dist;
-            int stepX;
-            int stepY;
-            if (!cell->hasUnit) {
-                continue;
-            }
-            dist = manhattanDistance(seeker->col, seeker->row, x, y);
-            if (dist > maxDist || dist >= best) {
-                continue;
-            }
-            if (dist > 1 && !monsterPathStepTowardTarget(app, seeker, x, y, &stepX, &stepY)) {
-                continue;
-            }
-            best = dist;
-            *outX = x;
-            *outY = y;
-            found = true;
+static void refUseEnergy(AppState* app, WBObjRef ref, int deci) {
+    int* e = refEnergyDeciPtr(app, ref);
+    if (!e || deci == 0) return;
+    *e -= deci;
+    if (*e < 0) *e = 0;
+    syncUnitEnergy(app, ref);
+}
+
+static void refAddEnergy(AppState* app, WBObjRef ref, int deci) {
+    int* e = refEnergyDeciPtr(app, ref);
+    if (!e) return;
+    *e += deci;
+    if (*e > 1000) *e = 1000;
+    syncUnitEnergy(app, ref);
+}
+
+static int pileTakeBattery(WBCell* c) {
+    int n = pileBatteryCount(c);
+    int charge = n > 0 ? c->pileBatteries[n - 1] : 1000;
+    if (c->pile.energy > 0) c->pile.energy -= 1;
+    return charge;
+}
+
+static void pileAppendBattery(WBCell* c, int charge) {
+    int n = c->pile.energy;
+    if (n < WB_MAX_PILE_BATTERIES) c->pileBatteries[n] = (u16) (charge < 0 ? 0 : (charge > 1000 ? 1000 : charge));
+    c->pile.energy += 1;
+}
+
+static int compareU16(const void* a, const void* b) {
+    return (int) *(const u16*) a - (int) *(const u16*) b;
+}
+
+/* getPlans(): a plan lying on the tile goes into the collection. */
+static void collectPlansAt(AppState* app, int x, int y) {
+    WBCell* cell = &app->map.cells[y][x];
+    float locX;
+    float locY;
+    WBPlanType picked;
+    if (!cell->hasResource || !cell->resourceIsPlan) return;
+    picked = cell->resourcePlanType;
+    if (picked > WB_PLAN_NONE && picked < WB_PLAN_COUNT) {
+        app->map.planInventory[picked] += cell->resourcePlanCount;
+    }
+    playSfxClip(app, app->sfxPickupPlan.loaded ? &app->sfxPickupPlan : &app->sfxMove);
+    posToLoc(app, x + 1, y + 1, &locX, &locY);
+    startPlanSwoop(app, picked, locX + (10.0f * DIRECTOR_SCALE), locY + (18.0f * DIRECTOR_SCALE));
+    cell->hasResource = false;
+    cell->resourceIsPlan = false;
+    cell->resourcePlanType = WB_PLAN_NONE;
+    cell->resourcePlanCount = 0;
+}
+
+/* map display manager createResource(): a new pile sorts its batteries; adding to
+   an existing pile appends them (giveBricks). energy == NULL means the original's
+   VOID: every battery full. */
+static void createResource(AppState* app, int x, int y, const WBResourcePile* bricks, const u16* energy, int energyCount) {
+    WBCell* cell = &app->map.cells[y][x];
+    int i;
+    int batteries;
+    if (cell->hasResource && cell->resourceIsPlan) {
+        collectPlansAt(app, x, y);
+    }
+    batteries = energy ? energyCount : bricks->energy;
+    if (!cell->hasResource) {
+        cell->hasResource = true;
+        cell->resourceIsPlan = false;
+        memset(&cell->pile, 0, sizeof(cell->pile));
+        memset(cell->pileBatteries, 0, sizeof(cell->pileBatteries));
+        {
+            WBResourcePile b = *bricks;
+            b.energy = 0;
+            addPile(&cell->pile, &b);
+        }
+        for (i = 0; i < batteries; ++i) {
+            pileAppendBattery(cell, energy ? energy[i] : 1000);
+        }
+        qsort(cell->pileBatteries, (size_t) pileBatteryCount(cell), sizeof(u16), compareU16);
+    } else {
+        WBResourcePile b = *bricks;
+        b.energy = 0;
+        addPile(&cell->pile, &b);
+        for (i = 0; i < batteries; ++i) {
+            pileAppendBattery(cell, energy ? energy[i] : 1000);
         }
     }
-    return found;
+    if (resourceTotal(&cell->pile) == 0) {
+        cell->hasResource = false;
+    }
 }
 
-static bool findClosestBuildingTarget(const AppState* app, const WBMonsterState* seeker, int maxDist, int* outX, int* outY) {
-    int y;
+/* ─── Combat: object.generic parent ───────────────────────────────────── */
+
+static float refShield(AppState* app, WBObjRef ref) {
     int x;
-    int best = 0x7FFFFFFF;
-    bool found = false;
-
-    if (!app || !seeker) {
-        return false;
-    }
-
-    for (y = 0; y < app->map.height; ++y) {
-        for (x = 0; x < app->map.width; ++x) {
-            const WBCell* cell = &app->map.cells[y][x];
-            int dist;
-            int stepX;
-            int stepY;
-            if (!cell->hasBuilding) {
-                continue;
-            }
-            dist = manhattanDistance(seeker->col, seeker->row, x, y);
-            if (dist > maxDist || dist >= best) {
-                continue;
-            }
-            if (dist > 1 && !monsterPathStepTowardTarget(app, seeker, x, y, &stepX, &stepY)) {
-                continue;
-            }
-            best = dist;
-            *outX = x;
-            *outY = y;
-            found = true;
+    int y;
+    if (!refAlive(app, ref, &x, &y)) return 1.0f;
+    if (ref.kind == WB_OBJ_UNIT) {
+        switch (app->map.cells[y][x].unitType) {
+            case WB_UNIT_DEFENDER:
+            case WB_UNIT_DEFENDER2:
+            case WB_UNIT_SPEEDBOAT:  return 0.05f;
+            case WB_UNIT_FREEZEBOT:  return 0.5f;
+            default:                 return 1.0f;
         }
     }
-    return found;
+    if (ref.kind == WB_OBJ_BUILDING) {
+        return app->map.cells[y][x].buildingType == WB_BUILDING_GUARD_TOWER ? 0.02f : 1.0f;
+    }
+    switch (g_monsters[ref.index].type) {
+        case WB_MONSTER_CRAB:
+        case WB_MONSTER_WATER_CRAB:
+        case WB_MONSTER_GATOR:      return 0.1f;
+        case WB_MONSTER_SCORPION:   return 0.045f;
+        case WB_MONSTER_SHARK:      return 0.05f;
+        case WB_MONSTER_TREX:       return 0.02f;
+        case WB_MONSTER_LION:       return 0.03f;
+        case WB_MONSTER_BOULDER:    return 0.00000001f;
+        default:                    return 1.0f;
+    }
 }
 
-static bool chooseMonsterStepToward(const AppState* app, const WBMonsterState* ms, int targetX, int targetY, int* outCol, int* outRow) {
-    return monsterPathStepTowardTarget(app, ms, targetX, targetY, outCol, outRow);
+/* pBuild.attack: which targets an attacker has stats for, from the WB1 / WB2 config. */
+static bool attackStatsFor(AppState* app, WBObjRef self, WBObjRef target, WBAttackProfile* out) {
+    int sx, sy, tx, ty;
+    bool wb2 = app->map.isWB2Level;
+    if (!refAlive(app, self, &sx, &sy) || !refAlive(app, target, &tx, &ty)) return false;
+    if (self.kind == WB_OBJ_MONSTER) {
+        /* monsters attack #units: buildings and vehicles */
+        if (target.kind == WB_OBJ_MONSTER) return false;
+        switch (g_monsters[self.index].type) {
+            case WB_MONSTER_CRAB:
+            case WB_MONSTER_WATER_CRAB:
+            case WB_MONSTER_GATOR:    *out = (WBAttackProfile){25, 100, 100, 200, 4}; return true;
+            case WB_MONSTER_SCORPION: *out = (WBAttackProfile){25, 100, 200, 400, 4}; return true;
+            case WB_MONSTER_SHARK:    *out = (WBAttackProfile){25, 100, 300, 500, 4}; return true;
+            case WB_MONSTER_TREX:     *out = (WBAttackProfile){25, 100, 400, 600, 4}; return true;
+            case WB_MONSTER_LION:     *out = (WBAttackProfile){30, 100, 200, 400, 4}; return true;
+            default: return false;
+        }
+    }
+    if (target.kind != WB_OBJ_MONSTER) return false;
+    {
+        WBMonsterType mt = g_monsters[target.index].type;
+        bool basic = (mt == WB_MONSTER_CRAB || mt == WB_MONSTER_WATER_CRAB || mt == WB_MONSTER_SCORPION || mt == WB_MONSTER_GATOR);
+        if (self.kind == WB_OBJ_UNIT) {
+            WBUnitType ut = app->map.cells[sy][sx].unitType;
+            bool ok;
+            switch (ut) {
+                case WB_UNIT_DEFENDER:  ok = basic || mt == WB_MONSTER_SHARK || mt == WB_MONSTER_TREX || (wb2 && mt == WB_MONSTER_LION); break;
+                case WB_UNIT_DEFENDER2: ok = basic; break;
+                case WB_UNIT_SPEEDBOAT: ok = basic || mt == WB_MONSTER_SHARK || mt == WB_MONSTER_TREX; break;
+                default: ok = false; break;
+            }
+            if (!ok) return false;
+            *out = (WBAttackProfile){25, 75, 150, 250, 2};
+            return true;
+        }
+        if (self.kind == WB_OBJ_BUILDING && app->map.cells[sy][sx].buildingType == WB_BUILDING_GUARD_TOWER) {
+            bool ok = basic || mt == WB_MONSTER_SHARK || (wb2 && (mt == WB_MONSTER_LION || mt == WB_MONSTER_TREX));
+            if (!ok) return false;
+            *out = (WBAttackProfile){25, 75, 200, 300, 2};
+            return true;
+        }
+    }
+    return false;
 }
 
-/* Autonomously move a unit at (fromX, fromY) toward (goalX, goalY) without
-   player selection.  Does not play SFX or set app->selectedMover. */
-static void beginMoveAuto(AppState* app, int fromX, int fromY, int goalX, int goalY) {
-    WBCell* cell = &app->map.cells[fromY][fromX];
-    int moveIndex;
-    WBMoveState* move;
-    int pathLen = 0;
+/* pBuild[#attack_search_range], 0 for objects that don't hunt. */
+static int attackSearchRange(AppState* app, WBObjRef self) {
+    int x;
+    int y;
+    if (!refAlive(app, self, &x, &y)) return 0;
+    if (self.kind == WB_OBJ_MONSTER) return g_monsters[self.index].type == WB_MONSTER_BOULDER ? 0 : 4;
+    if (self.kind == WB_OBJ_UNIT) {
+        WBUnitType t = app->map.cells[y][x].unitType;
+        return (t == WB_UNIT_DEFENDER || t == WB_UNIT_DEFENDER2 || t == WB_UNIT_SPEEDBOAT) ? 2 : 0;
+    }
+    if (self.kind == WB_OBJ_BUILDING) {
+        return app->map.cells[y][x].buildingType == WB_BUILDING_GUARD_TOWER ? 2 : 0;
+    }
+    return 0;
+}
 
-    if (!cell->hasUnit || cell->unitEnergyDeci <= 0) {
-        return;
-    }
-    if (!findPath(app, fromX, fromY, goalX, goalY, cell->unitType, g_pathScratchX, g_pathScratchY, &pathLen)) {
-        return;
-    }
-    moveIndex = findFreeMoveSlot(app);
-    if (moveIndex < 0) {
-        return;
-    }
-    move = &app->moves[moveIndex];
+typedef struct WBAttackState {
+    bool* hasTarget;
+    WBObjRef* target;
+    bool* nextAttackSet;
+    double* nextAttackMs;
+    WBAttackProfile* stats;
+} WBAttackState;
 
-    memset(move, 0, sizeof(*move));
-    move->active = true;
-    move->unitType = cell->unitType;
-    move->unitEnergy = cell->unitEnergy;
-    move->unitEnergyDeci = cell->unitEnergyDeci;
-    move->unitCargo = cell->unitCargo;
-    move->unitCargoEnergyValue = cell->unitCargoEnergyValue;
-    move->goalX = goalX;
-    move->goalY = goalY;
-    move->pathLen = pathLen;
-    move->pathIndex = 0;
-    move->progress = 0.0f;
-    move->stepStartMs = osGetTime();
-    move->blockedWaiting = false;
-    move->resumeGoalAfterStop = false;
-    move->blockedRetryMs = 0;
-    move->blockedTryNum = 0;
-    move->direction = directionFromStep(g_pathScratchX[0], g_pathScratchY[0], g_pathScratchX[1], g_pathScratchY[1]);
-    move->finalDirection = move->direction;
-    memcpy(move->pathX, g_pathScratchX, sizeof(int) * pathLen);
-    memcpy(move->pathY, g_pathScratchY, sizeof(int) * pathLen);
+static bool refAttackState(AppState* app, WBObjRef ref, WBAttackState* out) {
+    int x;
+    int y;
+    if (!refAlive(app, ref, &x, &y)) return false;
+    if (ref.kind == WB_OBJ_UNIT) {
+        WBUnitAgent* a = &app->agents[ref.index];
+        out->hasTarget = &a->hasTarget; out->target = &a->target;
+        out->nextAttackSet = &a->nextAttackSet; out->nextAttackMs = &a->nextAttackMs; out->stats = &a->stats;
+        return true;
+    }
+    if (ref.kind == WB_OBJ_MONSTER) {
+        WBMonsterState* ms = &g_monsters[ref.index];
+        out->hasTarget = &ms->hasTarget; out->target = &ms->target;
+        out->nextAttackSet = &ms->nextAttackSet; out->nextAttackMs = &ms->nextAttackMs; out->stats = &ms->stats;
+        return true;
+    }
+    out->hasTarget = &app->buildingHasTarget[y][x]; out->target = &app->buildingTarget[y][x];
+    out->nextAttackSet = &app->buildingNextAttackSet[y][x]; out->nextAttackMs = &app->buildingNextAttackMs[y][x];
+    out->stats = &app->buildingAttackStats[y][x];
+    return true;
+}
+
+static bool acquireTarget(AppState* app, WBObjRef self, WBObjRef target) {
+    WBAttackState st;
+    WBAttackProfile stats;
+    if (!refAttackState(app, self, &st) || !attackStatsFor(app, self, target, &stats)) return false;
+    *st.hasTarget = true;
+    *st.target = target;
+    *st.stats = stats;
+    return true;
+}
+
+/* disengageAttack(): a vehicle also stops, unless told not to. */
+static void disengageAttack(AppState* app, WBObjRef self, bool dontStop) {
+    WBAttackState st;
+    if (!refAttackState(app, self, &st)) return;
+    if (self.kind != WB_OBJ_BUILDING && !dontStop) {
+        objStopMoving(app, self);
+    }
+    *st.hasTarget = false;
+}
+
+static void setActionCycle(AppState* app, WBObjRef ref, u8 anim) {
+    if (ref.kind == WB_OBJ_UNIT) {
+        app->agents[ref.index].actionAnim = anim;
+        app->agents[ref.index].actionWhenMs = app->simMs;
+    } else if (ref.kind == WB_OBJ_MONSTER) {
+        g_monsters[ref.index].actionActive = true;
+        g_monsters[ref.index].actionWhenMs = app->simMs;
+    }
+}
+
+static bool* refDyingPtr(AppState* app, WBObjRef ref, double** damageMs) {
+    int x;
+    int y;
+    if (!refAlive(app, ref, &x, &y)) return NULL;
+    if (ref.kind == WB_OBJ_UNIT) { *damageMs = &app->agents[ref.index].damageMs; return &app->agents[ref.index].dying; }
+    if (ref.kind == WB_OBJ_MONSTER) { *damageMs = &g_monsters[ref.index].damageMs; return &g_monsters[ref.index].dying; }
+    *damageMs = &app->buildingDamageMs[y][x];
+    return &app->buildingDying[y][x];
+}
+
+/* getAttacked(damage, attacker): damage in 0-100 energy units, reduced by the
+   shield and rounded as Lingo's integer(). Swamp damage has no attacker. */
+static void getAttacked(AppState* app, WBObjRef target, int damage, WBObjRef attacker) {
+    double* damageMs = NULL;
+    bool* dying = refDyingPtr(app, target, &damageMs);
+    int dmg;
+    int tx;
+    int ty;
+    if (!dying || !refAlive(app, target, &tx, &ty)) return;
+    dmg = lingoInteger((double) damage * (double) refShield(app, target));
+    if (dmg != 0) {
+        refUseEnergy(app, target, dmg * 10);
+        if (refEnergyStatus(app, target) == 0) {
+            *dying = true;
+        }
+    }
+    *damageMs = app->simMs;
+    /* damageSize is worked out (13/17) but placeSprites always shows damage.small */
+    spawnWorldEffect(app, WB_WORLD_EFFECT_DAMAGE_SMALL, tx, ty);
+    if (attacker.kind != WB_OBJ_NONE) {
+        playSfxClipWorld(app, &app->sfxDamage);
+        if (target.kind == WB_OBJ_MONSTER && refAlive(app, attacker, NULL, NULL)) {
+            acquireTarget(app, target, attacker);
+        }
+    }
+}
+
+static void followTarget(AppState* app, WBObjRef self) {
+    WBAttackState st;
+    int tx;
+    int ty;
+    if (self.kind == WB_OBJ_BUILDING) return;               /* object.generic: nothing */
+    if (!refAttackState(app, self, &st) || !refAlive(app, *st.target, &tx, &ty)) return;
+    if (!objGotoPos(app, self, tx, ty, WB_REASON_ATTACK, true, true)) {
+        disengageAttack(app, self, false);
+    }
+}
+
+static void doAttack(AppState* app, WBObjRef self) {
+    WBAttackState st;
+    int sx, sy, tx, ty;
+    WBObjRef target;
+    if (!refAttackState(app, self, &st) || !refAlive(app, self, &sx, &sy) || !refAlive(app, *st.target, &tx, &ty)) return;
+    target = *st.target;
+    if (self.kind != WB_OBJ_BUILDING) {
+        setRefDirection(app, self, directionFromOffset(tx - sx, ty - sy, refDirection(app, self)));
+    }
+    setActionCycle(app, self, WB_UNIT_ANIM_ATTACK);
+    if (lingoRandom(100) < st.stats->chanceOfSuccess) {
+        int damage = lingoRandom(st.stats->damageMax - st.stats->damageMin) + st.stats->damageMin;
+        getAttacked(app, target, damage, self);
+    } else {
+        getAttacked(app, target, 0, self);
+    }
+    if (self.kind == WB_OBJ_MONSTER) {
+        playSfxClipWorld(app, &app->sfxMonsterAttack);
+    }
+}
+
+static void checkDefending(AppState* app, WBObjRef self) {
+    int r = attackSearchRange(app, self);
+    int sx;
+    int sy;
+    int i;
+    int j;
+    if (r <= 0 || !refAlive(app, self, &sx, &sy)) return;
+    for (i = -r; i <= r; ++i) {
+        for (j = -r; j <= r; ++j) {
+            int x = sx + i;
+            int y = sy + j;
+            WBObjRef occ;
+            if (abs(i) + abs(j) > r || !inBounds(app, x, y)) continue;
+            memset(&occ, 0, sizeof(occ));
+            if (app->map.cells[y][x].hasUnit && agentAt(app, x, y)) {
+                occ = unitRefFromAgent(app, app->map.cells[y][x].unitAgent - 1);
+            } else if (app->map.cells[y][x].hasBuilding) {
+                occ = buildingRef(app, x, y);
+            } else {
+                int mi = monsterIndexAt(x, y);
+                if (mi < 0) continue;
+                occ = monsterRef(mi);
+            }
+            if (acquireTarget(app, self, occ)) {
+                followTarget(app, self);
+                return;
+            }
+        }
+    }
+}
+
+static void checkAttacking(AppState* app, WBObjRef self) {
+    WBAttackState st;
+    int sx, sy, tx, ty;
+    if (!refAttackState(app, self, &st) || !refAlive(app, self, &sx, &sy)) return;
+    if (!refAlive(app, *st.target, &tx, &ty)) {
+        disengageAttack(app, self, false);
+        return;
+    }
+    if (manhattanDistance(sx, sy, tx, ty) != 1) {
+        followTarget(app, self);
+    } else if (!*st.nextAttackSet || app->simMs > *st.nextAttackMs) {
+        *st.nextAttackSet = true;
+        *st.nextAttackMs = app->simMs + (60000.0 / st.stats->hitsPerMinute);
+        doAttack(app, self);
+    }
+}
+
+static void checkAttack(AppState* app, WBObjRef self) {
+    WBAttackState st;
+    if (!refAttackState(app, self, &st)) return;
+    if (*st.hasTarget) {
+        checkAttacking(app, self);
+    } else {
+        checkDefending(app, self);
+    }
+}
+
+/* checkSwampDamage(): 50 every 0.7 s on swamp, through the shield, no sound. */
+static void checkSwampDamage(AppState* app, WBObjRef self, bool* swampSet, double* swampMs) {
+    int x;
+    int y;
+    WBObjRef none;
+    if (!refAlive(app, self, &x, &y)) return;
+    if (app->map.cells[y][x].terrain != WB_TERRAIN_SWAMP) {
+        *swampSet = false;
+        return;
+    }
+    if (!*swampSet) {
+        *swampSet = true;
+        *swampMs = app->simMs;
+    }
+    if ((app->simMs - *swampMs) > 700.0) {
+        *swampMs = app->simMs;
+        memset(&none, 0, sizeof(none));
+        getAttacked(app, self, 50, none);
+    }
+}
+
+/* ─── Recharging ──────────────────────────────────────────────────────── */
+
+/* canRecharge(): the config's #recharges lists. */
+static bool canRechargeUnit(AppState* app, WBObjRef charger, WBUnitType who) {
+    int x;
+    int y;
+    bool wb2 = app->map.isWB2Level;
+    if (!refAlive(app, charger, &x, &y)) return false;
+    if (charger.kind == WB_OBJ_BUILDING) {
+        switch (app->map.cells[y][x].buildingType) {
+            case WB_BUILDING_GAS_STATION:
+                return who == WB_UNIT_BUGGY || who == WB_UNIT_DIRTBUGGY || who == WB_UNIT_STEAMSHOVEL ||
+                       who == WB_UNIT_DUMPTRUCK || who == WB_UNIT_FORKLIFT || who == WB_UNIT_DOZER;
+            case WB_BUILDING_MARINA:
+                return who == WB_UNIT_TUGBOAT || who == WB_UNIT_FREIGHTER || who == WB_UNIT_SPEEDBOAT;
+            case WB_BUILDING_ROBOT_LAB:
+                return who == WB_UNIT_TREEBOT || who == WB_UNIT_DEFENDER || who == WB_UNIT_DEFENDER2 ||
+                       (wb2 && who == WB_UNIT_FREEZEBOT);
+            default:
+                return false;
+        }
+    }
+    if (charger.kind == WB_OBJ_UNIT && app->map.cells[y][x].unitType == WB_UNIT_REPAIRBOT) {
+        return who == WB_UNIT_TREEBOT || who == WB_UNIT_DEFENDER || who == WB_UNIT_DEFENDER2 ||
+               who == WB_UNIT_REPAIRBOT || (wb2 && who == WB_UNIT_FREEZEBOT);
+    }
+    return false;
+}
+
+/* checkForRecharger(): idle and not full, look round every ~3 s; the last
+   neighbour (right, down, left, up) that can charge us is the one we use. */
+static void checkForRecharger(AppState* app, WBObjRef self) {
+    static const int offs[4][2] = { {1, 0}, {0, 1}, {-1, 0}, {0, -1} };
+    WBUnitAgent* a;
+    int x;
+    int y;
+    int k;
+    if (self.kind != WB_OBJ_UNIT || !refAlive(app, self, &x, &y)) return;
+    a = &app->agents[self.index];
+    if (a->m.hasPath || refEnergyStatus(app, self) >= 100) return;
+    if (a->checkRechargerSet && (app->simMs - a->checkRechargerMs) < 1500.0) return;
+    a->checkRechargerSet = true;
+    a->checkRechargerMs = app->simMs + 1500.0;
+    for (k = 0; k < 4; ++k) {
+        int nx = x + offs[k][0];
+        int ny = y + offs[k][1];
+        WBObjRef occ;
+        if (!inBounds(app, nx, ny)) continue;
+        memset(&occ, 0, sizeof(occ));
+        if (app->map.cells[ny][nx].hasBuilding) occ = buildingRef(app, nx, ny);
+        else if (app->map.cells[ny][nx].hasUnit && agentAt(app, nx, ny)) occ = unitRefFromAgent(app, app->map.cells[ny][nx].unitAgent - 1);
+        else continue;
+        if (canRechargeUnit(app, occ, app->map.cells[y][x].unitType)) {
+            a->recharging = true;
+            a->charger = occ;
+        }
+    }
+}
+
+/* doRecharge(): one point a frame. Buildings and the repairbot charge for free
+   (the repairbot even when flat), turning to face the unit and animating. */
+static void doRecharge(AppState* app, WBObjRef self) {
+    WBUnitAgent* a;
+    int x, y, cx, cy;
+    if (self.kind != WB_OBJ_UNIT || !refAlive(app, self, &x, &y)) return;
+    a = &app->agents[self.index];
+    if (!a->recharging) return;
+    if (!refAlive(app, a->charger, &cx, &cy)) {
+        a->recharging = false;              /* the original keeps drawing on a destroyed charger */
+        return;
+    }
+    if (a->charger.kind == WB_OBJ_UNIT) {
+        WBUnitAgent* rb = &app->agents[a->charger.index];
+        if (rb->repairFrame == 0) rb->repairFrame = 1;
+        app->map.cells[cy][cx].unitDirection = directionFromOffset(x - cx, y - cy, WB_DIR_DOWN);
+    }
+    if (refEnergyStatus(app, self) == 100) {
+        a->recharging = false;
+        return;
+    }
+    refAddEnergy(app, self, 10);
+}
+
+/* ─── Death: disassemble() and recycle() ─────────────────────────────── */
+
+static void destroyUnitAt(AppState* app, int x, int y);
+
+static void disassembleRef(AppState* app, WBObjRef ref) {
+    int x;
+    int y;
+    if (!refAlive(app, ref, &x, &y)) return;
+    spawnWorldEffect(app, WB_WORLD_EFFECT_TAKE_APART_CLOUD, x, y);
+    if (ref.kind == WB_OBJ_UNIT) {
+        WBCell* cell = &app->map.cells[y][x];
+        const WBResourcePile* recipe = wbUnitRecipe(cell->unitType);
+        WBResourcePile bricks;
+        u16 energy[1 + WB_MAX_CARGO_BATTERIES];
+        int n = 0;
+        int i;
+        memset(&bricks, 0, sizeof(bricks));
+        if (recipe) bricks = *recipe;
+        /* recycle(): carried bricks come back too, but not dug earth or a sapling */
+        if (unitSupportsPickDrop(cell->unitType)) {
+            WBResourcePile cargo = cell->unitCargo;
+            cargo.energy = 0;
+            addPile(&bricks, &cargo);
+        }
+        bricks.energy = 0;
+        energy[n++] = (u16) (cell->unitEnergyDeci < 0 ? 0 : cell->unitEnergyDeci);
+        if (unitSupportsPickDrop(cell->unitType)) {
+            for (i = 0; i < cell->unitCargo.energy && i < WB_MAX_CARGO_BATTERIES; ++i) {
+                energy[n++] = cell->unitCargoBatteries[i];
+            }
+        }
+        if (app->map.cells[y][x].isWhirlpool) leaveWhirlpool(app, x, y, ref);
+        destroyUnitAt(app, x, y);
+        bricks.energy = n;
+        createResource(app, x, y, &bricks, energy, n);
+    } else if (ref.kind == WB_OBJ_MONSTER) {
+        WBMonsterState* ms = &g_monsters[ref.index];
+        WBResourcePile drop;
+        u16 energy[1] = { 1000 };   /* monster.disassemble: batteries back to full first */
+        memset(&drop, 0, sizeof(drop));
+        monsterDropRecipe(ms->type, &drop);
+        ms->active = false;
+        actorListRemove(app, ref);
+        if (ms->type == WB_MONSTER_BOULDER) {
+            drop.energy = 0;
+            createResource(app, x, y, &drop, energy, 0);
+        } else {
+            drop.energy = 1;
+            createResource(app, x, y, &drop, energy, 1);
+        }
+    } else {
+        WBCell* cell = &app->map.cells[y][x];
+        const WBResourcePile* recipe = wbBuildingRecipe(cell->buildingType);
+        WBResourcePile bricks;
+        u16 energy[1];
+        int n = 0;
+        memset(&bricks, 0, sizeof(bricks));
+        if (recipe) bricks = *recipe;
+        if (recipe && recipe->energy > 0) {
+            energy[n++] = (u16) (cell->buildingHp < 0 ? 0 : cell->buildingHp);
+        }
+        actorListRemove(app, ref);
+        cell->hasBuilding = false;
+        cell->buildingType = WB_BUILDING_NONE;
+        cell->buildingHp = 0;
+        app->buildingGen[y][x] += 1;
+        if (app->hasSelection && app->selectedX == x && app->selectedY == y) {
+            app->hasSelection = false;
+            app->infoOverlayOpen = false;
+        }
+        bricks.energy = n;
+        createResource(app, x, y, &bricks, energy, n);
+    }
+    playSfxClipWorld(app, &app->sfxDisassemble);
+}
+
+static void checkDying(AppState* app, WBObjRef self) {
+    double* damageMs = NULL;
+    bool* dying = refDyingPtr(app, self, &damageMs);
+    if (!dying || !*dying) return;
+    if ((app->simMs - *damageMs) > 320.0) {
+        disassembleRef(app, self);
+    }
+}
+/* ─── Unit actions: vehicle.generic checkDestination() ───────────────── */
+
+#define WB_CARGO_NONE   0
+#define WB_CARGO_DIRT   1
+#define WB_CARGO_SWAMP  2
+#define WB_CARGO_STREET 3
+
+static bool isTreeTerrain(WBTerrainType t) {
+    return t == WB_TERRAIN_TREE || t == WB_TERRAIN_TREE2 || t == WB_TERRAIN_TREE3 || t == WB_TERRAIN_TREE4;
+}
+
+static bool isStreetTerrain(WBTerrainType t) {
+    return t == WB_TERRAIN_STREET || t == WB_TERRAIN_CEMENT;
+}
+
+static int unitActionEnergyDeci(WBUnitType t, u8 reason) {
+    switch (reason) {
+        case WB_REASON_DIG:
+        case WB_REASON_FILL:   return t == WB_UNIT_STEAMSHOVEL ? 12 : 0;
+        case WB_REASON_UPROOT:
+        case WB_REASON_PLANT:  return t == WB_UNIT_TREEBOT ? 10 : 0;
+        default:               return 0;
+    }
+}
+
+static void faceTile(AppState* app, WBObjRef self, int x, int y, int tx, int ty) {
+    setRefDirection(app, self, directionFromOffset(tx - x, ty - y, refDirection(app, self)));
+}
+
+static void checkDestination(AppState* app, WBObjRef self, int tx, int ty, u8 reason) {
+    int x;
+    int y;
+    WBCell* me;
+    WBCell* tile;
+    int dist;
+    bool wb2 = app->map.isWB2Level;
+    if (!refAlive(app, self, &x, &y) || !inBounds(app, tx, ty)) return;
+    me = &app->map.cells[y][x];
+    tile = &app->map.cells[ty][tx];
+    dist = manhattanDistance(tx, ty, x, y);
+    switch (reason) {
+        case WB_REASON_DIG:
+            if ((tile->terrain == WB_TERRAIN_NORMAL || tile->terrain == WB_TERRAIN_SWAMP || (wb2 && isStreetTerrain(tile->terrain))) &&
+                    !tileHasOccupant(app, tx, ty) && me->unitCargoSpecial == WB_CARGO_NONE && dist == 1) {
+                if (tile->terrain == WB_TERRAIN_NORMAL) {
+                    me->unitCargoSpecial = WB_CARGO_DIRT;
+                } else if (tile->terrain == WB_TERRAIN_SWAMP) {
+                    me->unitCargoSpecial = WB_CARGO_SWAMP;
+                } else {
+                    me->unitCargoSpecial = WB_CARGO_STREET;
+                    me->unitCargoStreetVariant = (u8) ((tile->terrain == WB_TERRAIN_CEMENT) ? 255 : tile->terrainVariant);
+                }
+                tile->terrain = WB_TERRAIN_WATER;
+                refUseEnergy(app, self, unitActionEnergyDeci(me->unitType, reason));
+                faceTile(app, self, x, y, tx, ty);
+                setActionCycle(app, self, WB_UNIT_ANIM_DIG);
+                playSfxClip(app, app->sfxDigGround.loaded ? &app->sfxDigGround : &app->sfxMoveMisc);
+            }
+            break;
+        case WB_REASON_FILL:
+            if (tile->terrain == WB_TERRAIN_WATER && !tileHasOccupant(app, tx, ty) && me->unitCargoSpecial != WB_CARGO_NONE && dist == 1) {
+                if (me->unitCargoSpecial == WB_CARGO_DIRT) {
+                    tile->terrain = WB_TERRAIN_NORMAL;
+                } else if (me->unitCargoSpecial == WB_CARGO_STREET) {
+                    if (me->unitCargoStreetVariant == 255) {
+                        tile->terrain = WB_TERRAIN_CEMENT;
+                    } else {
+                        tile->terrain = WB_TERRAIN_STREET;
+                        tile->terrainVariant = me->unitCargoStreetVariant;
+                    }
+                } else {
+                    tile->terrain = WB_TERRAIN_SWAMP;
+                }
+                me->unitCargoSpecial = WB_CARGO_NONE;
+                refUseEnergy(app, self, unitActionEnergyDeci(me->unitType, reason));
+                faceTile(app, self, x, y, tx, ty);
+                setActionCycle(app, self, WB_UNIT_ANIM_FILL);
+                playSfxClip(app, app->sfxFillGround.loaded ? &app->sfxFillGround : &app->sfxMoveMisc);
+            }
+            break;
+        case WB_REASON_PICK:
+            if (pileEmpty(&me->unitCargo) && tile->hasResource && dist <= 1 && !tile->resourceIsPlan) {
+                /* takeBricks(carries): the scarcest kind first, batteries from the end */
+                int capacity = unitCarryCapacity(me->unitType);
+                int carried = 0;
+                while (carried < capacity && !pileEmpty(&tile->pile)) {
+                    int kind = chooseLeastBrickKind(&tile->pile);
+                    if (kind < 0) break;
+                    if (kind == 5) {
+                        int charge = pileTakeBattery(tile);
+                        if (me->unitCargo.energy < WB_MAX_CARGO_BATTERIES) {
+                            me->unitCargoBatteries[me->unitCargo.energy] = (u16) charge;
+                        }
+                        me->unitCargo.energy += 1;
+                    } else {
+                        takeOneKind(&tile->pile, kind);
+                        addOneKind(&me->unitCargo, kind);
+                    }
+                    ++carried;
+                }
+                cleanupResourceCell(tile);
+                playSfxClip(app, app->sfxPickup.loaded ? &app->sfxPickup : &app->sfxMove);
+                faceTile(app, self, x, y, tx, ty);
+            }
+            break;
+        case WB_REASON_DROP:
+            if (dist <= 1) {
+                bool dropped = false;
+                if (!tile->hasResource && (tile->terrain == WB_TERRAIN_WATER || tile->terrain == WB_TERRAIN_NORMAL ||
+                        (wb2 && isStreetTerrain(tile->terrain)))) {
+                    dropped = true;
+                } else if (tile->hasResource && !tile->resourceIsPlan) {
+                    dropped = true;
+                }
+                if (dropped) {
+                    u16 energy[WB_MAX_CARGO_BATTERIES];
+                    int n = me->unitCargo.energy < WB_MAX_CARGO_BATTERIES ? me->unitCargo.energy : WB_MAX_CARGO_BATTERIES;
+                    memcpy(energy, me->unitCargoBatteries, sizeof(u16) * (size_t) n);
+                    createResource(app, tx, ty, &me->unitCargo, energy, n);
+                    memset(&me->unitCargo, 0, sizeof(me->unitCargo));
+                    memset(me->unitCargoBatteries, 0, sizeof(me->unitCargoBatteries));
+                    playSfxClip(app, app->sfxDrop.loaded ? &app->sfxDrop : &app->sfxMove);
+                    faceTile(app, self, x, y, tx, ty);
+                }
+            }
+            break;
+        case WB_REASON_UPROOT:
+            if (isTreeTerrain(tile->terrain) && !tileHasOccupant(app, tx, ty) && me->unitCargoTreeType == WB_TERRAIN_NORMAL && dist == 1) {
+                me->unitCargoTreeType = tile->terrain;
+                tile->terrain = WB_TERRAIN_NORMAL;
+                refUseEnergy(app, self, unitActionEnergyDeci(me->unitType, reason));
+                setActionCycle(app, self, WB_UNIT_ANIM_UPROOT);
+                faceTile(app, self, x, y, tx, ty);
+                playSfxClip(app, app->sfxDigTree.loaded ? &app->sfxDigTree : &app->sfxMoveMisc);
+            }
+            break;
+        case WB_REASON_PLANT:
+            if (tile->terrain == WB_TERRAIN_NORMAL && !tile->hasResource && !tile->hasGoal && !tileHasOccupant(app, tx, ty) &&
+                    me->unitCargoTreeType != WB_TERRAIN_NORMAL && dist == 1) {
+                tile->terrain = isTreeTerrain(me->unitCargoTreeType) ? me->unitCargoTreeType : WB_TERRAIN_TREE;
+                me->unitCargoTreeType = WB_TERRAIN_NORMAL;
+                refUseEnergy(app, self, unitActionEnergyDeci(me->unitType, reason));
+                setActionCycle(app, self, WB_UNIT_ANIM_PLANT);
+                faceTile(app, self, x, y, tx, ty);
+                playSfxClip(app, app->sfxPlantTree.loaded ? &app->sfxPlantTree : &app->sfxMoveMisc);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+/* ─── Pushing: the dozer ──────────────────────────────────────────────── */
+
+/* pushTowardsPos(): push what is on the tile (a unit-layer object that is
+   pushable, else the pile) one tile on, then drive into the space. */
+static void pushTowardsPos(AppState* app, WBObjRef self, int tx, int ty) {
+    WBUnitAgent* a;
+    int x;
+    int y;
+    if (self.kind != WB_OBJ_UNIT || !refAlive(app, self, &x, &y) || !inBounds(app, tx, ty)) return;
+    a = &app->agents[self.index];
+    if (a->m.sliding) {
+        a->pushWaiting = true;
+        a->pushX = tx;
+        a->pushY = ty;
+        return;
+    }
+    {
+        WBCell* tile = &app->map.cells[ty][tx];
+        int mi = monsterIndexAt(tx, ty);
+        bool hasOccupant = tile->hasUnit || tile->hasBuilding || mi >= 0;
+        int bx = tx + (tx - x);
+        int by = ty + (ty - y);
+        bool pushed = false;
+        if (!hasOccupant && !tile->hasResource) {
+            objGotoPos(app, self, tx, ty, WB_REASON_NONE, false, false);
+            return;
+        }
+        if (!wbUnitCanTraverse(app->map.cells[y][x].unitType, tileTerrain(app, tx, ty))) {
+            return;
+        }
+        if (hasOccupant) {
+            if (mi >= 0) {
+                WBMonsterState* ms = &g_monsters[mi];
+                bool pushable = ms->type == WB_MONSTER_BOULDER ||
+                                (app->map.isWB2Level && ms->frozenState != 0 && ms->frozenState != 3);
+                if (pushable && inBounds(app, bx, by) && !tileHasOccupant(app, bx, by)) {
+                    bool terrainOk;
+                    if (ms->type == WB_MONSTER_BOULDER) {
+                        /* boulder.pushTo: never onto a pile; its terrain is #normal (+#street) */
+                        WBTerrainType bt = tileTerrain(app, bx, by);
+                        terrainOk = !app->map.cells[by][bx].hasResource &&
+                                    (bt == WB_TERRAIN_NORMAL || (app->map.isWB2Level && isStreetTerrain(bt)));
+                    } else {
+                        WBTerrainOwner o;
+                        memset(&o, 0, sizeof(o));
+                        o.kind = WB_OBJ_MONSTER;
+                        o.type = ms->type;
+                        o.monsterSwamp = ms->swampInTerrain;
+                        terrainOk = ownerCanEnter(&o, tileTerrain(app, bx, by));
+                    }
+                    if (terrainOk) {
+                        ms->col = bx;
+                        ms->row = by;
+                        ms->m.fromX = tx;
+                        ms->m.fromY = ty;
+                        ms->m.curX = bx;
+                        ms->m.curY = by;
+                        ms->pushedBy = self;
+                        ms->pushed = true;
+                        pushed = true;
+                    }
+                }
+            }
+        } else if (tile->hasResource && !tile->resourceIsPlan) {
+            /* resource.pushTo: moveResource onto water or normal (+street) with no pile */
+            if (inBounds(app, bx, by)) {
+                WBCell* beyond = &app->map.cells[by][bx];
+                WBTerrainType bt = tileTerrain(app, bx, by);
+                if (!beyond->hasResource && (bt == WB_TERRAIN_WATER || bt == WB_TERRAIN_NORMAL ||
+                        (app->map.isWB2Level && isStreetTerrain(bt)))) {
+                    beyond->hasResource = true;
+                    beyond->resourceIsPlan = false;
+                    beyond->pile = tile->pile;
+                    memcpy(beyond->pileBatteries, tile->pileBatteries, sizeof(beyond->pileBatteries));
+                    tile->hasResource = false;
+                    memset(&tile->pile, 0, sizeof(tile->pile));
+                    memset(tile->pileBatteries, 0, sizeof(tile->pileBatteries));
+                    app->pilePushX = bx;
+                    app->pilePushY = by;
+                    app->pilePushedBy = self;
+                    app->pilePushed = true;
+                    pushed = true;
+                }
+            }
+        }
+        if (pushed) {
+            a->stopPushing = false;
+            objGotoPos(app, self, tx, ty, WB_REASON_NONE, false, false);
+            objFollowPath(app, self);
+            refUseEnergy(app, self, 10);    /* #energy:[#push:1] */
+        }
+    }
+}
+
+/* ─── Freezebot (WB2) ─────────────────────────────────────────────────── */
+
+static void freezeMonster(AppState* app, int mi) {
+    static const WBDirection freezeDir[] = { WB_DIR_UP, WB_DIR_DOWN, WB_DIR_DOWN, WB_DIR_RIGHT, WB_DIR_LEFT, WB_DIR_UP };
+    WBMonsterState* ms = &g_monsters[mi];
+    ms->frozenMs = app->simMs;
+    ms->frozenState = 1;            /* #waiting: freezes once its current step is done */
+    objStopMoving(app, monsterRef(mi));
+    playSfxClipWorld(app, &app->sfxDamage);
+    switch (ms->type) {
+        case WB_MONSTER_CRAB:     ms->dir = freezeDir[0]; break;
+        case WB_MONSTER_GATOR:    ms->dir = freezeDir[1]; break;
+        case WB_MONSTER_LION:     ms->dir = freezeDir[2]; break;
+        case WB_MONSTER_SCORPION: ms->dir = freezeDir[3]; break;
+        case WB_MONSTER_SHARK:    ms->dir = freezeDir[4]; break;
+        case WB_MONSTER_TREX:     ms->dir = freezeDir[5]; break;
+        default: break;             /* #watercrab never matched #water_crab in the original */
+    }
+}
+
+static void checkFreezing(AppState* app, WBObjRef self) {
+    WBUnitAgent* a;
+    int x;
+    int y;
+    if (self.kind != WB_OBJ_UNIT || !refAlive(app, self, &x, &y)) return;
+    a = &app->agents[self.index];
+    switch (a->freezeState) {
+        case 0: {                    /* #ready: findSomeoneToFreeze, the last one in range wins */
+            int i;
+            int j;
+            if (refEnergyStatus(app, self) <= 1) break;
+            for (i = -2; i <= 2; ++i) {
+                for (j = -2; j <= 2; ++j) {
+                    int mi;
+                    if (abs(i) + abs(j) > 2 || !inBounds(app, x + i, y + j)) continue;
+                    mi = monsterIndexAt(x + i, y + j);
+                    if (mi < 0 || g_monsters[mi].type == WB_MONSTER_BOULDER) continue;
+                    if (g_monsters[mi].frozenState == 0 || g_monsters[mi].frozenState == 3) {
+                        a->freezeTarget = monsterRef(mi);
+                        a->freezeState = 1;
+                    }
+                }
+            }
+            break;
+        }
+        case 1: {                    /* #targeted */
+            int tx;
+            int ty;
+            if (refAlive(app, a->freezeTarget, &tx, &ty)) {
+                faceTile(app, self, x, y, tx, ty);
+                freezeMonster(app, a->freezeTarget.index);
+            }
+            a->freezeState = 2;
+            a->freezeMs = app->simMs;
+            refUseEnergy(app, self, 20);   /* #energy:[#freeze:2] */
+            break;
+        }
+        case 2:                      /* #recharging */
+            if ((app->simMs - a->freezeMs) / 1000.0 > 3.0) {
+                a->freezeState = 0;
+            }
+            break;
+    }
+}
+
+/* ─── Per-object frames ───────────────────────────────────────────────── */
+
+static void stepUnit(AppState* app, WBObjRef self) {
+    WBUnitAgent* a;
+    int x;
+    int y;
+    if (!refAlive(app, self, &x, &y)) return;
+    a = &app->agents[self.index];
+    if (app->map.cells[y][x].unitType == WB_UNIT_FREEZEBOT && app->map.isWB2Level) {
+        checkFreezing(app, self);
+        if (!refAlive(app, self, NULL, NULL)) return;
+    }
+    objAnimateTileMove(app, self);
+    if (a->pushWaiting && !a->m.sliding) {
+        a->pushWaiting = false;
+        pushTowardsPos(app, self, a->pushX, a->pushY);
+    }
+    if (!a->m.sliding && a->m.checkDest) {
+        a->m.checkDest = false;
+        checkDestination(app, self, a->m.checkX, a->m.checkY, a->m.checkReason);
+    }
+    if (a->m.hasPath) {
+        objFollowPath(app, self);
+    }
+    checkForRecharger(app, self);
+    /* vehicle.repairbot getMember(): repair.1/2 for 16 frames after each requestCharge */
+    if (app->map.cells[a->m.curY][a->m.curX].unitType == WB_UNIT_REPAIRBOT) {
+        if (a->repairFrame && !a->m.sliding) {
+            a->repairShow = (u8) (1 + ((a->repairFrame / 4) % 2));
+            if (++a->repairFrame > 15) {
+                a->repairFrame = 0;
+            }
+        } else {
+            a->repairShow = 0;
+        }
+    }
+    doRecharge(app, self);
+    if (!a->m.sliding) {
+        checkAttack(app, self);
+    }
+    if (!refAlive(app, self, NULL, NULL)) return;
+    checkSwampDamage(app, self, &a->swampSet, &a->swampMs);
+    checkDying(app, self);
+}
+
+/* monster.generic wander(): one tile, then rest. The original's
+   "if random(pWandering[#wander] = 1)" rolls random(0) or random(1), which is
+   always truthy, so a monster rests after every step whatever #rest_every says. */
+static void monsterWander(AppState* app, WBObjRef self) {
+    static const int offs[4][2] = { {1, 0}, {0, 1}, {-1, 0}, {0, -1} };
+    WBMonsterState* ms = &g_monsters[self.index];
+    double t = app->simMs;
+    if (ms->hasTarget) {
+        int tx;
+        int ty;
+        ms->swampInTerrain = true;
+        if (refAlive(app, ms->target, &tx, &ty) && manhattanDistance(tx, ty, ms->col, ms->row) > 7) {
+            disengageAttack(app, self, false);
+            ms->swampInTerrain = false;
+        }
+        return;
+    }
+    ms->swampInTerrain = false;
+    if (refEnergyStatus(app, self) == 0) return;
+    if (ms->frozenState == 1 || ms->frozenState == 2) return;
+    if (ms->resting) {
+        if (t > ms->restUntilMs) ms->resting = false;
+        return;
+    }
+    if (ms->m.sliding) return;
+    {
+        int destX[4];
+        int destY[4];
+        int n = 0;
+        int k;
+        int pick;
+        for (k = 0; k < 4; ++k) {
+            int qx = ms->col + offs[k][0];
+            int qy = ms->row + offs[k][1];
+            WBTerrainOwner o;
+            if (!inBounds(app, qx, qy) || tileHasOccupant(app, qx, qy)) continue;
+            o.kind = WB_OBJ_MONSTER; o.type = ms->type; o.monsterSwamp = false;
+            if (!ownerCanEnter(&o, tileTerrain(app, qx, qy))) continue;
+            destX[n] = qx; destY[n] = qy; ++n;
+        }
+        if (n == 0 && app->map.cells[ms->row][ms->col].terrain == WB_TERRAIN_SWAMP) {
+            for (k = 0; k < 4; ++k) {
+                int qx = ms->col + offs[k][0];
+                int qy = ms->row + offs[k][1];
+                WBTerrainOwner o;
+                if (!inBounds(app, qx, qy) || tileHasOccupant(app, qx, qy)) continue;
+                o.kind = WB_OBJ_MONSTER; o.type = ms->type; o.monsterSwamp = true;
+                if (!ownerCanEnter(&o, tileTerrain(app, qx, qy))) continue;
+                destX[n] = qx; destY[n] = qy; ++n;
+            }
+            if (n > 0) ms->swampInTerrain = true;
+        }
+        if (n == 0) {
+            ms->resting = true;
+            ms->restUntilMs = t + 500;
+            return;
+        }
+        pick = lingoRandom(n) - 1;
+        {
+            int oldX = ms->col;
+            int oldY = ms->row;
+            bool moved = objMoveObject(app, self, destX[pick], destY[pick]);
+            ms->swampInTerrain = false;
+            if (!moved) {
+                ms->resting = true;
+                ms->restUntilMs = t + 500;
+                return;
+            }
+            objMoveTo(app, self, oldX, oldY);
+        }
+        ms->resting = true;
+        ms->restUntilMs = t + (double) wbMonsterRestForMs(ms->type) / 1000.0 * (lingoRandom(500) + 750);
+    }
+}
+
+static void checkFrozen(AppState* app, WBObjRef self) {
+    WBMonsterState* ms = &g_monsters[self.index];
+    switch (ms->frozenState) {
+        case 1:
+            if (!ms->m.sliding) ms->frozenState = 2;
+            break;
+        case 2:
+            if ((app->simMs - ms->frozenMs) / 1000.0 >= 25.0) {
+                ms->frozenState = 3;
+                ms->frozenMs = app->simMs;
+                objStopMoving(app, self);
+            }
+            break;
+        case 3:
+            if ((app->simMs - ms->frozenMs) / 1000.0 > 0.3) ms->frozenState = 0;
+            break;
+        default:
+            break;
+    }
+}
+
+static void stepMonster(AppState* app, WBObjRef self) {
+    WBMonsterState* ms;
+    if (!refAlive(app, self, NULL, NULL)) return;
+    ms = &g_monsters[self.index];
+    if (app->map.isWB2Level) checkFrozen(app, self);
+    monsterWander(app, self);
+    objAnimateTileMove(app, self);
+    if (ms->pushed && !refAlive(app, ms->pushedBy, NULL, NULL)) ms->pushed = false;
+    if (ms->m.hasPath) objFollowPath(app, self);
+    if (!ms->m.sliding && !(ms->frozenState == 1 || ms->frozenState == 2 || ms->frozenState == 3)) {
+        checkAttack(app, self);
+    }
+    if (!refAlive(app, self, NULL, NULL)) return;
+    checkSwampDamage(app, self, &ms->swampSet, &ms->swampMs);
+    checkDying(app, self);
+}
+
+/* WB2 production buildings: each needs charge in its battery and pays 7.5 a cycle. */
+static void stepProductionBuilding(AppState* app, WBObjRef self, int x, int y) {
+    static const int offs[4][2] = { {1, 0}, {0, 1}, {-1, 0}, {0, -1} };
+    WBCell* cell = &app->map.cells[y][x];
+    double t = app->simMs;
+    int k;
+    if (cell->buildingHp <= 0) return;              /* totalEnergy() = 0 */
+    switch (cell->buildingType) {
+        case WB_BUILDING_FACTORY: {
+            int readyK = -1;
+            for (k = 0; k < 4; ++k) {
+                int nx = x + offs[k][0];
+                int ny = y + offs[k][1];
+                u8 found = 0;                        /* 1 boulder, 2 tree */
+                if (inBounds(app, nx, ny)) {
+                    int mi = monsterIndexAt(nx, ny);
+                    if (mi >= 0) {
+                        if (g_monsters[mi].type == WB_MONSTER_BOULDER) found = 1;
+                    } else if (isTreeTerrain(app->map.cells[ny][nx].terrain)) {
+                        found = 2;
+                    }
+                }
+                if (app->factoryWhat[y][x][k] == found) {
+                    if (found && (t - app->factoryWhen[y][x][k]) > 2000.0) readyK = k;
+                    continue;
+                }
+                app->factoryWhen[y][x][k] = t;
+                app->factoryWhat[y][x][k] = found;
+            }
+            if (readyK >= 0) {
+                int nx = x + offs[readyK][0];
+                int ny = y + offs[readyK][1];
+                WBResourcePile bricks;
+                u16 none[1] = { 0 };
+                for (k = 0; k < 4; ++k) app->factoryWhen[y][x][k] = t;
+                if (app->factoryWhat[y][x][readyK] == 1) {
+                    int mi = monsterIndexAt(nx, ny);
+                    if (mi >= 0) disassembleRef(app, monsterRef(mi));
+                } else {
+                    app->map.cells[ny][nx].terrain = WB_TERRAIN_NORMAL;
+                }
+                memset(&bricks, 0, sizeof(bricks));
+                switch (cell->factoryColor) {        /* red, yellow, green, blue, white */
+                    case 1: bricks.yellow = 25; break;
+                    case 2: bricks.green = 25; break;
+                    case 3: bricks.blue = 25; break;
+                    case 4: bricks.white = 25; break;
+                    default: bricks.red = 25; break;
+                }
+                createResource(app, nx, ny, &bricks, none, 0);
+                refUseEnergy(app, self, 75);
+                app->factoryWhat[y][x][readyK] = 0;
+            }
+            break;
+        }
+        case WB_BUILDING_WINDMILL:
+        case WB_BUILDING_GARAGE:
+        case WB_BUILDING_NURSERY: {
+            int emptyX[4];
+            int emptyY[4];
+            int n = 0;
+            bool blocked = false;
+            for (k = 0; k < 4; ++k) {
+                int nx = x + offs[k][0];
+                int ny = y + offs[k][1];
+                const WBCell* nc;
+                if (!inBounds(app, nx, ny)) continue;
+                nc = &app->map.cells[ny][nx];
+                if (!tileHasOccupant(app, nx, ny) && !nc->hasResource && nc->terrain == WB_TERRAIN_NORMAL) {
+                    emptyX[n] = nx;
+                    emptyY[n] = ny;
+                    ++n;
+                }
+                if (nc->hasResource && !nc->resourceIsPlan) {
+                    if ((cell->buildingType == WB_BUILDING_WINDMILL && nc->pile.energy > 0) ||
+                        (cell->buildingType == WB_BUILDING_GARAGE && nc->pile.wheel > 0)) {
+                        blocked = true;
+                        break;
+                    }
+                }
+            }
+            if (!blocked && n > 0) {
+                if ((t - app->buildingReadyMs[y][x]) > 2000.0) {
+                    int pick = lingoRandom(n) - 1;
+                    if (cell->buildingType == WB_BUILDING_NURSERY) {
+                        static const WBTerrainType trees[4] = { WB_TERRAIN_TREE, WB_TERRAIN_TREE2, WB_TERRAIN_TREE3, WB_TERRAIN_TREE4 };
+                        int types = app->mapTreeTypeCount > 0 ? app->mapTreeTypeCount : 1;
+                        int tp = lingoRandom(types) - 1;
+                        app->map.cells[emptyY[pick]][emptyX[pick]].terrain =
+                            app->mapTreeTypeCount > 0 ? app->mapTreeTypes[tp] : trees[0];
+                    } else {
+                        WBResourcePile bricks;
+                        memset(&bricks, 0, sizeof(bricks));
+                        if (cell->buildingType == WB_BUILDING_WINDMILL) bricks.energy = 1;
+                        else bricks.wheel = 4;
+                        createResource(app, emptyX[pick], emptyY[pick], &bricks, NULL, 0);
+                    }
+                    app->buildingReadyMs[y][x] = t;
+                    refUseEnergy(app, self, 75);
+                }
+            } else {
+                app->buildingReadyMs[y][x] = t;
+            }
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+static void stepBuilding(AppState* app, WBObjRef self) {
+    int x;
+    int y;
+    if (!refAlive(app, self, &x, &y)) return;
+    checkAttack(app, self);
+    if (!refAlive(app, self, NULL, NULL)) return;
+    checkDying(app, self);
+    if (!refAlive(app, self, NULL, NULL)) return;
+    if (app->map.isWB2Level) stepProductionBuilding(app, self, x, y);
+}
+
+/* goal.goal parent checkGoal(): the occupant of the goal tile, if it is what the
+   goal wants, satisfies it and stops. */
+static void checkGoals(AppState* app) {
+    int y;
+    int x;
+    for (y = 0; y < app->map.height; ++y) {
+        for (x = 0; x < app->map.width; ++x) {
+            WBCell* cell = &app->map.cells[y][x];
+            bool match = false;
+            WBObjRef occ;
+            if (!cell->hasGoal || cell->goalSatisfied || cell->goalIsCollect) continue;
+            if (cell->bonusGoal && !app->map.bonusAvailable) continue;
+            memset(&occ, 0, sizeof(occ));
+            if (cell->hasUnit && agentAt(app, x, y)) {
+                match = goalMatchesUnit(cell->goalType, cell->unitType);
+                occ = unitRefFromAgent(app, cell->unitAgent - 1);
+            } else if (cell->hasBuilding) {
+                match = cell->goalType == WB_GOAL_ANYTHING || goalMatchesBuilding(cell->goalType, cell->buildingType);
+            } else {
+                int mi = monsterIndexAt(x, y);
+                if (mi >= 0) {
+                    match = cell->goalType == WB_GOAL_ANYTHING || goalMatchesMonster(cell->goalType, g_monsters[mi].type);
+                    occ = monsterRef(mi);
+                }
+            }
+            if (match) {
+                satisfyGoalAt(app, cell, x, y);
+                cell->goalRiseStartMs = app->simMs;
+                if (occ.kind != WB_OBJ_NONE) objStopMoving(app, occ);
+            }
+        }
+    }
+}
+
+/* map display manager checkScroll(): while the followed vehicle's tile is
+   outside the autoscroll border (stage rect 130,111 - 376,262), scroll a tile. */
+static void checkScroll(AppState* app) {
+    int ux;
+    int uy;
+    int dx = 0;
+    int dy = 0;
+    float sx;
+    float sy;
+    if (!app->centerGoalActive) return;
+    if (!refAlive(app, app->centerGoal, &ux, &uy)) {
+        app->centerGoalActive = false;
+        return;
+    }
+    sx = ((ux + 1 - app->cameraX) * DIRECTOR_TILE_SIZE_X) + DIRECTOR_PIXEL_TOPLEFT_X +
+         (DIRECTOR_PIXEL_SKEW_X * (VIEW_TILE_H + (app->cameraY - (uy + 1)) - 2));
+    sy = ((uy + 1 - app->cameraY) * DIRECTOR_TILE_SIZE_Y) + DIRECTOR_PIXEL_TOPLEFT_Y;
+    if (sx < 130.0f) dx = -1;
+    if (sy < 111.0f) dy = -1;
+    if (sx > 376.0f) dx = 1;
+    if (sy > 262.0f) dy = 1;
+    if (dx || dy) {
+        app->cameraX += dx;
+        app->cameraY += dy;
+        clampCamera(app);
+    }
+}
+
+static void selectObjectAt(AppState* app, int x, int y, bool playSound);
+
+/* One 15 fps movie frame: the map display first, then every actor in the order
+   it was made, then the goals and the build cloud's hand-off. */
+static void stepWorldFrame(AppState* app) {
+    WBObjRef order[WB_MAX_ACTORS];
+    int count = app->actorCount;
+    int i;
+    checkScroll(app);
+    memcpy(order, app->actorList, sizeof(WBObjRef) * (size_t) count);
+    for (i = 0; i < count; ++i) {
+        switch (order[i].kind) {
+            case WB_OBJ_UNIT:     stepUnit(app, order[i]); break;
+            case WB_OBJ_MONSTER:  stepMonster(app, order[i]); break;
+            case WB_OBJ_BUILDING: stepBuilding(app, order[i]); break;
+            default: break;
+        }
+    }
+    checkGoals(app);
+    /* build cloud: 750 ms after building, the new object is clicked (selected) */
+    if (app->buildSelectPending && app->simMs - app->buildSelectMs > 750.0) {
+        int bx;
+        int by;
+        app->buildSelectPending = false;
+        if (refAlive(app, app->buildSelectRef, &bx, &by)) {
+            selectObjectAt(app, bx, by, false);
+        }
+    }
+}
+
+/* Runs the 15 fps movie frames due since the last call. A gap of more than a
+   quarter second (a menu that pauses the game, a load) is not caught up: the
+   world simply carries on from where it stopped. */
+static void runWorldFrames(AppState* app) {
+    u64 now = osGetTime();
+    int steps = 0;
+    if (app->simLastMs == 0 || now < app->simLastMs || now - app->simLastMs > 250) {
+        app->simLastMs = now;
+        return;
+    }
+    app->simAccumMs += (double) (now - app->simLastMs);
+    app->simLastMs = now;
+    while (app->simAccumMs >= WB_FRAME_MS) {
+        app->simAccumMs -= WB_FRAME_MS;
+        app->simMs += WB_FRAME_MS;
+        stepWorldFrame(app);
+        if (++steps >= 4) {
+            app->simAccumMs = 0.0;
+            break;
+        }
+    }
+}
+/* ─── World setup ─────────────────────────────────────────────────────── */
+
+static void destroyUnitAt(AppState* app, int x, int y) {
+    WBCell* cell = &app->map.cells[y][x];
+    if (app->pushOverrideActive && agentAt(app, x, y) &&
+            app->pushOverrideUnit.index == cell->unitAgent - 1) {
+        app->pushOverrideActive = false;
+    }
+    detachUnitAgent(app, x, y);
     cell->hasUnit = false;
     cell->unitType = WB_UNIT_NONE;
+    cell->unitEnergy = 0;
+    cell->unitEnergyDeci = 0;
     memset(&cell->unitCargo, 0, sizeof(cell->unitCargo));
-}
-
-#define WB_AUTO_INTERCEPT_RANGE 3
-
-/* Move idle DEFENDER / DEFENDER2 / SPEEDBOAT units toward approaching monsters
-   that are within WB_AUTO_INTERCEPT_RANGE tiles but not yet adjacent. */
-static void runAutoIntercept(AppState* app) {
-    static const int offsets[4][2] = {{-1, 0}, {0, -1}, {1, 0}, {0, 1}};
-    int y;
-    int x;
-
-    for (y = 0; y < app->map.height; ++y) {
-        for (x = 0; x < app->map.width; ++x) {
-            WBCell* cell = &app->map.cells[y][x];
-            int bestMi, bestDist, mi;
-            int goalX, goalY, goalDist;
-            bool foundGoal;
-            int adjOff;
-
-            if (!cell->hasUnit) {
-                continue;
-            }
-            if (cell->unitType != WB_UNIT_DEFENDER &&
-                cell->unitType != WB_UNIT_DEFENDER2 &&
-                cell->unitType != WB_UNIT_SPEEDBOAT) {
-                continue;
-            }
-            /* Don't override a unit the player currently has selected */
-            if (app->hasSelection && app->selectedX == x && app->selectedY == y && app->selectedMover < 0) {
-                continue;
-            }
-
-            /* Find the nearest active monster in intercept range but not adjacent.
-               Use the monster's destination tile when it is mid-step so we track
-               where it is actually going, not where it just was. */
-            bestMi = -1;
-            bestDist = 0x7FFFFFFF;
-            for (mi = 0; mi < g_monsterCount; ++mi) {
-                int mcol, mrow, dx, dy, dist;
-                if (!g_monsters[mi].active) {
-                    continue;
-                }
-                mcol = g_monsters[mi].isMoving ? g_monsters[mi].destCol : g_monsters[mi].col;
-                mrow = g_monsters[mi].isMoving ? g_monsters[mi].destRow : g_monsters[mi].row;
-                dx = mcol - x;
-                dy = mrow - y;
-                dist = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
-                if (dist <= 1) {
-                    /* Already adjacent — runDefenseAttacks handles this */
-                    bestMi = -1;
-                    break;
-                }
-                if (dist <= WB_AUTO_INTERCEPT_RANGE && dist < bestDist) {
-                    bestDist = dist;
-                    bestMi = mi;
-                }
-            }
-            if (bestMi < 0) {
-                continue;
-            }
-
-            /* Find the closest traversable, unoccupied tile adjacent to the monster's
-               effective position. Skip tiles that any monster is currently stepping
-               into so we never path into a space a monster is about to occupy. */
-            {
-                int mrefCol = g_monsters[bestMi].isMoving ? g_monsters[bestMi].destCol : g_monsters[bestMi].col;
-                int mrefRow = g_monsters[bestMi].isMoving ? g_monsters[bestMi].destRow : g_monsters[bestMi].row;
-                foundGoal = false;
-                goalX = 0;
-                goalY = 0;
-                goalDist = 0x7FFFFFFF;
-                for (adjOff = 0; adjOff < 4; ++adjOff) {
-                    int nx = mrefCol + offsets[adjOff][0];
-                    int ny = mrefRow + offsets[adjOff][1];
-                    int k, dx, dy, dist;
-                    bool monsterDest;
-                    if (!inBounds(app, nx, ny)) {
-                        continue;
-                    }
-                    if (!wbUnitCanTraverse(cell->unitType, app->map.cells[ny][nx].terrain)) {
-                        continue;
-                    }
-                    if (app->map.cells[ny][nx].hasUnit || cellHasActiveMover(app, nx, ny, -1)) {
-                        continue;
-                    }
-                    if (nx == x && ny == y) {
-                        continue;
-                    }
-                    /* Skip tiles a monster is currently stepping into */
-                    monsterDest = false;
-                    for (k = 0; k < g_monsterCount; ++k) {
-                        if (g_monsters[k].active && g_monsters[k].isMoving &&
-                            g_monsters[k].destCol == nx && g_monsters[k].destRow == ny) {
-                            monsterDest = true;
-                            break;
-                        }
-                    }
-                    if (monsterDest) {
-                        continue;
-                    }
-                    dx = nx - x;
-                    dy = ny - y;
-                    dist = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
-                    if (dist < goalDist) {
-                        goalDist = dist;
-                        goalX = nx;
-                        goalY = ny;
-                        foundGoal = true;
-                    }
-                }
-            }
-            if (!foundGoal) {
-                continue;
-            }
-            beginMoveAuto(app, x, y, goalX, goalY);
-        }
+    memset(cell->unitCargoBatteries, 0, sizeof(cell->unitCargoBatteries));
+    cell->unitCargoSpecial = WB_CARGO_NONE;
+    cell->unitCargoTreeType = WB_TERRAIN_NORMAL;
+    if (app->hasSelection && app->selectedX == x && app->selectedY == y) {
+        app->hasSelection = false;
+        app->infoOverlayOpen = false;
+        app->actionMode = WB_ACTION_MOVE;
     }
 }
 
-static void runDefenseAttacks(AppState* app) {
-    int y;
-    int x;
-    u64 now = osGetTime();
+/* A building appears (map load or build): give it its object. */
+static void attachBuilding(AppState* app, int x, int y, int batteryDeci) {
+    WBCell* cell = &app->map.cells[y][x];
+    const WBResourcePile* recipe = wbBuildingRecipe(cell->buildingType);
+    app->buildingGen[y][x] += 1;
+    app->buildingHasTarget[y][x] = false;
+    app->buildingNextAttackSet[y][x] = false;
+    app->buildingDying[y][x] = false;
+    app->buildingReadyMs[y][x] = app->simMs;
+    memset(app->factoryWhat[y][x], 0, sizeof(app->factoryWhat[y][x]));
+    cell->buildingHp = (recipe && recipe->energy > 0) ? batteryDeci : 0;
+    actorListAdd(app, buildingRef(app, x, y));
+}
 
+static int addMonster(AppState* app, int x, int y, WBMonsterType type, WBDirection dir) {
+    WBMonsterState* ms;
+    float scale;
+    if (g_monsterCount >= WB_MAX_MONSTERS) return -1;
+    ms = &g_monsters[g_monsterCount];
+    {
+        u16 gen = (u16) (ms->gen + 1);
+        memset(ms, 0, sizeof(*ms));
+        ms->gen = gen ? gen : 1;
+    }
+    ms->active = true;
+    ms->row = y;
+    ms->col = x;
+    ms->type = type;
+    ms->dir = dir;
+    ms->hp = 1000;
+    /* init: speed x (80 + random(40)) / 100, then rest for random(2000) ms */
+    scale = (float) (80 + lingoRandom(40)) / 100.0f;
+    ms->wanderTimer = (int) (scale * 100.0f);
+    ms->speed = wbMonsterSpeed(type) * scale;
+    ms->onWater = (app->map.cells[y][x].terrain == WB_TERRAIN_WATER ||
+                   app->map.cells[y][x].terrain == WB_TERRAIN_WATER_UNFILLABLE);
+    ms->m.curX = x;
+    ms->m.curY = y;
+    ms->m.fromX = x;
+    ms->m.fromY = y;
+    ms->resting = true;
+    ms->restUntilMs = app->simMs + lingoRandom(2000);
+    actorListAdd(app, monsterRef(g_monsterCount));
+    return g_monsterCount++;
+}
+
+/* readmap(): every object, in reading order, which is also the actorList order. */
+static void initWorldObjects(AppState* app) {
+    int x;
+    int y;
+    memset(app->agents, 0, sizeof(app->agents));
+    app->actorCount = 0;
+    memset(app->whirlpoolUser, 0, sizeof(app->whirlpoolUser));
+    memset(app->buildingHasTarget, 0, sizeof(app->buildingHasTarget));
+    memset(app->buildingDying, 0, sizeof(app->buildingDying));
+    app->centerGoalActive = false;
+    app->pushOverrideActive = false;
+    app->buildSelectPending = false;
+    app->spikeActive = false;
+    app->pilePushed = false;
+    app->mapTreeTypeCount = 0;
+    app->simMs = (double) osGetTime();
+    app->simLastMs = osGetTime();
+    app->simAccumMs = 0.0;
+    g_monsterCount = 0;
     for (y = 0; y < app->map.height; ++y) {
         for (x = 0; x < app->map.width; ++x) {
             WBCell* cell = &app->map.cells[y][x];
-            WBAttackProfile profile;
-            int range;
-            int mi;
-            int bestMi = -1;
-            int bestDist = 0x7FFFFFFF;
-
-            if (now < app->cellAttackCooldownMs[y][x]) {
-                continue;
+            int i;
+            if (isTreeTerrain(cell->terrain)) {
+                bool seen = false;
+                for (i = 0; i < app->mapTreeTypeCount; ++i) seen = seen || app->mapTreeTypes[i] == cell->terrain;
+                if (!seen && app->mapTreeTypeCount < 4) app->mapTreeTypes[app->mapTreeTypeCount++] = cell->terrain;
             }
-
-            if (!cell->hasUnit && !cell->hasBuilding) {
-                continue;
+            if (cell->hasResource && !cell->resourceIsPlan) {
+                for (i = 0; i < pileBatteryCount(cell); ++i) cell->pileBatteries[i] = 1000;
             }
-
-            range = 0;
+            cell->unitAgent = 0;
             if (cell->hasUnit) {
-                WBAttackProfile tmp;
-                if (defenseAttackProfileForUnit(cell->unitType, WB_MONSTER_CRAB, &tmp)) {
-                    profile = tmp;
-                    range = tmp.searchRange;
-                }
+                cell->unitEnergyDeci = 1000;
+                cell->unitEnergy = 100;
+                cell->unitCargoSpecial = WB_CARGO_NONE;
+                memset(cell->unitCargoBatteries, 0, sizeof(cell->unitCargoBatteries));
+                attachUnitAgent(app, x, y);
             }
-            if (range == 0 && cell->hasBuilding) {
-                WBAttackProfile tmp;
-                if (defenseAttackProfileForBuilding(cell->buildingType, WB_MONSTER_CRAB, &tmp)) {
-                    profile = tmp;
-                    range = tmp.searchRange;
-                }
+            if (cell->hasMonster) {
+                addMonster(app, x, y, cell->monsterType, cell->monsterDirection);
+                cell->hasMonster = false;
+                cell->monsterType = WB_MONSTER_NONE;
             }
-            if (range == 0) {
-                continue;
-            }
-
-            for (mi = 0; mi < g_monsterCount; ++mi) {
-                WBMonsterState* ms = &g_monsters[mi];
-                WBAttackProfile perTarget;
-                int dist;
-                bool ok;
-                bool isFreezeUnit = cell->hasUnit && cell->unitType == WB_UNIT_FREEZEBOT;
-                if (!ms->active || ms->dying) {
-                    continue;
-                }
-                if (ms->type == WB_MONSTER_BOULDER) {
-                    continue;
-                }
-                /* Freezebot should not re-freeze already-frozen targets */
-                if (isFreezeUnit && app->map.cells[ms->row][ms->col].monsterFrozen) {
-                    continue;
-                }
-                dist = manhattanDistance(x, y, ms->col, ms->row);
-                /* Attack only fires at range 1 (adjacent); searchRange is used only for
-                   target acquisition / auto-movement via runAutoIntercept. */
-                if (dist != 1 || dist >= bestDist) {
-                    continue;
-                }
-                if (cell->hasUnit) {
-                    ok = defenseAttackProfileForUnit(cell->unitType, ms->type, &perTarget);
-                } else {
-                    ok = defenseAttackProfileForBuilding(cell->buildingType, ms->type, &perTarget);
-                }
-                if (!ok) {
-                    continue;
-                }
-                bestDist = dist;
-                bestMi = mi;
-                profile = perTarget;
-            }
-
-            if (bestMi < 0) {
-                continue;
-            }
-
-            {
-                WBMonsterState* target = &g_monsters[bestMi];
-                int damage = 0;
-                bool isFreezeAttack = cell->hasUnit && cell->unitType == WB_UNIT_FREEZEBOT;
-                if (cell->hasUnit) {
-                    cell->unitDirection = directionFromStep(x, y, target->col, target->row);
-                    /* Show attack animation for freezebot */
-                    if (isFreezeAttack) {
-                        app->unitActionAnim[y][x] = WB_UNIT_ANIM_REPAIR; /* reuse repair slot as generic attack anim */
-                        app->unitActionUntilMs[y][x] = now + 500;
-                    }
-                }
-                if (isFreezeAttack) {
-                    /* Apply freeze to the target monster */
-                    WBCell* targetCell = &app->map.cells[target->row][target->col];
-                    targetCell->monsterFrozen = true;
-                    targetCell->monsterFrozenUntilMs = (uint64_t)now + 25000;
-                    spawnWorldEffect(app, WB_WORLD_EFFECT_DAMAGE_SMALL, target->col, target->row);
-                    playSfxClipWorld(app, &app->sfxDamage);
-                } else {
-                    if (randRange(1, 100) <= profile.chanceOfSuccess) {
-                        damage = randRange(profile.damageMin, profile.damageMax);
-                    }
-                    if (damage > 0) {
-                        damageMonster(app, target, damage, true);
-                    } else {
-                        spawnWorldEffect(app, WB_WORLD_EFFECT_DAMAGE_SMALL, target->col, target->row);
-                        playSfxClipWorld(app, &app->sfxDamage);
-                    }
-                }
-                app->cellAttackCooldownMs[y][x] = now + (u64)(60000 / profile.hitsPerMinute);
+            if (cell->hasBuilding) {
+                attachBuilding(app, x, y, 1000);
             }
         }
     }
 }
 
-static void tickSwampDamage(AppState* app) {
-    u64 now = osGetTime();
-    int y;
+/* ─── Orders ──────────────────────────────────────────────────────────── */
+
+static WBObjRef selectedUnitRef(AppState* app) {
+    WBObjRef r;
+    memset(&r, 0, sizeof(r));
+    if (app->hasSelection && agentAt(app, app->selectedX, app->selectedY)) {
+        r = unitRefFromAgent(app, app->map.cells[app->selectedY][app->selectedX].unitAgent - 1);
+    }
+    return r;
+}
+
+/* click(): select the unit or building in (x,y) - highlight, follow it, sound. */
+static void selectObjectAt(AppState* app, int x, int y, bool playSound) {
+    WBCell* cell = &app->map.cells[y][x];
+    if (!cell->hasUnit && !cell->hasBuilding) return;
+    app->hasSelection = true;
+    app->selectedX = x;
+    app->selectedY = y;
+    app->infoOverlayOpen = false;
+    app->actionMode = WB_ACTION_MOVE;           /* highlight(): pClickMode = VOID */
+    if (cell->hasUnit && agentAt(app, x, y)) {
+        app->centerGoal = unitRefFromAgent(app, cell->unitAgent - 1);
+        app->centerGoalActive = true;
+    }
+    if (!playSound) return;
+    if (cell->hasBuilding) {
+        switch (cell->buildingType) {
+            case WB_BUILDING_FACTORY:
+                playSfxClip(app, app->sfxBldgFactory.loaded ? &app->sfxBldgFactory :
+                                 app->sfxBldgGeneric.loaded ? &app->sfxBldgGeneric : &app->sfxUnitVehicle);
+                break;
+            case WB_BUILDING_GAS_STATION:
+            case WB_BUILDING_MARINA:
+                playSfxClip(app, app->sfxBldgGasStationMarina.loaded ? &app->sfxBldgGasStationMarina :
+                                 app->sfxBldgGeneric.loaded ? &app->sfxBldgGeneric : &app->sfxUnitVehicle);
+                break;
+            case WB_BUILDING_GUARD_TOWER:
+                playSfxClip(app, app->sfxBldgGuardTower.loaded ? &app->sfxBldgGuardTower :
+                                 app->sfxBldgGeneric.loaded ? &app->sfxBldgGeneric : &app->sfxUnitVehicle);
+                break;
+            case WB_BUILDING_ROBOT_LAB:
+                playSfxClip(app, app->sfxBldgRobotLab.loaded ? &app->sfxBldgRobotLab :
+                                 app->sfxBldgGeneric.loaded ? &app->sfxBldgGeneric : &app->sfxUnitVehicle);
+                break;
+            default:
+                playSfxClip(app, app->sfxBldgGeneric.loaded ? &app->sfxBldgGeneric : &app->sfxUnitVehicle);
+                break;
+        }
+        return;
+    }
+    switch (cell->unitType) {
+        case WB_UNIT_DUCK:
+        case WB_UNIT_FROG:
+        case WB_UNIT_FISH:
+        case WB_UNIT_SNAIL:
+            playSfxClip(app, &app->sfxUnitAnimal);
+            break;
+        case WB_UNIT_TREEBOT:
+        case WB_UNIT_REPAIRBOT:
+        case WB_UNIT_DEFENDER:
+        case WB_UNIT_DEFENDER2:
+        case WB_UNIT_FREEZEBOT:
+            playSfxClip(app, app->sfxUnitRobot.loaded ? &app->sfxUnitRobot : &app->sfxUnitVehicle);
+            break;
+        default:
+            playSfxClip(app, &app->sfxUnitVehicle);
+            break;
+    }
+}
+
+/* vehicle.generic mapclick(): order the selected unit to the tile. */
+static void mapclickUnit(AppState* app, WBObjRef self, int tx, int ty) {
+    WBMotion* m = refMotion(app, self);
     int x;
-    int mi;
-
-    /* Stationary units on swamp tiles */
-    for (y = 0; y < app->map.height; ++y) {
-        for (x = 0; x < app->map.width; ++x) {
-            WBCell* cell = &app->map.cells[y][x];
-            u64* tickMs = &app->unitSwampDamageTickMs[y][x];
-
-            if (!cell->hasUnit || cell->terrain != WB_TERRAIN_SWAMP) {
-                *tickMs = 0;
-                continue;
+    int y;
+    if (!m || !refAlive(app, self, &x, &y)) return;
+    if (m->hasPath && m->teleport) return;
+    app->spikeActive = true;
+    app->spikeX = tx;
+    app->spikeY = ty;
+    app->spikeMs = (double) osGetTime();
+    playSfxClip(app, &app->sfxButton);          /* sfx_game_move */
+    app->centerGoal = self;
+    app->centerGoalActive = true;
+    switch (app->actionMode) {
+        case WB_ACTION_PICK:
+        case WB_ACTION_DROP: {
+            u8 reason = app->actionMode == WB_ACTION_PICK ? WB_REASON_PICK : WB_REASON_DROP;
+            objGotoPos(app, self, tx, ty, reason, !(tx == x && ty == y), false);
+            app->actionMode = WB_ACTION_MOVE;
+            break;
+        }
+        case WB_ACTION_DIG:
+        case WB_ACTION_FILL:
+        case WB_ACTION_UPROOT:
+        case WB_ACTION_PLANT: {
+            u8 reason = app->actionMode == WB_ACTION_DIG ? WB_REASON_DIG :
+                        app->actionMode == WB_ACTION_FILL ? WB_REASON_FILL :
+                        app->actionMode == WB_ACTION_UPROOT ? WB_REASON_UPROOT : WB_REASON_PLANT;
+            objGotoPos(app, self, tx, ty, reason, true, false);
+            app->actionMode = WB_ACTION_MOVE;
+            break;
+        }
+        case WB_ACTION_ATTACK: {
+            int mi = monsterIndexAt(tx, ty);
+            if (mi >= 0 && acquireTarget(app, self, monsterRef(mi))) {
+                objGotoPos(app, self, tx, ty, WB_REASON_ATTACK, true, false);
+                app->actionMode = WB_ACTION_MOVE;
             }
-
-            if (*tickMs == 0) {
-                *tickMs = now;
-                continue;
-            }
-
-            if ((now - *tickMs) >= WB_SWAMP_DAMAGE_PERIOD_MS) {
-                *tickMs = now;
-                applyUnitDamageAtCell(app, x, y, WB_SWAMP_DAMAGE_AMOUNT, false);
-            }
+            break;
         }
-    }
-
-    /* Moving units traversing swamp tiles */
-    for (mi = 0; mi < (int)(sizeof(app->moves) / sizeof(app->moves[0])); ++mi) {
-        WBMoveState* move = &app->moves[mi];
-        int cx, cy;
-        int nx, ny;
-        bool onSwamp = false;
-        int dmgX = -1;
-        int dmgY = -1;
-
-        if (!move->active) {
-            continue;
-        }
-        cx = move->pathX[move->pathIndex];
-        cy = move->pathY[move->pathIndex];
-        if (!inBounds(app, cx, cy)) {
-            continue;
-        }
-        if (app->map.cells[cy][cx].terrain == WB_TERRAIN_SWAMP) {
-            onSwamp = true;
-            dmgX = cx;
-            dmgY = cy;
-        }
-        if (!onSwamp && move->pathIndex < move->pathLen - 1 && move->progress > 0.0f) {
-            nx = move->pathX[move->pathIndex + 1];
-            ny = move->pathY[move->pathIndex + 1];
-            if (inBounds(app, nx, ny) && app->map.cells[ny][nx].terrain == WB_TERRAIN_SWAMP) {
-                onSwamp = true;
-                dmgX = nx;
-                dmgY = ny;
-            }
-        }
-
-        if (!onSwamp) {
-            move->swampDamageTickMs = 0;
-            continue;
-        }
-
-        if (move->swampDamageTickMs == 0) {
-            move->swampDamageTickMs = now;
-            continue;
-        }
-
-        if ((now - move->swampDamageTickMs) >= WB_SWAMP_DAMAGE_PERIOD_MS) {
-            move->swampDamageTickMs = now;
-            move->unitEnergyDeci -= WB_SWAMP_DAMAGE_AMOUNT;
-            if (move->unitEnergyDeci < 0) {
-                move->unitEnergyDeci = 0;
-            }
-            move->unitEnergy = (move->unitEnergyDeci + 9) / 10;
-            if (dmgX >= 0 && dmgY >= 0) {
-                spawnWorldEffect(app, WB_WORLD_EFFECT_DAMAGE_SMALL, dmgX, dmgY);
-            }
-        }
-    }
-
-    for (mi = 0; mi < g_monsterCount; ++mi) {
-        WBMonsterState* ms = &g_monsters[mi];
-        WBCell* cell;
-
-        if (!ms->active || ms->dying || !inBounds(app, ms->col, ms->row)) {
-            continue;
-        }
-
-        cell = &app->map.cells[ms->row][ms->col];
-        if (cell->terrain != WB_TERRAIN_SWAMP) {
-            ms->swampDamageTickMs = 0;
-            continue;
-        }
-
-        if (ms->swampDamageTickMs == 0) {
-            ms->swampDamageTickMs = now;
-            continue;
-        }
-
-        if ((now - ms->swampDamageTickMs) >= WB_SWAMP_DAMAGE_PERIOD_MS) {
-            ms->swampDamageTickMs = now;
-            damageMonster(app, ms, WB_SWAMP_DAMAGE_AMOUNT, false);
-        }
+        default:
+            objGotoPos(app, self, tx, ty, WB_REASON_NONE, false, false);
+            disengageAttack(app, self, true);
+            break;
     }
 }
 
-static void tickMonsters(AppState* app) {
-    int mi;
-    u64 now = osGetTime();
-    for (mi = 0; mi < g_monsterCount; ++mi) {
-        WBMonsterState* ms = &g_monsters[mi];
-        if (!ms->active) continue;
-        if (ms->dying) {
-            if (now >= ms->breakResolveMs) {
-                if (inBounds(app, ms->col, ms->row)) {
-                    WBCell* cell = &app->map.cells[ms->row][ms->col];
-                    cell->hasMonster = false;
-                    cell->monsterType = WB_MONSTER_NONE;
-                }
-                createMonsterDrop(app, ms->col, ms->row, ms->type);
-                spawnWorldEffect(app, WB_WORLD_EFFECT_TAKE_APART_CLOUD, ms->col, ms->row);
-                playSfxClipWorld(app, &app->sfxDisassemble);
-                ms->active = false;
-            }
-            continue;
-        }
-        /* boulders don't move */
-        if (ms->type == WB_MONSTER_BOULDER) continue;
-
-        /* frozen monsters don't move or attack; check if freeze has expired */
-        if (app->map.cells[ms->row][ms->col].monsterFrozen) {
-            if ((uint64_t)now >= app->map.cells[ms->row][ms->col].monsterFrozenUntilMs) {
-                app->map.cells[ms->row][ms->col].monsterFrozen = false;
-            } else {
-                continue;
-            }
-        }
-        /* update smooth movement progress */
-        if (ms->isMoving) {
-            u64 elapsed = now - ms->moveStartMs;
-            ms->moveProgress = (float)elapsed / (float)ms->moveDurationMs;
-            if (ms->moveProgress >= 1.0f) {
-                /* arrived */
-                ms->moveProgress = 1.0f;
-                ms->isMoving = false;
-                ms->row = ms->destRow;
-                ms->col = ms->destCol;
-                ms->onWater = (app->map.cells[ms->row][ms->col].terrain == WB_TERRAIN_WATER ||
-                               app->map.cells[ms->row][ms->col].terrain == WB_TERRAIN_WATER_UNFILLABLE);
-                if (ms->hasTarget) {
-                    ms->nextWanderMs = now;
-                } else if (randRange(1, wbMonsterRestEvery(ms->type)) == 1) {
-                    ms->resting = true;
-                    ms->nextWanderMs = now + (u64)(wbMonsterRestForMs(ms->type)) * (u64)(750 + randRange(0, 499)) / 1000ULL;
-                } else {
-                    ms->resting = false;
-                    ms->nextWanderMs = now + (u64)randRange(120, 280);
-                }
-                /* Check simple monster goals on arrival */
-                {
-                    WBCell* arrivedCell = &app->map.cells[ms->row][ms->col];
-                    if (arrivedCell->hasGoal && !arrivedCell->goalSatisfied &&
-                            !arrivedCell->goalIsCollect &&
-                            (!arrivedCell->bonusGoal || app->map.bonusAvailable) &&
-                            goalMatchesMonster(arrivedCell->goalType, ms->type)) {
-                        satisfyGoalAt(app, arrivedCell, ms->col, ms->row);
-                    }
-                }
-            }
-        }
-
-        if (ms->hasTarget && ms->targetIsBuilding) {
-            /* Re-evaluate: prefer unit targets over building targets */
-            WBAttackProfile atk = monsterAttackProfile(ms->type);
-            if (atk.searchRange > 0) {
-                int tx = ms->col;
-                int ty = ms->row;
-                if (findClosestUnitTarget(app, ms, atk.searchRange, &tx, &ty)) {
-                    ms->targetX = tx;
-                    ms->targetY = ty;
-                    ms->targetIsBuilding = false;
-                }
-            }
-        }
-
-        if (!ms->hasTarget) {
-            WBAttackProfile atk = monsterAttackProfile(ms->type);
-            if (atk.searchRange > 0) {
-                int tx = ms->col;
-                int ty = ms->row;
-                if (findClosestUnitTarget(app, ms, atk.searchRange, &tx, &ty)) {
-                    ms->hasTarget = true;
-                    ms->targetX = tx;
-                    ms->targetY = ty;
-                    ms->targetIsBuilding = false;
-                } else if (findClosestBuildingTarget(app, ms, atk.searchRange, &tx, &ty)) {
-                    ms->hasTarget = true;
-                    ms->targetX = tx;
-                    ms->targetY = ty;
-                    ms->targetIsBuilding = true;
-                }
-            }
-        }
-
-        if (ms->hasTarget) {
-            WBAttackProfile atk = monsterAttackProfile(ms->type);
-            if (!inBounds(app, ms->targetX, ms->targetY) ||
-                    (ms->targetIsBuilding ? !app->map.cells[ms->targetY][ms->targetX].hasBuilding
-                                         : !app->map.cells[ms->targetY][ms->targetX].hasUnit)) {
-                ms->hasTarget = false;
-            } else {
-                int dist = manhattanDistance(ms->col, ms->row, ms->targetX, ms->targetY);
-                if (dist > 7) {
-                    ms->hasTarget = false;
-                } else if (!ms->isMoving && dist == 1 && now >= ms->nextAttackMs) {
-                    int damage;
-                    ms->dir = directionFromStep(ms->col, ms->row, ms->targetX, ms->targetY);
-                    if (randRange(1, 100) <= atk.chanceOfSuccess) {
-                        damage = randRange(atk.damageMin, atk.damageMax);
-                    } else {
-                        damage = 0;
-                    }
-                    if (damage > 0) {
-                        if (ms->targetIsBuilding) {
-                            /* playSound=false: sfxMonsterAttack below is the monster's attack cue;
-                               suppress sfxDamage so defender/unit attacks stay distinct. */
-                            applyBuildingDamageAtCell(app, ms->targetX, ms->targetY, damage, false);
-                        } else {
-                            applyUnitDamageAtCell(app, ms->targetX, ms->targetY, damage, false);
-                        }
-                    } else {
-                        spawnWorldEffect(app, WB_WORLD_EFFECT_DAMAGE_SMALL, ms->targetX, ms->targetY);
-                        /* miss: only monster attack sound, no sfxDamage (matches original) */
-                    }
-                    ms->nextAttackMs = now + (u64)(60000 / atk.hitsPerMinute);
-                    ms->lastAttackMs = now;
-                    playSfxClipWorld(app, &app->sfxMonsterAttack);
-                }
-            }
-        }
-
-        /* start next step when timer expires and not moving */
-        if (!ms->isMoving && now >= ms->nextWanderMs) {
-            static const int dx[4] = {1, -1, 0, 0};
-            static const int dy[4] = {0, 0, -1, 1};
-            static const WBDirection ddir[4] = {WB_DIR_RIGHT, WB_DIR_LEFT, WB_DIR_UP, WB_DIR_DOWN};
-            int candidates[4];
-            int nCandidates = 0;
-            int di;
-
-            if (ms->hasTarget) {
-                int nextCol;
-                int nextRow;
-                if (chooseMonsterStepToward(app, ms, ms->targetX, ms->targetY, &nextCol, &nextRow)) {
-                    ms->destRow = nextRow;
-                    ms->destCol = nextCol;
-                    ms->dir = directionFromStep(ms->col, ms->row, nextCol, nextRow);
-                    ms->isMoving = true;
-                    ms->moveProgress = 0.0f;
-                    ms->moveStartMs = now;
-                    ms->moveDurationMs = monsterMoveDurationMs(ms);
-                    ms->resting = false;
-                } else {
-                    ms->nextWanderMs = now + 250;
-                }
-                continue;
-            }
-
-            for (di = 0; di < 4; ++di) {
-                int nr = ms->row + dy[di];
-                int nc = ms->col + dx[di];
-                if (nr < 0 || nr >= app->map.height || nc < 0 || nc >= app->map.width) continue;
-                if (!wbMonsterCanTraverse(ms->type, app->map.cells[nr][nc].terrain)) continue;
-                /* don't walk onto a cell that has a unit, building, or active mover */
-                if (app->map.cells[nr][nc].hasUnit) continue;
-                if (app->map.cells[nr][nc].hasBuilding) continue;
-                if (cellHasActiveMover(app, nc, nr, -1)) continue;
-                if (activeMonsterAt(ms, nr, nc)) continue;
-                candidates[nCandidates++] = di;
-            }
-            /* Original behavior: if stuck while standing on swamp, retry allowing swamp neighbors. */
-            if (nCandidates == 0 && app->map.cells[ms->row][ms->col].terrain == WB_TERRAIN_SWAMP) {
-                for (di = 0; di < 4; ++di) {
-                    int nr = ms->row + dy[di];
-                    int nc = ms->col + dx[di];
-                    if (nr < 0 || nr >= app->map.height || nc < 0 || nc >= app->map.width) continue;
-                    if (app->map.cells[nr][nc].terrain != WB_TERRAIN_SWAMP) continue;
-                    if (app->map.cells[nr][nc].hasUnit) continue;
-                    if (app->map.cells[nr][nc].hasBuilding) continue;
-                    if (cellHasActiveMover(app, nc, nr, -1)) continue;
-                    if (activeMonsterAt(ms, nr, nc)) continue;
-                    candidates[nCandidates++] = di;
-                }
-            }
-            if (nCandidates > 0) {
-                int pick = candidates[randRange(0, nCandidates - 1)];
-                ms->destRow = ms->row + dy[pick];
-                ms->destCol = ms->col + dx[pick];
-                ms->dir = ddir[pick];
-                ms->isMoving = true;
-                ms->moveProgress = 0.0f;
-                ms->moveStartMs = now;
-                ms->moveDurationMs = monsterMoveDurationMs(ms);
-                ms->resting = false;
-            } else {
-                /* blocked on all sides — rest briefly */
-                ms->nextWanderMs = now + 500;
-            }
-        }
+/* makeMenu(): the menu's second entry is the unit's special action. */
+static WBActionMode unitSpecialAction(const WBCell* cell) {
+    switch (cell->unitType) {
+        case WB_UNIT_BUGGY:
+        case WB_UNIT_DIRTBUGGY:
+        case WB_UNIT_DUMPTRUCK:
+        case WB_UNIT_FORKLIFT:
+        case WB_UNIT_TUGBOAT:
+        case WB_UNIT_FREIGHTER:
+            return pileEmpty(&cell->unitCargo) ? WB_ACTION_PICK : WB_ACTION_DROP;
+        case WB_UNIT_DOZER:
+            return WB_ACTION_PUSH;
+        case WB_UNIT_STEAMSHOVEL:
+            return cell->unitCargoSpecial != WB_CARGO_NONE ? WB_ACTION_FILL : WB_ACTION_DIG;
+        case WB_UNIT_TREEBOT:
+            return cell->unitCargoTreeType != WB_TERRAIN_NORMAL ? WB_ACTION_PLANT : WB_ACTION_UPROOT;
+        case WB_UNIT_DEFENDER:
+        case WB_UNIT_DEFENDER2:
+        case WB_UNIT_SPEEDBOAT:
+            return WB_ACTION_ATTACK;
+        default:
+            return WB_ACTION_MOVE;
     }
+}
 
-    runAutoIntercept(app);
-    runDefenseAttacks(app);
-    tickSwampDamage(app);
+/* menuclick(act) */
+static void unitMenuClick(AppState* app, WBObjRef self, WBActionMode act) {
+    int x;
+    int y;
+    if (!refAlive(app, self, &x, &y)) return;
+    app->actionMode = WB_ACTION_MOVE;
+    if (act != WB_ACTION_MOVE && act != WB_ACTION_ATTACK) {
+        objStopMoving(app, self);
+    }
+    if (act != WB_ACTION_ATTACK) {
+        disengageAttack(app, self, true);
+    }
+    if (act == WB_ACTION_PUSH) {
+        /* doMenuclickPush(): the next click within a tile of here pushes */
+        app->pushOverrideActive = true;
+        app->pushOverrideUnit = self;
+        app->pushOverrideX = x;
+        app->pushOverrideY = y;
+        app->actionMode = WB_ACTION_PUSH;
+    } else if (act != WB_ACTION_MOVE) {
+        app->actionMode = act;
+    }
+}
+
+/* actionButton(): toggle between moving and the special action. */
+static void handleActionButton(AppState* app) {
+    WBObjRef self = selectedUnitRef(app);
+    WBActionMode special;
+    WBActionMode prev = app->actionMode;
+    if (self.kind != WB_OBJ_UNIT) return;
+    special = unitSpecialAction(&app->map.cells[app->selectedY][app->selectedX]);
+    if (special == WB_ACTION_MOVE) return;
+    if (app->actionMode == special && special != WB_ACTION_PUSH) {
+        unitMenuClick(app, self, WB_ACTION_MOVE);
+    } else {
+        unitMenuClick(app, self, special);
+    }
+    if (app->actionMode != prev) {
+        playSfxClip(app, &app->sfxMove);
+    }
+}
+
+static void disassembleSelected(AppState* app) {
+    WBCell* cell;
+    if (!app->hasSelection || app->armedPlan != WB_PLAN_NONE || !inBounds(app, app->selectedX, app->selectedY)) return;
+    cell = &app->map.cells[app->selectedY][app->selectedX];
+    if (cell->hasUnit && agentAt(app, app->selectedX, app->selectedY)) {
+        WBObjRef self = selectedUnitRef(app);
+        unitMenuClick(app, self, WB_ACTION_MOVE);
+        objStopMoving(app, self);
+        disassembleRef(app, self);
+    } else if (cell->hasBuilding) {
+        disassembleRef(app, buildingRef(app, app->selectedX, app->selectedY));
+    }
 }
 
 /*
@@ -6652,7 +6603,7 @@ static void tickCollectGoals(AppState* app) {
                 int mi;
                 for (mi = 0; mi < g_monsterCount; ++mi) {
                     const WBMonsterState* ms = &g_monsters[mi];
-                    if (!ms->active || ms->dying || ms->isMoving) continue;
+                    if (!ms->active || ms->dying || ms->m.sliding) continue;
                     if (ms->col != cx || ms->row != cy) continue;
                     if (goalCell->goalCollectType == WB_MONSTER_NONE ||
                             ms->type == goalCell->goalCollectType) {
@@ -6667,20 +6618,24 @@ static void tickCollectGoals(AppState* app) {
     }
 }
 
-/* Draw a small resource icon over a carry unit to show what it's carrying. */
-static void drawCargoIconAt(AppState* app, const WBResourcePile* cargo, float unitX, float unitY) {
-    int kinds[7];
-    int count = 0;
-    int topKind;
+/* vehicle.generic getCarryMember(): the most plentiful kind (ties go to the later
+   kind); a battery shows the charge of the one on top. */
+static void drawCargoIconAt(AppState* app, const WBResourcePile* cargo, int topBatteryDeci, float unitX, float unitY) {
+    static const int order[7] = { 0, 2, 1, 3, 4, 5, 6 };   /* red, green, blue, yellow, wheel, energy, white */
+    int topKind = -1;
+    int topAmount = 0;
     int assetId;
+    int i;
     if (!cargo || pileEmpty(cargo)) {
         return;
     }
-    sortPileKinds(cargo, kinds, &count);
-    if (count <= 0) {
-        return;
+    for (i = 0; i < 7; ++i) {
+        int amount = order[i] == 6 ? cargo->white : pileEntryAmount(cargo, order[i]);
+        if (amount > 0 && amount >= topAmount) {
+            topAmount = amount;
+            topKind = order[i];
+        }
     }
-    topKind = kinds[0];
     switch (topKind) {
         case 0: assetId = ASSET_RESOURCE_RED_1; break;
         case 1: assetId = ASSET_RESOURCE_BLUE_1; break;
@@ -6700,7 +6655,7 @@ static void drawCargoIconAt(AppState* app, const WBResourcePile* cargo, float un
         }
         case 3: assetId = ASSET_RESOURCE_YELLOW_1; break;
         case 4: assetId = ASSET_RESOURCE_WHEEL_FULL; break;
-        case 5: assetId = energyAssetForValue(cargo->energy <= 0 ? 0 : 100); break;
+        case 5: assetId = energyAssetForValue(energyStatusFromDeci(topBatteryDeci)); break;
         case 6: assetId = ASSET_CARRY_WHITE; break;
         default: assetId = -1; break;
     }
@@ -6715,210 +6670,557 @@ static void drawCargoIconAt(AppState* app, const WBResourcePile* cargo, float un
         g_objectAnchors[assetId].y);
 }
 
-/* Called for idle (cell-bound) units — reads cargo from cell. */
 static void drawUnitCargoOverlay(AppState* app, const WBCell* cell, float unitX, float unitY) {
-    if (!cell || !unitSupportsPickDrop(cell->unitType)) {
+    int n;
+    if (!cell || !unitSupportsPickDrop(cell->unitType) || pileEmpty(&cell->unitCargo)) {
         return;
     }
-    if (cell->unitType == WB_UNIT_TREEBOT && cell->unitCargo.green > 0) {
-        return;
-    }
-    if (cell->unitType == WB_UNIT_STEAMSHOVEL && (cell->unitCargo.red > 0 || cell->unitCargo.blue > 0)) {
-        return;
-    }
-    drawCargoIconAt(app, &cell->unitCargo, unitX, unitY);
+    n = cell->unitCargo.energy < WB_MAX_CARGO_BATTERIES ? cell->unitCargo.energy : WB_MAX_CARGO_BATTERIES;
+    drawCargoIconAt(app, &cell->unitCargo, n > 0 ? cell->unitCargoBatteries[n - 1] : 0, unitX, unitY);
 }
 
-/* Called for moving units — cargo is in the WBMoveState. */
-static void drawMovingUnitCargoOverlay(AppState* app, WBUnitType unitType, const WBResourcePile* cargo, float unitX, float unitY) {
-    if (unitType == WB_UNIT_TREEBOT && cargo && cargo->green > 0) {
+/* ─── Drawing the world's objects ─────────────────────────────────────── */
+
+#define WB_EXTRA_SPIKE_IDX 122
+
+/* The sim clock to the millisecond (simMs only moves in 15 fps steps). */
+static double simNowMs(const AppState* app) {
+    return app->simMs + app->simAccumMs;
+}
+
+/* pMoveIndex this instant: 1 at the start of a step, 0 once it has landed. The
+   original only moves it once a frame; drawing it from the sim clock keeps the
+   slide smooth at the 3DS's 60 fps. */
+static float motionMoveIndex(const AppState* app, const WBMotion* m, float speed) {
+    double d;
+    if (!m->sliding || speed <= 0.0f) {
+        return 0.0f;
+    }
+    d = 1.0 - ((simNowMs(app) - m->slideStartMs) * speed / 1000.0);
+    if (d < 0.0) d = 0.0;
+    if (d > 1.0) d = 1.0;
+    return (float) d;
+}
+
+/* The slide from the tile the object left: (old loc - new loc) * pMoveIndex. The
+   pop out of a whirlpool has no slide. */
+static void motionSlideOffset(AppState* app, const WBMotion* m, float moveIndex, float* outDx, float* outDy) {
+    float fx, fy, cx, cy;
+    *outDx = 0.0f;
+    *outDy = 0.0f;
+    if (!m->sliding || m->teleportStep || moveIndex <= 0.0f) {
         return;
     }
-    if (unitType == WB_UNIT_STEAMSHOVEL && cargo && (cargo->red > 0 || cargo->blue > 0)) {
+    posToLoc(app, m->fromX + 1, m->fromY + 1, &fx, &fy);
+    posToLoc(app, m->curX + 1, m->curY + 1, &cx, &cy);
+    *outDx = (fx - cx) * moveIndex;
+    *outDy = (fy - cy) * moveIndex;
+}
+
+/* Something the dozer pushed rides along with the dozer's slide until it stops. */
+static bool pushedSlideOffset(AppState* app, WBObjRef pusher, int x, int y, float* outDx, float* outDy) {
+    const WBUnitAgent* a;
+    const WBCell* cell;
+    float mi;
+    float fx, fy, cx, cy;
+    if (pusher.kind != WB_OBJ_UNIT || !refAlive(app, pusher, NULL, NULL)) {
+        return false;
+    }
+    a = &app->agents[pusher.index];
+    if (a->stopPushing || !a->m.sliding) {
+        return false;
+    }
+    cell = &app->map.cells[a->m.curY][a->m.curX];
+    mi = motionMoveIndex(app, &a->m, unitMoveSpeed(cell->unitType));
+    posToLoc(app, a->m.curX + 1, a->m.curY + 1, &fx, &fy);
+    posToLoc(app, x + 1, y + 1, &cx, &cy);
+    *outDx = (fx - cx) * mi;
+    *outDy = (fy - cy) * mi;
+    return true;
+}
+
+static bool unitIsWaterVersion(WBUnitType t) {
+    return t == WB_UNIT_DUCK || t == WB_UNIT_FROG || t == WB_UNIT_FISH;
+}
+
+/* Where the unit in agent slot 'slot' is drawn, and what it looks like. */
+static void unitSpritePlace(AppState* app, int slot, float* outX, float* outY, WBUnitPose* outPose) {
+    const WBUnitAgent* a = &app->agents[slot];
+    const WBMotion* m = &a->m;
+    const WBCell* cell = &app->map.cells[m->curY][m->curX];
+    double now = simNowMs(app);
+    float locX, locY, dx, dy, mi;
+    WBUnitPose p;
+    posToLoc(app, m->curX + 1, m->curY + 1, &locX, &locY);
+    mi = motionMoveIndex(app, m, unitMoveSpeed(cell->unitType));
+    motionSlideOffset(app, m, mi, &dx, &dy);
+    /* pPixelOffset: the shudder and the driving bob, at the original's pixel sizes */
+    *outX = roundf(locX + dx + (10.0f * DIRECTOR_SCALE) + (m->hasPath ? m->pixelOffX : 0.0f));
+    *outY = roundf(locY + dy + (18.0f * DIRECTOR_SCALE) + (m->hasPath ? m->pixelOffY : 0.0f));
+    memset(&p, 0, sizeof(p));
+    p.type = cell->unitType;
+    p.dir = cell->unitDirection;
+    p.sliding = m->sliding;
+    p.moveIndex = mi;
+    p.tileWater = terrainUsesWaterSprite(cell->terrain);
+    if (unitIsWaterVersion(cell->unitType)) {
+        bool oldWater = m->sliding && terrainUsesWaterSprite(app->map.cells[m->fromY][m->fromX].terrain);
+        p.water = (p.tileWater && (mi < 0.5f || oldWater)) || (oldWater && mi > 0.5f);
+    }
+    p.full = (cell->unitType == WB_UNIT_STEAMSHOVEL && cell->unitCargoSpecial != WB_CARGO_NONE) ||
+             (cell->unitType == WB_UNIT_TREEBOT && cell->unitCargoTreeType != WB_TERRAIN_NORMAL);
+    switch (cell->unitType) {
+        case WB_UNIT_STEAMSHOVEL:
+            if ((a->actionAnim == WB_UNIT_ANIM_DIG || a->actionAnim == WB_UNIT_ANIM_FILL) && now <= a->actionWhenMs + 200.0) {
+                p.action = a->actionAnim;
+                p.actionFrame = 1;
+            }
+            break;
+        case WB_UNIT_TREEBOT:
+            if (a->actionAnim == WB_UNIT_ANIM_UPROOT || a->actionAnim == WB_UNIT_ANIM_PLANT) {
+                int f = 1 + lingoInteger((now - a->actionWhenMs) / 180.0);
+                if (f <= 2) {
+                    p.action = a->actionAnim;
+                    p.actionFrame = f;
+                }
+            }
+            break;
+        case WB_UNIT_REPAIRBOT:
+            if (a->repairShow) {
+                p.action = WB_UNIT_ANIM_REPAIR;
+                p.actionFrame = a->repairShow;
+            }
+            break;
+        case WB_UNIT_FREEZEBOT:
+            if (a->freezeState == 2 && (now - a->freezeMs) < 600.0) {
+                p.action = WB_UNIT_ANIM_ATTACK;
+                p.actionFrame = 1 + (((int) (now - a->freezeMs) / 100) % 2);
+            }
+            break;
+        default:
+            break;
+    }
+    *outPose = p;
+}
+
+static void drawUnitEnergyBadgeCharging(AppState* app, int energyDeci, float unitX, float unitY, bool charging) {
+    if (charging && energyDeci > 0) {
+        /* icon.charging.0/1/2 */
+        int frame = (int) (osGetTime() / 230) % 3;
+        int idx = (frame == 0) ? WB_EXTRA_UI_CHARGE_0_IDX :
+                  (frame == 1) ? WB_EXTRA_UI_CHARGE_1_IDX : WB_EXTRA_UI_CHARGE_2_IDX;
+        C2D_Image chargeImg = getWorldbuilderExtraImage(app, idx);
+        if (chargeImg.subtex) {
+            drawAnchoredImage(chargeImg,
+                unitX + (12.0f * DIRECTOR_SCALE),
+                unitY + (8.0f * DIRECTOR_SCALE),
+                DIRECTOR_SCALE,
+                chargeImg.subtex->width * 0.5f,
+                chargeImg.subtex->height * 0.5f);
+            return;
+        }
+    }
+    drawUnitEnergyBadge(app, energyDeci, unitX, unitY);
+}
+
+static void drawUnitAgent(AppState* app, int slot) {
+    const WBUnitAgent* a = &app->agents[slot];
+    const WBCell* cell = &app->map.cells[a->m.curY][a->m.curX];
+    float unitX;
+    float unitY;
+    WBUnitPose pose;
+    int assetId;
+    C2D_Image image;
+    unitSpritePlace(app, slot, &unitX, &unitY, &pose);
+    assetId = unitPoseAssetId(&pose);
+    if (assetId < 0) {
         return;
     }
-    drawCargoIconAt(app, cargo, unitX, unitY);
+    image = getImage(app, assetId);
+    if (!imageIntersectsScreen(image, unitX, unitY, DIRECTOR_SCALE, g_objectAnchors[assetId].x, g_objectAnchors[assetId].y, BOTTOM_W, BOTTOM_H)) {
+        return;
+    }
+    drawAnchoredImage(image, unitX, unitY, DIRECTOR_SCALE, g_objectAnchors[assetId].x, g_objectAnchors[assetId].y);
+    drawUnitCargoOverlay(app, cell, unitX, unitY);
+    drawUnitEnergyBadgeCharging(app, cell->unitEnergyDeci, unitX, unitY, a->recharging);
+    if (app->hasSelection && app->armedPlan == WB_PLAN_NONE && a->m.curX == app->selectedX && a->m.curY == app->selectedY) {
+        drawSelectionHighlight(app, unitX, unitY, false, assetId);
+    }
+}
+
+/* Monster walk frame (1-based), from each monster.* getMember(). */
+static int monsterWalkTick(WBMonsterType type, float moveIndex) {
+    double r = 1.0 - (double) moveIndex;
+    int f;
+    switch (type) {
+        case WB_MONSTER_CRAB:
+        case WB_MONSTER_WATER_CRAB:
+            f = lingoInteger(r * 4 * 2); if (f < 1) f = 1; if (f > 4) f -= 4; return f;
+        case WB_MONSTER_SHARK:
+            f = lingoInteger(r * 3 * 2); if (f < 1) f = 1; if (f > 3) f -= 3; return f;
+        case WB_MONSTER_GATOR:
+            f = lingoInteger(r * 2 * 4); if (f < 1) f = 1; return 1 + ((f - 1) % 2);
+        case WB_MONSTER_SCORPION:
+            f = lingoInteger(r * 3 * 4); if (f < 1) f = 1; return 1 + ((f - 1) % 3);
+        case WB_MONSTER_TREX:
+            f = lingoInteger(r * 10 * 4); if (f < 1) f = 1; return 1 + ((f - 1) % 10);
+        case WB_MONSTER_LION:
+            f = lingoInteger(r * 2 * 2); if (f < 1) f = 1; return 1 + ((f - 1) % 2);
+        default:
+            return 0;
+    }
+}
+
+static int monsterAttackFrames(WBMonsterType type) {
+    return type == WB_MONSTER_TREX ? 3 : type == WB_MONSTER_LION ? 4 : 6;
+}
+
+static int monsterFrozenAsset(WBMonsterType type) {
+    switch (type) {
+        case WB_MONSTER_CRAB:       return ASSET_MONSTER_CRAB_FROZEN;
+        case WB_MONSTER_WATER_CRAB: return ASSET_MONSTER_WATER_CRAB_FROZEN;
+        case WB_MONSTER_GATOR:      return ASSET_MONSTER_GATOR_FROZEN;
+        case WB_MONSTER_SCORPION:   return ASSET_MONSTER_SCORPION_FROZEN;
+        case WB_MONSTER_SHARK:      return ASSET_MONSTER_SHARK_FROZEN;
+        case WB_MONSTER_TREX:       return ASSET_MONSTER_TREX_FROZEN;
+        case WB_MONSTER_LION:       return ASSET_MONSTER_LION_FROZEN;
+        default:                    return -1;
+    }
+}
+
+static void drawMonster(AppState* app, int mi) {
+    WBMonsterState* ms = &g_monsters[mi];
+    double now = simNowMs(app);
+    float locX, locY, dx = 0.0f, dy = 0.0f, mIndex;
+    float mX, mY;
+    int walkTick = 0;
+    bool attacking = false;
+    bool frozenSprite = false;
+    int mAssetId;
+    C2D_Image mImg;
+    posToLoc(app, ms->col + 1, ms->row + 1, &locX, &locY);
+    mIndex = motionMoveIndex(app, &ms->m, ms->speed);
+    if (ms->m.sliding) {
+        motionSlideOffset(app, &ms->m, mIndex, &dx, &dy);
+        walkTick = monsterWalkTick(ms->type, mIndex);
+    } else if (ms->pushed && !pushedSlideOffset(app, ms->pushedBy, ms->col, ms->row, &dx, &dy)) {
+        ms->pushed = false;
+    }
+    if (!ms->m.sliding && ms->actionActive) {
+        int f = 1 + lingoInteger((now - ms->actionWhenMs) / 100.0);
+        if (f <= monsterAttackFrames(ms->type)) {
+            attacking = true;
+            walkTick = f & 1;       /* attack.(1 + f mod 2) */
+        } else {
+            ms->actionActive = false;
+        }
+    }
+    /* WB2 freeze: the frozen member, blinking with the live one in the last 4 s */
+    if (app->map.isWB2Level && (ms->frozenState == 1 || ms->frozenState == 2)) {
+        double remaining = 25.0 - (now - ms->frozenMs) / 1000.0;
+        frozenSprite = remaining >= 4.0 || (lingoInteger(remaining * 5.0) % 2) != 0;
+    }
+    mX = roundf(locX + dx + (10.0f * DIRECTOR_SCALE) + (ms->m.hasPath ? ms->m.pixelOffX : 0.0f));
+    mY = roundf(locY + dy + (18.0f * DIRECTOR_SCALE) + (ms->m.hasPath ? ms->m.pixelOffY : 0.0f));
+    if (frozenSprite) {
+        int frozenAsset = monsterFrozenAsset(ms->type);
+        if (frozenAsset >= 0) {
+            C2D_Image frozenImg = getImage(app, frozenAsset);
+            if (frozenImg.subtex) {
+                drawAnchoredImage(frozenImg, mX, mY, DIRECTOR_SCALE, g_objectAnchors[frozenAsset].x, g_objectAnchors[frozenAsset].y);
+            }
+        }
+    } else {
+        mAssetId = monsterAnimAssetId(ms->type, ms->dir, ms->onWater, walkTick, attacking);
+        if (mAssetId < 0) {
+            return;
+        }
+        mImg = getImage(app, mAssetId);
+        if (!mImg.subtex) {
+            loadGameplaySheets(app);
+            mImg = getImage(app, mAssetId);
+        }
+        if (!mImg.subtex) {
+            mImg = monsterSheetFallbackImage(app, ms, walkTick, attacking);
+        }
+        if (!mImg.subtex) {
+            C2D_DrawRectSolid(mX - 2.0f, mY - 2.0f, 0.0f, 4.0f, 4.0f, C2D_Color32(0xFF, 0x30, 0x30, 0xFF));
+            return;
+        }
+        /* centre X, bottom-align Y */
+        C2D_DrawImageAt(mImg,
+            mX - mImg.subtex->width * DIRECTOR_SCALE * 0.5f,
+            mY - mImg.subtex->height * DIRECTOR_SCALE,
+            0.0f, NULL, DIRECTOR_SCALE, DIRECTOR_SCALE);
+    }
+    if (ms->type != WB_MONSTER_BOULDER && ms->hp <= 200) {
+        drawUnitEnergyBadge(app, ms->hp, mX, mY);
+    }
+}
+
+/* building.guard_tower: faces its target, else turns left, up, right, down every 750 ms. */
+static WBDirection guardTowerDirection(AppState* app, int x, int y) {
+    static const WBDirection spin[4] = { WB_DIR_LEFT, WB_DIR_UP, WB_DIR_RIGHT, WB_DIR_DOWN };
+    int tx;
+    int ty;
+    if (app->buildingHasTarget[y][x] && refAlive(app, app->buildingTarget[y][x], &tx, &ty)) {
+        return directionFromOffset(tx - x, ty - y, WB_DIR_DOWN);
+    }
+    return spin[(osGetTime() / 750) % 4];
+}
+
+static void drawBuildingAt(AppState* app, int x, int y, float locX, float locY) {
+    const WBCell* cell = &app->map.cells[y][x];
+    WBDirection dir = cell->buildingType == WB_BUILDING_GUARD_TOWER ? guardTowerDirection(app, x, y) : cell->buildingDirection;
+    int bAssetId = buildingAssetId(cell->buildingType, dir, cell->factoryColor);
+    C2D_Image bImg;
+    WBAnchor anchor;
+    const WBResourcePile* recipe;
+    if (bAssetId < 0) {
+        return;
+    }
+    bImg = getImage(app, bAssetId);
+    if (!bImg.subtex) {
+        return;
+    }
+    anchor = g_objectAnchors[ASSET_BUILDING_GAS_STATION];
+    if (bAssetId < (int) (sizeof(g_objectAnchors) / sizeof(g_objectAnchors[0]))) {
+        anchor = g_objectAnchors[bAssetId];
+    }
+    drawAnchoredImage(bImg, locX, locY, DIRECTOR_SCALE, anchor.x, anchor.y);
+    recipe = wbBuildingRecipe(cell->buildingType);
+    if (recipe && recipe->energy > 0 && cell->buildingHp <= 200) {
+        drawUnitEnergyBadge(app, cell->buildingHp, locX, locY);
+    }
+    if (app->hasSelection && app->armedPlan == WB_PLAN_NONE && x == app->selectedX && y == app->selectedY) {
+        drawSelectionHighlight(app, locX, locY, false, bAssetId);
+    }
+}
+
+typedef struct WBDrawItem {
+    int key;            /* row-major index of the tile the sprite sorts with */
+    u8 kind;
+    u8 index;
+} WBDrawItem;
+
+static WBDrawItem g_drawItems[WB_MAX_AGENTS + WB_MAX_MONSTERS];
+
+static int compareDrawItems(const void* a, const void* b) {
+    const WBDrawItem* da = (const WBDrawItem*) a;
+    const WBDrawItem* db = (const WBDrawItem*) b;
+    if (da->key != db->key) return da->key - db->key;
+    if (da->kind != db->kind) return (int) da->kind - (int) db->kind;
+    return (int) da->index - (int) db->index;
+}
+
+/* A sliding sprite sorts with whichever of its two tiles is drawn later. */
+static int motionSortKey(const WBMotion* m) {
+    int a = m->curY * WB_MAX_MAP_W + m->curX;
+    int b = m->fromY * WB_MAX_MAP_W + m->fromX;
+    return (m->sliding && b > a) ? b : a;
+}
+
+static void drawPushedPileOffset(AppState* app, int x, int y, float* locX, float* locY) {
+    float dx;
+    float dy;
+    if (!app->pilePushed || app->pilePushX != x || app->pilePushY != y) {
+        return;
+    }
+    if (pushedSlideOffset(app, app->pilePushedBy, x, y, &dx, &dy)) {
+        *locX += dx;
+        *locY += dy;
+    } else {
+        app->pilePushed = false;
+    }
 }
 
 static void drawObjectsBottom(AppState* app) {
     int y;
     int x;
+    int itemCount = 0;
+    int next = 0;
+    int whirlFrame;
+    int i;
 
     /* Recover from partial sheet-load failures to avoid invisible monsters. */
     if (!app->monstersASheet || !app->monstersBSheet) {
         loadGameplaySheets(app);
     }
 
+    for (i = 0; i < WB_MAX_AGENTS; ++i) {
+        if (app->agents[i].used) {
+            g_drawItems[itemCount].key = motionSortKey(&app->agents[i].m);
+            g_drawItems[itemCount].kind = WB_OBJ_UNIT;
+            g_drawItems[itemCount].index = (u8) i;
+            ++itemCount;
+        }
+    }
+    for (i = 0; i < g_monsterCount; ++i) {
+        if (g_monsters[i].active) {
+            g_drawItems[itemCount].key = motionSortKey(&g_monsters[i].m);
+            g_drawItems[itemCount].kind = WB_OBJ_MONSTER;
+            g_drawItems[itemCount].index = (u8) i;
+            ++itemCount;
+        }
+    }
+    qsort(g_drawItems, (size_t) itemCount, sizeof(WBDrawItem), compareDrawItems);
+
     /* whirlpool animation frame (4 frames @ ~2fps) */
-    int whirlFrame = (int)((osGetTime() / 500) % 4);
+    whirlFrame = (int) ((osGetTime() / 500) % 4);
     for (y = 0; y < app->map.height; ++y) {
         for (x = 0; x < app->map.width; ++x) {
             const WBCell* cell = &app->map.cells[y][x];
+            int key = y * WB_MAX_MAP_W + x;
             float locX;
             float locY;
             posToLoc(app, x + 1, y + 1, &locX, &locY);
-            drawGoal(app, cell, locX, locY);
-            drawResourceOrPlan(app, cell, locX, locY);
-            /* Draw whirlpools above terrain/resources but below units/buildings. */
+            drawGoal(app, cell, x, y, locX, locY);
+            if (cell->hasResource) {
+                float pileX = locX;
+                float pileY = locY;
+                drawPushedPileOffset(app, x, y, &pileX, &pileY);
+                drawResourceOrPlan(app, cell, pileX, pileY);
+            }
+            /* Whirlpools above terrain/resources but below units/buildings. */
             if (cell->isWhirlpool) {
-                int wAssetId = (cell->hasUnit || cellHasActiveMover(app, x, y, -1))
+                int wAssetId = (cell->hasUnit || whirlpoolHasUser(app, x, y))
                     ? ASSET_WHIRLPOOL_STATIC
                     : (ASSET_WHIRLPOOL_WHIRL1 + whirlFrame);
-                float wX = locX + (24.0f * DIRECTOR_SCALE);
-                float wY = locY + (24.0f * DIRECTOR_SCALE);
                 C2D_Image wImg = getImage(app, wAssetId);
                 if (wImg.subtex) {
-                    drawAnchoredImage(wImg, wX, wY, DIRECTOR_SCALE,
+                    drawAnchoredImage(wImg, locX + (24.0f * DIRECTOR_SCALE), locY + (24.0f * DIRECTOR_SCALE), DIRECTOR_SCALE,
                         wImg.subtex->width * 0.5f,
                         wImg.subtex->height * 0.5f);
                 }
             }
-            if (cell->hasUnit) {
-                u8 unitAction = WB_UNIT_ANIM_NONE;
-                if (app->unitActionUntilMs[y][x] > osGetTime()) {
-                    unitAction = app->unitActionAnim[y][x];
+            while (next < itemCount && g_drawItems[next].key <= key) {
+                if (g_drawItems[next].kind == WB_OBJ_UNIT) {
+                    drawUnitAgent(app, g_drawItems[next].index);
+                } else {
+                    drawMonster(app, g_drawItems[next].index);
                 }
-                int assetId = unitAnimAssetId(cell->unitType, cell->unitDirection, terrainUsesWaterSprite(cell->terrain), 0.0f, &cell->unitCargo, unitAction);
-                if (assetId >= 0) {
-                    float unitX = locX + (10.0f * DIRECTOR_SCALE);
-                    float unitY = locY + (18.0f * DIRECTOR_SCALE);
-                    if (app->hasSelection && x == app->selectedX && y == app->selectedY &&
-                        app->selectedMover < 0 && app->selectedShudderUntilMs > osGetTime()) {
-                        unitX += 2.0f * sinf((float) osGetTime() / 25.0f);
-                    }
-                    C2D_Image image = getImage(app, assetId);
-                    if (imageIntersectsScreen(image, unitX, unitY, DIRECTOR_SCALE, g_objectAnchors[assetId].x, g_objectAnchors[assetId].y, BOTTOM_W, BOTTOM_H)) {
-                        drawAnchoredImage(image, unitX, unitY, DIRECTOR_SCALE, g_objectAnchors[assetId].x, g_objectAnchors[assetId].y);
-                        drawUnitCargoOverlay(app, cell, unitX, unitY);
-                        drawUnitEnergyBadgeAt(app, cell->unitEnergyDeci, unitX, unitY, x, y, cell->unitType);
-                        if (app->hasSelection && x == app->selectedX && y == app->selectedY) {
-                            drawSelectionHighlight(app, unitX, unitY, false, assetId);
-                        }
-                    }
-                }
+                ++next;
             }
-            /* ── buildings ── */
             if (cell->hasBuilding) {
-                int bAssetId = buildingAssetId(cell->buildingType, cell->buildingDirection, cell->factoryColor);
-                if (bAssetId >= 0) {
-                    float bX = locX;
-                    float bY = locY;
-                    C2D_Image bImg = getImage(app, bAssetId);
-                    if (bImg.subtex) {
-                        WBAnchor anchor = (bAssetId < ASSET_BUILDINGS_BASE) ? g_objectAnchors[bAssetId] : g_objectAnchors[ASSET_BUILDING_GAS_STATION];
-                        if (bAssetId < (int)(sizeof(g_objectAnchors)/sizeof(g_objectAnchors[0]))) {
-                            anchor = g_objectAnchors[bAssetId];
-                        }
-                        drawAnchoredImage(bImg, bX, bY, DIRECTOR_SCALE, anchor.x, anchor.y);
-                        if (cell->buildingHp > 0 && cell->buildingHp <= 200) {
-                            drawUnitEnergyBadge(app, cell->buildingHp, bX, bY);
-                        }
-                        if (app->hasSelection && x == app->selectedX && y == app->selectedY) {
-                            drawSelectionHighlight(app, bX, bY, false, bAssetId);
-                        }
-                    }
-                }
+                drawBuildingAt(app, x, y, locX, locY);
             }
         }
     }
-    /* ── monsters (drawn after cells pass so they overlay resources/goals) ── */
-    {
-        int mi;
-        for (mi = 0; mi < g_monsterCount; ++mi) {
-            const WBMonsterState* ms = &g_monsters[mi];
-            float locX;
-            float locY;
-            C2D_Image mImg;
-            int mAssetId;
-            int walkTick;
-            bool attacking = false;
-            if (!ms->active) continue;
-            /* interpolated draw position when moving */
-            if (ms->isMoving) {
-                float srcX, srcY, dstX, dstY;
-                posToLoc(app, ms->col + 1, ms->row + 1, &srcX, &srcY);
-                posToLoc(app, ms->destCol + 1, ms->destRow + 1, &dstX, &dstY);
-                locX = srcX + (dstX - srcX) * ms->moveProgress;
-                locY = srcY + (dstY - srcY) * ms->moveProgress;
-                /* walk animation: cycle frames across the step (0-based for monsterAnimAssetId) */
-                {
-                    int nf = wbMonsterWalkFrames(ms->type);
-                    int ft = (int)(ms->moveProgress * nf * 2.0f);
-                    if (ft < 1) ft = 1;
-                    if (ft > nf) ft -= nf;
-                    walkTick = ft - 1;
-                }
-            } else {
-                posToLoc(app, ms->col + 1, ms->row + 1, &locX, &locY);
-                walkTick = 0; /* idle frame */
-            }
-            {
-                attacking = (osGetTime() - ms->lastAttackMs) < WB_DAMAGE_EFFECT_DURATION_MS;
-                if (attacking) {
-                    walkTick = (int) ((osGetTime() / 120) & 1);
-                }
-            }
-            mAssetId = monsterAnimAssetId(ms->type, ms->dir, ms->onWater, walkTick, attacking);
-            if (mAssetId < 0) {
-                continue;
-            }
-            mImg = getImage(app, mAssetId);
-            if (!mImg.subtex) {
-                loadGameplaySheets(app);
-                mImg = getImage(app, mAssetId);
-            }
-            if (!mImg.subtex) {
-                mImg = monsterSheetFallbackImage(app, ms, walkTick, attacking);
-            }
-            if (mImg.subtex) {
-                float mX = locX + (10.0f * DIRECTOR_SCALE);
-                float mY = locY + (18.0f * DIRECTOR_SCALE);
-                bool isFrozen = app->map.cells[ms->row][ms->col].monsterFrozen;
-                /* When frozen the ice-block sprite replaces the animated monster entirely. */
-                if (!isFrozen) {
-                    /* Known-good render math: center X, bottom-align Y. */
-                    C2D_DrawImageAt(mImg,
-                        mX - mImg.subtex->width * DIRECTOR_SCALE * 0.5f,
-                        mY - mImg.subtex->height * DIRECTOR_SCALE,
-                        0.0f, NULL, DIRECTOR_SCALE, DIRECTOR_SCALE);
-                }
-                /* Draw frozen overlay (replaces normal sprite) when frozen */
-                if (isFrozen) {
-                    int frozenAsset = -1;
-                    switch (ms->type) {
-                        case WB_MONSTER_CRAB:       frozenAsset = ASSET_MONSTER_CRAB_FROZEN;       break;
-                        case WB_MONSTER_WATER_CRAB: frozenAsset = ASSET_MONSTER_WATER_CRAB_FROZEN; break;
-                        case WB_MONSTER_GATOR:      frozenAsset = ASSET_MONSTER_GATOR_FROZEN;      break;
-                        case WB_MONSTER_SCORPION:   frozenAsset = ASSET_MONSTER_SCORPION_FROZEN;   break;
-                        case WB_MONSTER_SHARK:      frozenAsset = ASSET_MONSTER_SHARK_FROZEN;      break;
-                        case WB_MONSTER_TREX:       frozenAsset = ASSET_MONSTER_TREX_FROZEN;       break;
-                        case WB_MONSTER_LION:       frozenAsset = ASSET_MONSTER_LION_FROZEN;       break;
-                        default: break;
-                    }
-                    if (frozenAsset >= 0) {
-                        C2D_Image frozenImg = getImage(app, frozenAsset);
-                        if (frozenImg.subtex) {
-                            drawAnchoredImage(frozenImg, mX, mY, DIRECTOR_SCALE,
-                                g_objectAnchors[frozenAsset].x,
-                                g_objectAnchors[frozenAsset].y);
-                        }
-                    }
-                } /* end if (isFrozen) */
-                /* Low-HP badge when monster is badly damaged */
-                if (ms->hp <= 200) {
-                    drawUnitEnergyBadge(app, ms->hp, mX, mY);
-                }
-            } else {
-                float mX = locX + (10.0f * DIRECTOR_SCALE);
-                float mY = locY + (18.0f * DIRECTOR_SCALE);
-                C2D_DrawRectSolid(mX - 2.0f, mY - 2.0f, 0.0f, 4.0f, 4.0f, C2D_Color32(0xFF, 0x30, 0x30, 0xFF));
-            }
+    for (; next < itemCount; ++next) {
+        if (g_drawItems[next].kind == WB_OBJ_UNIT) {
+            drawUnitAgent(app, g_drawItems[next].index);
+        } else {
+            drawMonster(app, g_drawItems[next].index);
         }
-    }
-    for (y = 0; y < (int) (sizeof(app->moves) / sizeof(app->moves[0])); ++y) {
-        drawMovingUnit(app, y);
     }
     drawWorldEffectsBottom(app);
+    drawClickSpike(app);
+}
+
+/* The unit or building whose sprite is under the touch, topmost first (the
+   'object click catcher' sends a click on a sprite to that object's tile). */
+static bool objectSpriteAtTouch(AppState* app, const touchPosition* touch, int* outX, int* outY) {
+    int bestKey = -1;
+    int i;
+    int y;
+    int x;
+    for (i = 0; i < WB_MAX_AGENTS; ++i) {
+        const WBUnitAgent* a = &app->agents[i];
+        float unitX;
+        float unitY;
+        WBUnitPose pose;
+        int assetId;
+        C2D_Image image;
+        float left;
+        float top;
+        int key;
+        if (!a->used) continue;
+        unitSpritePlace(app, i, &unitX, &unitY, &pose);
+        assetId = unitPoseAssetId(&pose);
+        if (assetId < 0) continue;
+        image = getImage(app, assetId);
+        left = unitX - (g_objectAnchors[assetId].x * DIRECTOR_SCALE);
+        top = unitY - (g_objectAnchors[assetId].y * DIRECTOR_SCALE);
+        if (!pointInRect((float) touch->px, (float) touch->py, left, top, imageWidth(image, DIRECTOR_SCALE), imageHeight(image, DIRECTOR_SCALE))) continue;
+        key = motionSortKey(&a->m);
+        if (key >= bestKey) {
+            bestKey = key;
+            *outX = a->m.curX;
+            *outY = a->m.curY;
+        }
+    }
+    for (y = 0; y < app->map.height; ++y) {
+        for (x = 0; x < app->map.width; ++x) {
+            const WBCell* cell = &app->map.cells[y][x];
+            int bAssetId;
+            C2D_Image bImg;
+            WBAnchor anchor;
+            float locX;
+            float locY;
+            int key = y * WB_MAX_MAP_W + x;
+            if (!cell->hasBuilding || key < bestKey) continue;
+            bAssetId = buildingAssetId(cell->buildingType, cell->buildingDirection, cell->factoryColor);
+            if (bAssetId < 0) continue;
+            bImg = getImage(app, bAssetId);
+            if (!bImg.subtex) continue;
+            anchor = g_objectAnchors[ASSET_BUILDING_GAS_STATION];
+            if (bAssetId < (int) (sizeof(g_objectAnchors) / sizeof(g_objectAnchors[0]))) {
+                anchor = g_objectAnchors[bAssetId];
+            }
+            posToLoc(app, x + 1, y + 1, &locX, &locY);
+            if (!pointInRect((float) touch->px, (float) touch->py, locX - anchor.x * DIRECTOR_SCALE, locY - anchor.y * DIRECTOR_SCALE,
+                    imageWidth(bImg, DIRECTOR_SCALE), imageHeight(bImg, DIRECTOR_SCALE))) continue;
+            bestKey = key;
+            *outX = x;
+            *outY = y;
+        }
+    }
+    return bestKey >= 0;
+}
+
+/* A tap on a unit's sprite selects it (used by the tutorial's 'occupant' step). */
+static bool trySelectUnitAtTouch(AppState* app, const touchPosition* touch) {
+    int x;
+    int y;
+    if (!objectSpriteAtTouch(app, touch, &x, &y) || !app->map.cells[y][x].hasUnit) {
+        return false;
+    }
+    app->armedPlan = WB_PLAN_NONE;
+    selectObjectAt(app, x, y, true);
+    return true;
+}
+
+/* click spike behavior: an arrow on the clicked tile for 125 ms, then it rises 21 px
+   and fades out over 400 ms. */
+static void drawClickSpike(AppState* app) {
+    double t;
+    float locX;
+    float locY;
+    float rise = 0.0f;
+    float blend = 1.0f;
+    C2D_Image img;
+    C2D_ImageTint tint;
+    if (!app->spikeActive) {
+        return;
+    }
+    t = (double) osGetTime() - app->spikeMs;
+    if (t > 525.0) {
+        app->spikeActive = false;
+        return;
+    }
+    if (t > 125.0) {
+        float tt = (float) ((t - 125.0) / 400.0);
+        blend = 1.0f - tt;
+        rise = 21.0f * tt;
+    }
+    img = getWorldbuilderExtraImage(app, WB_EXTRA_SPIKE_IDX);
+    if (!img.subtex) {
+        return;
+    }
+    posToLoc(app, app->spikeX + 1, app->spikeY + 1, &locX, &locY);
+    C2D_PlainImageTint(&tint, C2D_Color32(0xFF, 0xFF, 0xFF, (u8) (blend * 255.0f)), 0.0f);
+    /* member spike2: 11x13, regPoint (-10,-10) */
+    C2D_DrawImageAt(img, locX + 10.0f * DIRECTOR_SCALE, locY + (10.0f - rise) * DIRECTOR_SCALE, 0.0f, &tint, DIRECTOR_SCALE, DIRECTOR_SCALE);
 }
 
 static void drawBuildPreview(AppState* app) {
@@ -6949,7 +7251,7 @@ static void drawBuildPreview(AppState* app) {
         } else {
             WBResourcePile emptyPile;
             memset(&emptyPile, 0, sizeof(emptyPile));
-            ghostAsset = unitAnimAssetId(buildUnit, WB_DIR_RIGHT, false, 0.0f, &emptyPile, WB_UNIT_ANIM_NONE);
+            ghostAsset = unitStandAssetId(buildUnit, WB_DIR_RIGHT, false);
         }
         if (ghostAsset < 0) {
             ghostAsset = ASSET_VEHICLE_BUGGY_RIGHT;
@@ -6986,7 +7288,7 @@ static void drawMinimap(AppState* app, float centerX, float centerY, float scale
             }
             if (cell->hasGoal && (!cell->bonusGoal || app->map.bonusAvailable) && !cell->goalSatisfied) {
                 C2D_DrawRectSolid(px, py, 0.0f, scale, scale, C2D_Color32(0xFF, 0xE0, 0x45, 0xFF));
-            } else if (cell->hasUnit || cellHasActiveMover(app, x, y, -1)) {
+            } else if (cell->hasUnit) {
                 C2D_DrawImageAt(getImage(app, ASSET_MINI_VEHICLE), px, py, 0.0f, NULL, scale / 3.0f, scale / 3.0f);
             } else if (cell->hasResource) {
                 C2D_DrawImageAt(getImage(app, cell->resourceIsPlan ? ASSET_MINI_PLAN : ASSET_MINI_RESOURCE), px, py, 0.0f, NULL, scale / 3.0f, scale / 3.0f);
@@ -7394,10 +7696,9 @@ static void loadMissionIntoGame(AppState* app, int world, int mission) {
     app->screenMode = WB_SCREEN_GAME;
     app->activeWorld = world;
     app->activeMission = mission;
-    app->cameraX = 1;
-    app->cameraY = 1;
+    resetCameraForMap(app);
+    app->pileInspectValid = false;
     app->hasSelection = false;
-    app->selectedMover = -1;
     app->infoOverlayOpen = false;
     app->planMenuOpen = false;
     app->startMenuOpen = false;
@@ -7406,48 +7707,49 @@ static void loadMissionIntoGame(AppState* app, int world, int mission) {
     app->goalPopupComplete = false;
     app->goalPopupBonus = false;
     app->planSwoop.active = false;
-    app->pendingActionValid = false;
     app->actionMode = WB_ACTION_MOVE;
     memset(app->worldEffects, 0, sizeof(app->worldEffects));
-    memset(app->pendingUnitBreaks, 0, sizeof(app->pendingUnitBreaks));
-    memset(app->cellAttackCooldownMs, 0, sizeof(app->cellAttackCooldownMs));
-    memset(app->unitSwampDamageTickMs, 0, sizeof(app->unitSwampDamageTickMs));
-    memset(app->unitRechargeTickMs, 0, sizeof(app->unitRechargeTickMs));
-    memset(app->buildingTickMs, 0, sizeof(app->buildingTickMs));
-    memset(app->unitActionUntilMs, 0, sizeof(app->unitActionUntilMs));
-    memset(app->unitActionAnim, 0, sizeof(app->unitActionAnim));
-    memset(app->moves, 0, sizeof(app->moves));
-    /* Scan audio needs BEFORE populateMonstersFromMap clears cell->hasMonster flags. */
+    /* Scan audio needs BEFORE initWorldObjects clears cell->hasMonster flags. */
     {
         unsigned int needs = scanLevelAudioNeeds(&app->map);
-        populateMonstersFromMap(&app->map);
         app->map.isWB2Level = (world >= 6);
+        initWorldObjects(app);
         clampCamera(app);
         freeLevelAudio(app);
         loadLevelAudio(app, needs);
     }
     startGameMusic(app);
+    app->tutorialActive = false;
+    if (world == 1 && mission == 1) {
+        /* 'mission icon behavior 2': golevel(1, 1), setTutorialMode(1), then
+           reportSuccess(#goal), so the tutorial counts as done even if skipped. */
+        tutorialStart(app);
+        applyMissionSuccess(app, 1, 1, 1);
+    }
 }
 
+/* The whole map bitmap is shown, scaled to fit the bottom screen and resting on its
+   bottom edge, as the original shows all of it on the stage. The band left above it
+   holds the world name and the world arrows, which in the original sit off the map.
+   (Filling the screen instead cut 40-57 px off each side and pushed markers off it.) */
 static void worldMapLayout(const AppState* app, int world, float* outX, float* outY, float* outScale) {
-    C2D_Image mapImage = getImage(app, worldMapAssetId(world));
-    float imageW = g_worldMapSourceSize[world].x > 0.0f ? g_worldMapSourceSize[world].x : imageWidth(mapImage, 1.0f);
-    float imageH = g_worldMapSourceSize[world].y > 0.0f ? g_worldMapSourceSize[world].y : imageHeight(mapImage, 1.0f);
-    if (world == 1) {
-        float scale = BOTTOM_W / imageW;
-        float mapH = imageH * scale;
-        *outScale = scale;
-        *outX = 0.0f;
-        *outY = BOTTOM_H - mapH;
-    } else {
-        float scaleX = BOTTOM_W / imageW;
-        float scaleY = BOTTOM_H / imageH;
-        float scale = scaleX > scaleY ? scaleX : scaleY;
-        *outScale = scale;
-        *outX = (BOTTOM_W - (imageW * scale)) * 0.5f;
-        *outY = (BOTTOM_H - (imageH * scale)) * 0.5f;
-    }
+    float imageW;
+    float imageH;
+    float scaleX;
+    float scaleY;
+    float scale;
     (void) app;
+    if (world < 1 || world > 7) {
+        world = 1;
+    }
+    imageW = g_worldMapDefs[world].width;
+    imageH = g_worldMapDefs[world].height;
+    scaleX = BOTTOM_W / imageW;
+    scaleY = BOTTOM_H / imageH;
+    scale = scaleX < scaleY ? scaleX : scaleY;
+    *outScale = scale;
+    *outX = (BOTTOM_W - (imageW * scale)) * 0.5f;
+    *outY = BOTTOM_H - (imageH * scale);
 }
 
 static void missionPointToBottom(const AppState* app, int world, int mission, float* outX, float* outY) {
@@ -7478,88 +7780,220 @@ static int missionFlagAsset(int world, int frame, bool bonus) {
     return bonus ? landBonus[frame] : landFlags2[frame];
 }
 
-static void initWorldMiniWalkers(AppState* app, int world) {
-    int i;
-    memset(app->miniWalkers, 0, sizeof(app->miniWalkers));
-    for (i = 0; i < (int) (sizeof(g_worldMiniSeeds) / sizeof(g_worldMiniSeeds[0])); ++i) {
-        if (g_worldMiniSeeds[i].world == world) {
-            WBMiniWalker* walker = &app->miniWalkers[i];
-            float x;
-            float y;
-            missionPointToBottom(app, world, g_worldMiniSeeds[i].mission, &x, &y);
-            walker->active = true;
-            walker->world = world;
-            walker->mission = g_worldMiniSeeds[i].mission;
-            walker->bonus = g_worldMiniSeeds[i].bonus;
-            walker->lake = g_worldMiniSeeds[i].lake;
-            walker->spriteAssetId = g_worldMiniSeeds[i].assetId;
-            walker->homeX = x;
-            walker->homeY = y;
-            walker->x = x;
-            walker->y = y;
-            walker->dirX = 1.0f;
-            walker->dirY = 0.0f;
-            walker->nextDecisionMs = osGetTime() + (u64) randRange(250, 900);
+/* World-map frame rate: the movie has no tempo channel, so it runs at the 15 fps
+   in its DRCF; 'mission icon behavior 2' and 'mini-unit behavior' step per frame. */
+#define WB_WORLDMAP_FRAME_MS (1000.0f / 15.0f)
+
+static void loadWorldWalkMask(AppState* app, int world) {
+    char path[48];
+    u8 header[8];
+    FILE* fp;
+    if (app->walkMask && app->walkMaskWorld == world) {
+        return;
+    }
+    free(app->walkMask);
+    app->walkMask = NULL;
+    app->walkMaskWorld = 0;
+    app->walkMaskW = 0;
+    app->walkMaskH = 0;
+    snprintf(path, sizeof(path), "romfs:/meta/worldmask_w%d.bin", world);
+    fp = fopen(path, "rb");
+    if (!fp) {
+        return;
+    }
+    if (fread(header, 1, sizeof(header), fp) == sizeof(header) && memcmp(header, "WBMK", 4) == 0) {
+        int w = header[4] | (header[5] << 8);
+        int h = header[6] | (header[7] << 8);
+        size_t bytes = (((size_t) w * (size_t) h) + 3) / 4;
+        app->walkMask = (u8*) malloc(bytes);
+        if (app->walkMask && fread(app->walkMask, 1, bytes, fp) == bytes) {
+            app->walkMaskW = w;
+            app->walkMaskH = h;
+            app->walkMaskWorld = world;
+        } else {
+            free(app->walkMask);
+            app->walkMask = NULL;
         }
     }
+    fclose(fp);
+}
+
+/* bit0: a land mini may stand here, bit1: a lake mini may. Off the map counts as
+   neither (getPixel returns 0 there), except where okPos() sets no terrain rule. */
+static int walkMaskAt(const AppState* app, float x, float y, bool unbounded) {
+    int ix;
+    int iy;
+    size_t i;
+    if (!app->walkMask) {
+        return 3;
+    }
+    if (x < 0.0f || y < 0.0f) {
+        return unbounded ? 3 : 0;
+    }
+    ix = (int) x;
+    iy = (int) y;
+    if (ix >= app->walkMaskW || iy >= app->walkMaskH) {
+        return unbounded ? 3 : 0;
+    }
+    i = ((size_t) iy * (size_t) app->walkMaskW) + (size_t) ix;
+    return (app->walkMask[i >> 2] >> ((i & 3) * 2)) & 3;
+}
+
+/* okPos() from 'mini-unit behavior': all four points 7 px around the new position
+   must be clear of the mini-obstacles and on the unit's kind of ground. */
+static bool miniOkPos(const AppState* app, int world, const WBMiniDef* def, float px, float py) {
+    static const int offsets[4][2] = { {-1, 0}, {1, 0}, {0, -1}, {0, 1} };
+    const WBWorldMapDef* wd = &g_worldMapDefs[world];
+    int need = def->lake ? 2 : 1;
+    int k;
+    if (wd->radiusLimited) {
+        float dx = def->x - px;
+        float dy = def->y - py;
+        if ((dx * dx) + (dy * dy) > 380.0f) {
+            return false;
+        }
+    }
+    for (k = 0; k < 4; ++k) {
+        float x = px + (float) (offsets[k][0] * 7);
+        float y = py + (float) (offsets[k][1] * 7);
+        if (wd->obstaclesActive) {
+            int j;
+            for (j = 0; j < wd->obstacleCount; ++j) {
+                const WBObstacleRect* r = &wd->obstacles[j];
+                if (x >= r->left && x < r->right && y >= r->top && y < r->bottom) {
+                    return false;
+                }
+            }
+        }
+        if (!(walkMaskAt(app, x, y, wd->radiusLimited) & need)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void miniRandomDir(WBMiniWalker* walker) {
+    switch (randRange(1, 4)) {
+        case 1: walker->dirX = -1; walker->dirY = 0; break;
+        case 2: walker->dirX = 1; walker->dirY = 0; break;
+        case 3: walker->dirX = 0; walker->dirY = -1; break;
+        default: walker->dirX = 0; walker->dirY = 1; break;
+    }
+}
+
+static bool miniWalkerVisible(const AppState* app, int world, const WBMiniDef* def) {
+    int state = worldMissionState(app, world, def->mission);
+    return !(state < 1 || (def->bonus && state < 3));
+}
+
+/* beginSprite for the world frame: every mini back at its score position, every
+   mission icon given its random(6) starting flag frame. */
+static void initWorldMiniWalkers(AppState* app, int world) {
+    const WBWorldMapDef* wd;
+    int i;
+    memset(app->miniWalkers, 0, sizeof(app->miniWalkers));
+    app->miniWalkerWorld = world;
+    app->worldSelectLastMs = osGetTime();
+    app->worldSelectTickAccum = 0.0f;
+    if (world < 1 || world > 7) {
+        return;
+    }
+    wd = &g_worldMapDefs[world];
+    for (i = 0; i < wd->miniCount && i < WB_MAX_WORLD_MINIS; ++i) {
+        WBMiniWalker* walker = &app->miniWalkers[i];
+        walker->active = true;
+        walker->world = world;
+        walker->def = i;
+        walker->x = wd->minis[i].x;
+        walker->y = wd->minis[i].y;
+    }
+    for (i = 1; i <= 12; ++i) {
+        app->missionFlagFrame[i] = (u8) randRange(1, 6);
+    }
+    loadWorldWalkMask(app, world);
 }
 
 static void ensureWorldMiniWalkers(AppState* app) {
     if (app->screenMode != WB_SCREEN_WORLD_SELECT) {
         return;
     }
-    if (!app->miniWalkers[0].active || app->miniWalkers[0].world != app->worldSelectWorld) {
+    if (app->miniWalkerWorld != app->worldSelectWorld) {
         initWorldMiniWalkers(app, app->worldSelectWorld);
     }
 }
 
-static void updateWorldMiniWalkers(AppState* app) {
+/* One 15 fps frame of the world map: prepareFrame of every mission icon and mini. */
+static void stepWorldSelectFrame(AppState* app) {
+    int world = app->miniWalkerWorld;
+    const WBWorldMapDef* wd;
     int i;
-    u64 now = osGetTime();
-    ensureWorldMiniWalkers(app);
-    for (i = 0; i < (int) (sizeof(app->miniWalkers) / sizeof(app->miniWalkers[0])); ++i) {
-        WBMiniWalker* walker = &app->miniWalkers[i];
-        float radius;
-        if (!walker->active) {
-            continue;
-        }
-        if (worldMissionState(app, walker->world, walker->mission) < 1 || (walker->bonus && worldMissionState(app, walker->world, walker->mission) < 3)) {
-            continue;
-        }
-        radius = walker->world == 4 ? 19.0f : 55.0f;
-        if (now >= walker->nextDecisionMs) {
-            if (walker->stopped) {
-                walker->stopped = false;
-                switch (randRange(0, 3)) {
-                    case 0: walker->dirX = -1.0f; walker->dirY = 0.0f; break;
-                    case 1: walker->dirX = 1.0f; walker->dirY = 0.0f; break;
-                    case 2: walker->dirX = 0.0f; walker->dirY = -1.0f; break;
-                    default: walker->dirX = 0.0f; walker->dirY = 1.0f; break;
-                }
-                walker->nextDecisionMs = now + (u64) randRange(60, 110);
-            } else if (randRange(1, 80) == 1) {
-                walker->stopped = true;
-                walker->nextDecisionMs = now + (u64) randRange(300, 1000);
+    if (world < 1 || world > 7) {
+        return;
+    }
+    for (i = 1; i <= 12; ++i) {
+        int state = worldMissionState(app, world, i);
+        if (state >= 1 && state <= 3) {
+            if (app->missionFlagFrame[i] <= 1) {
+                app->missionFlagFrame[i] = 6;
             } else {
-                float skewX = (29.0f * walker->dirX) + (-35.0f * walker->dirY);
-                float skewY = (-25.0f * walker->dirX) + (-13.0f * walker->dirY);
-                float nextX = walker->x + (skewX / 40.0f);
-                float nextY = walker->y + (skewY / 40.0f);
-                float dx = nextX - walker->homeX;
-                float dy = nextY - walker->homeY;
-                if ((dx * dx) + (dy * dy) <= (radius * radius)) {
-                    walker->x = nextX;
-                    walker->y = nextY;
-                } else {
-                    switch (randRange(0, 3)) {
-                        case 0: walker->dirX = -1.0f; walker->dirY = 0.0f; break;
-                        case 1: walker->dirX = 1.0f; walker->dirY = 0.0f; break;
-                        case 2: walker->dirX = 0.0f; walker->dirY = -1.0f; break;
-                        default: walker->dirX = 0.0f; walker->dirY = 1.0f; break;
-                    }
-                }
-                walker->nextDecisionMs = now + (u64) randRange(60, 110);
+                app->missionFlagFrame[i]--;
             }
+        }
+    }
+    wd = &g_worldMapDefs[world];
+    for (i = 0; i < wd->miniCount && i < WB_MAX_WORLD_MINIS; ++i) {
+        WBMiniWalker* walker = &app->miniWalkers[i];
+        const WBMiniDef* def = &wd->minis[i];
+        if (!walker->active || !miniWalkerVisible(app, world, def)) {
+            continue;
+        }
+        if (walker->dirX == 0 && walker->dirY == 0) {
+            walker->x = def->x;
+            walker->y = def->y;
+            miniRandomDir(walker);
+        }
+        if (!walker->stopped) {
+            float skwX = (29.0f * (float) walker->dirX) + (-35.0f * (float) walker->dirY);
+            float skwY = (-25.0f * (float) walker->dirX) + (-13.0f * (float) walker->dirY);
+            float nextX = walker->x + (skwX / 40.0f);
+            float nextY = walker->y + (skwY / 40.0f);
+            if (miniOkPos(app, world, def, nextX, nextY)) {
+                walker->x = nextX;
+                walker->y = nextY;
+            } else {
+                miniRandomDir(walker);
+            }
+            walker->flipH = skwX < 0.0f;
+            if (randRange(1, 80) == 1) {
+                walker->stopped = true;
+            }
+        } else {
+            if (randRange(1, 30) == 1) {
+                walker->stopped = false;
+            }
+            if (randRange(1, 2) == 1) {
+                miniRandomDir(walker);
+            }
+        }
+    }
+}
+
+static void updateWorldMiniWalkers(AppState* app) {
+    u64 now = osGetTime();
+    int steps = 0;
+    ensureWorldMiniWalkers(app);
+    if (app->screenMode != WB_SCREEN_WORLD_SELECT || app->worldSelectLastMs == 0 || now < app->worldSelectLastMs) {
+        app->worldSelectLastMs = now;
+        return;
+    }
+    app->worldSelectTickAccum += (float) (now - app->worldSelectLastMs);
+    app->worldSelectLastMs = now;
+    while (app->worldSelectTickAccum >= WB_WORLDMAP_FRAME_MS) {
+        app->worldSelectTickAccum -= WB_WORLDMAP_FRAME_MS;
+        stepWorldSelectFrame(app);
+        if (++steps >= 4) {
+            app->worldSelectTickAccum = 0.0f;
+            break;
         }
     }
 }
@@ -7857,174 +8291,206 @@ static void drawWorldSelectSkyBackdrop(AppState* app, float surfaceW, float surf
     }
 }
 
+/* World arrows and title sit in the band above the map (see worldMapLayout). */
+#define WB_WORLD_ARROW_Y 16.0f
+#define WB_WORLD_PREV_ARROW_X 18.0f
+#define WB_WORLD_NEXT_ARROW_X 302.0f
+
+/* 'mission icon behavior 2'. Icons are drawn 1:1 with the map, as on the stage.
+   State 0 bobs round its rest point, 2 stage px over 1800 ms, phase flagframe/6, with
+   the shadow following only the horizontal part; states 1-3 show the flag frame that
+   stepWorldSelectFrame() counts down. Hovering blinks the icon every 200 ms. */
 static void drawWorldMissionIcons(AppState* app) {
-    int mission;
-    int frame = 6 - ((int) ((osGetTime() / 100) % 6));
+    int world = app->worldSelectWorld;
     u64 now = osGetTime();
-    float mapX, mapY, mapScale;
-    worldMapLayout(app, app->worldSelectWorld, &mapX, &mapY, &mapScale);
-    (void) mapX; (void) mapY;
-    if (frame < 1) {
-        frame = 1;
-    }
+    bool blinkOn = ((now / 200ULL) % 2ULL) != 0;
+    float mapX;
+    float mapY;
+    float scale;
+    int mission;
+    worldMapLayout(app, world, &mapX, &mapY, &scale);
     for (mission = 1; mission <= 12; ++mission) {
+        int state = worldMissionState(app, world, mission);
+        bool hovered = app->hoverMissionLevel == mission;
+        int frame = app->missionFlagFrame[mission];
         float x;
         float y;
-        float phase;
-        float t;
-        float cycle;
-        float dx;
-        float dy;
-        float iconScale = 0.5f * mapScale;
-        int state = worldMissionState(app, app->worldSelectWorld, mission);
-        missionPointToBottom(app, app->worldSelectWorld, mission, &x, &y);
         if (state < 0) {
             continue;
         }
-        /* D-pad hover highlight: draw behind the icon so the flag appears on top */
-        if (app->hoverMissionLevel == mission) {
-            float r = 7.0f * mapScale;
-            C2D_DrawRectSolid(x - r - 2.0f, y - r - 2.0f, 0.0f, r * 2.0f + 4.0f, r * 2.0f + 4.0f, C2D_Color32(0x00, 0x00, 0x00, 0xA0));
-            C2D_DrawRectSolid(x - r,        y - r,        0.0f, r * 2.0f,         r * 2.0f,         C2D_Color32(0xFF, 0xE0, 0x00, 0x90));
+        if (frame < 1 || frame > 6) {
+            frame = 1;
         }
+        missionPointToBottom(app, world, mission, &x, &y);
         if (state == 0) {
-            int shadowAsset = app->worldSelectWorld == 4 ? ASSET_OCEAN_QUESTION_MARK_SHADOW : ASSET_WORLD_QUESTION_MARK_SHADOW;
-            phase = ((float) ((mission - 1) % 6)) / 6.0f;
-            cycle = ((float) (now % 2200ULL)) / 2200.0f;
-            t = 2.0f * 3.14159265f * (phase + cycle);
-            dx = 1.5f * cosf(t);
-            dy = 2.25f * sinf(t);
-            drawAnchoredImage(getImage(app, shadowAsset), x + dx, y, iconScale, 15.0f,
-                app->worldSelectWorld == 4 ? -19.0f : -17.0f);
-            drawAnchoredImage(getImage(app, ASSET_WORLD_QUESTION_MARK), x + dx, y + dy, iconScale, 18.0f, 12.0f);
-        } else if (state == 3) {
-            int assetId = missionFlagAsset(app->worldSelectWorld, frame, true);
-            drawAnchoredImage(getImage(app, assetId), x, y, iconScale, 17.0f, 15.0f);
+            int shadowAsset = world == 4 ? ASSET_OCEAN_QUESTION_MARK_SHADOW : ASSET_WORLD_QUESTION_MARK_SHADOW;
+            float t = 2.0f * 3.14159265f * (((float) frame / 6.0f) + ((float) (now % 1800ULL) / 1800.0f));
+            float bobX = 2.0f * cosf(t) * scale;
+            float bobY = 2.0f * sinf(t) * scale;
+            drawAnchoredImage(getImage(app, shadowAsset), x + bobX, y, scale, 15.0f, world == 4 ? -19.0f : -17.0f);
+            if (hovered && blinkOn) {
+                drawAnchoredImage(getImage(app, ASSET_QUESTION_MARK_BLINK), x + bobX, y + bobY, scale, 32.0f, 27.0f);
+            } else {
+                drawAnchoredImage(getImage(app, ASSET_WORLD_QUESTION_MARK), x + bobX, y + bobY, scale, 18.0f, 12.0f);
+            }
         } else {
-            int assetId = missionFlagAsset(app->worldSelectWorld, frame, false);
-            drawAnchoredImage(getImage(app, assetId), x, y, iconScale, 17.0f, 15.0f);
+            drawAnchoredImage(getImage(app, missionFlagAsset(world, frame, state == 3)), x, y, scale, 17.0f, 15.0f);
+            if (hovered && blinkOn) {
+                drawAnchoredImage(getImage(app, ASSET_FLAG_ROLLOVER_BLINK), x, y, scale, 27.0f, 31.0f);
+            }
         }
     }
+}
+
+/* The icon's on-screen rect as the player sees it (question mark or flag), for touch. */
+static void worldMissionIconRect(const AppState* app, int world, int mission, float* l, float* t, float* r, float* b) {
+    float mapX;
+    float mapY;
+    float scale;
+    float x;
+    float y;
+    worldMapLayout(app, world, &mapX, &mapY, &scale);
+    missionPointToBottom(app, world, mission, &x, &y);
+    if (worldMissionState(app, world, mission) == 0) {
+        *l = x - 18.0f * scale; *t = y - 12.0f * scale; *r = *l + 20.0f * scale; *b = *t + 27.0f * scale;
+    } else {
+        *l = x - 17.0f * scale; *t = y - 15.0f * scale; *r = *l + 33.0f * scale; *b = *t + 31.0f * scale;
+    }
+}
+
+/* 'mission name rollover text': "MISSION n" over the mission's name, centred under
+   the icon (member regpoint 65,-22 on a 124 px box). The original's 6 pt pixel font
+   would be unreadable at this scale, so it is drawn larger, with a shadow. */
+static void drawWorldMissionRollover(AppState* app) {
+    int world = app->worldSelectWorld;
+    int mission = app->hoverMissionLevel;
+    char text[WB_MAX_NAME + 16];
+    char name[WB_MAX_NAME];
+    C2D_Text label;
+    float mapX;
+    float mapY;
+    float scale;
+    float x;
+    float y;
+    float w;
+    float h;
+    float cx;
+    float top;
+    const float textScale = 0.42f;
+    int i;
+    if (mission < 1 || mission > 12 || worldMissionState(app, world, mission) < 0) {
+        return;
+    }
+    for (i = 0; i < WB_MAX_NAME - 1 && app->missionNames[world][mission][i]; ++i) {
+        char c = app->missionNames[world][mission][i];
+        name[i] = (c >= 'a' && c <= 'z') ? (char) (c - 'a' + 'A') : c;
+    }
+    name[i] = '\0';
+    if (name[0]) {
+        snprintf(text, sizeof(text), "MISSION %d\n%s", mission, name);
+    } else {
+        snprintf(text, sizeof(text), "MISSION %d", mission);
+    }
+    worldMapLayout(app, world, &mapX, &mapY, &scale);
+    missionPointToBottom(app, world, mission, &x, &y);
+    C2D_TextParse(&label, app->dynamicBuf, text);
+    C2D_TextOptimize(&label);
+    C2D_TextGetDimensions(&label, textScale, textScale, &w, &h);
+    cx = x - 3.0f * scale;
+    top = y + 22.0f * scale;
+    if (cx - w * 0.5f < 2.0f) cx = 2.0f + w * 0.5f;
+    if (cx + w * 0.5f > BOTTOM_W - 2.0f) cx = BOTTOM_W - 2.0f - w * 0.5f;
+    if (top + h > BOTTOM_H - 2.0f) top = BOTTOM_H - 2.0f - h;
+    C2D_DrawText(&label, C2D_WithColor | C2D_AlignCenter, cx + 1.0f, top + 1.0f, 0.5f, textScale, textScale,
+        C2D_Color32(0x00, 0x00, 0x00, 0xC0));
+    C2D_DrawText(&label, C2D_WithColor | C2D_AlignCenter, cx, top, 0.5f, textScale, textScale,
+        C2D_Color32(0xEE, 0xEE, 0xEE, 0xFF));
 }
 
 static void drawWorldMiniWalkers(AppState* app) {
+    int world = app->worldSelectWorld;
+    const WBWorldMapDef* wd;
+    float mapX;
+    float mapY;
+    float scale;
     int i;
-    float mapX, mapY, mapScale;
-    worldMapLayout(app, app->worldSelectWorld, &mapX, &mapY, &mapScale);
-    (void) mapX; (void) mapY;
-    for (i = 0; i < (int) (sizeof(app->miniWalkers) / sizeof(app->miniWalkers[0])); ++i) {
-        WBMiniWalker* walker = &app->miniWalkers[i];
-        float iconScale = 0.5f * mapScale;
-        if (!walker->active) {
+    if (world < 1 || world > 7 || app->miniWalkerWorld != world) {
+        return;
+    }
+    wd = &g_worldMapDefs[world];
+    worldMapLayout(app, world, &mapX, &mapY, &scale);
+    for (i = 0; i < wd->miniCount && i < WB_MAX_WORLD_MINIS; ++i) {
+        const WBMiniWalker* walker = &app->miniWalkers[i];
+        const WBMiniDef* def = &wd->minis[i];
+        C2D_Image img;
+        float sx;
+        float sy;
+        if (!walker->active || !miniWalkerVisible(app, world, def)) {
             continue;
         }
-        if (worldMissionState(app, walker->world, walker->mission) < 1 || (walker->bonus && worldMissionState(app, walker->world, walker->mission) < 3)) {
+        img = getImage(app, def->assetId);
+        if (!img.subtex) {
             continue;
         }
-        drawAnchoredImage(getImage(app, walker->spriteAssetId), walker->x, walker->y, iconScale,
-            walker->spriteAssetId == ASSET_BUGGY_MINI ? 7.0f :
-            walker->spriteAssetId == ASSET_DUCK_MINI ? 3.0f :
-            walker->spriteAssetId == ASSET_DUCK_WATER_MINI ? 3.0f :
-            walker->spriteAssetId == ASSET_FISH_MINI ? 7.0f : 3.0f,
-            walker->spriteAssetId == ASSET_BUGGY_MINI ? 9.0f :
-            walker->spriteAssetId == ASSET_DUCK_MINI ? 6.0f :
-            walker->spriteAssetId == ASSET_DUCK_WATER_MINI ? 3.0f :
-            walker->spriteAssetId == ASSET_FISH_MINI ? 4.0f : 5.0f);
+        sx = mapX + walker->x * scale;
+        sy = mapY + walker->y * scale;
+        if (walker->flipH) {
+            /* flipH mirrors about the registration point */
+            C2D_DrawImageAt(img, sx + def->anchorX * scale, sy - def->anchorY * scale, 0.0f, NULL, -scale, scale);
+        } else {
+            drawAnchoredImage(img, sx, sy, scale, def->anchorX, def->anchorY);
+        }
     }
 }
 
-/* Decoration sprites placed on worldmap screens, matching original WB1 Director positions.
-   imgX/imgY are image-space coords: locH, (locV - 73).
-   anchorX/anchorY are the registration point in sprite pixels (from Members CSV). */
-typedef struct { int assetId; float x; float y; float anchorX; float anchorY; } WBMapDeco;
-
-static const WBMapDeco g_world2Decos[] = {
-    /* trees (ASSET_MAP_TREE: 16x29 px, reg 7,14) */
-    {ASSET_MAP_TREE, 110, 255, 7, 14}, {ASSET_MAP_TREE, 218, 189, 7, 14},
-    {ASSET_MAP_TREE, 217,  99, 7, 14}, {ASSET_MAP_TREE, 279, 318, 7, 14},
-    {ASSET_MAP_TREE, 294, 215, 7, 14}, {ASSET_MAP_TREE, 326, 217, 7, 14},
-    {ASSET_MAP_TREE, 316, 185, 7, 14}, {ASSET_MAP_TREE, 323,  82, 7, 14},
-    {ASSET_MAP_TREE, 420, 118, 7, 14}, {ASSET_MAP_TREE, 476, 186, 7, 14},
-    {ASSET_MAP_TREE, 393, 230, 7, 14}, {ASSET_MAP_TREE, 427, 279, 7, 14},
-    {ASSET_MAP_TREE, 108, 146, 7, 14}, {ASSET_MAP_TREE, 277,  51, 7, 14},
-    {ASSET_MAP_TREE, 375,  57, 7, 14}, {ASSET_MAP_TREE, 382,  94, 7, 14},
-    {ASSET_MAP_TREE, 502,  99, 7, 14}, {ASSET_MAP_TREE, 528, 144, 7, 14},
-    /* mountains (ASSET_MAP_MOUNTAIN: 41x47 px, reg 21,23) */
-    {ASSET_MAP_MOUNTAIN, 237, 121, 21, 23},
-    {ASSET_MAP_MOUNTAIN, 419, 162, 21, 23},
-    {0, 0, 0, 0, 0}
-};
-
-static const WBMapDeco g_world3Decos[] = {
-    /* trees */
-    {ASSET_MAP_TREE,  50, 199, 7, 14}, {ASSET_MAP_TREE, 202, 173, 7, 14},
-    {ASSET_MAP_TREE, 119,  57, 7, 14}, {ASSET_MAP_TREE, 185,  43, 7, 14},
-    {ASSET_MAP_TREE, 245, 183, 7, 14}, {ASSET_MAP_TREE, 297, 212, 7, 14},
-    {ASSET_MAP_TREE, 321, 183, 7, 14}, {ASSET_MAP_TREE, 285,  79, 7, 14},
-    {ASSET_MAP_TREE, 420, 118, 7, 14}, {ASSET_MAP_TREE, 450, 184, 7, 14},
-    {ASSET_MAP_TREE, 450, 250, 7, 14}, {ASSET_MAP_TREE, 512, 282, 7, 14},
-    {ASSET_MAP_TREE, 108, 146, 7, 14}, {ASSET_MAP_TREE, 277,  39, 7, 14},
-    {ASSET_MAP_TREE, 228,  91, 7, 14}, {ASSET_MAP_TREE, 388,  90, 7, 14},
-    {ASSET_MAP_TREE, 511,  91, 7, 14}, {ASSET_MAP_TREE, 528, 144, 7, 14},
-    /* mountains */
-    {ASSET_MAP_MOUNTAIN, 252, 110, 21, 23},
-    {ASSET_MAP_MOUNTAIN, 411, 152, 21, 23},
-    {ASSET_MAP_MOUNTAIN, 182, 110, 21, 23},
-    {ASSET_MAP_MOUNTAIN, 223, 133, 21, 23},
-    /* rocks (ASSET_MAP_ROCKS: 28x14 px, reg 14,6) */
-    {ASSET_MAP_ROCKS,  75, 214, 14, 6}, {ASSET_MAP_ROCKS,  72, 171, 14, 6},
-    {ASSET_MAP_ROCKS, 145, 218, 14, 6}, {ASSET_MAP_ROCKS, 191, 219, 14, 6},
-    {ASSET_MAP_ROCKS, 196, 138, 14, 6}, {ASSET_MAP_ROCKS, 228, 165, 14, 6},
-    {ASSET_MAP_ROCKS, 208,  85, 14, 6}, {ASSET_MAP_ROCKS, 206,  64, 14, 6},
-    {ASSET_MAP_ROCKS, 274, 111, 14, 6}, {ASSET_MAP_ROCKS, 268, 131, 14, 6},
-    {ASSET_MAP_ROCKS, 250, 140, 14, 6}, {ASSET_MAP_ROCKS, 299, 112, 14, 6},
-    {ASSET_MAP_ROCKS, 323, 203, 14, 6}, {ASSET_MAP_ROCKS, 390, 176, 14, 6},
-    {ASSET_MAP_ROCKS, 434, 155, 14, 6}, {ASSET_MAP_ROCKS, 416, 173, 14, 6},
-    {ASSET_MAP_ROCKS, 521, 113, 14, 6}, {ASSET_MAP_ROCKS, 430, 269, 14, 6},
-    {ASSET_MAP_ROCKS, 509, 208, 14, 6},
-    {0, 0, 0, 0, 0}
-};
-
-static const WBMapDeco* const g_worldDecos[8] = {
-    NULL, NULL, g_world2Decos, g_world3Decos, NULL, NULL, NULL, NULL
-};
-
 static void drawWorldMapDecorations(AppState* app) {
     int world = app->worldSelectWorld;
-    const WBMapDeco* deco;
-    float mapX, mapY, mapScale;
-    if (world < 1 || world > 7) return;
-    deco = g_worldDecos[world];
-    if (!deco) return;
-    worldMapLayout(app, world, &mapX, &mapY, &mapScale);
-    for (; deco->assetId != 0; ++deco) {
-        float sx = mapX + deco->x * mapScale;
-        float sy = mapY + deco->y * mapScale;
-        drawAnchoredImage(getImage(app, deco->assetId), sx, sy, mapScale, deco->anchorX, deco->anchorY);
+    const WBWorldMapDef* wd;
+    float mapX;
+    float mapY;
+    float scale;
+    int i;
+    if (world < 1 || world > 7) {
+        return;
+    }
+    wd = &g_worldMapDefs[world];
+    worldMapLayout(app, world, &mapX, &mapY, &scale);
+    for (i = 0; i < wd->decoCount; ++i) {
+        const WBMapDeco* deco = &wd->decos[i];
+        drawAnchoredImage(getImage(app, deco->assetId), mapX + deco->x * scale, mapY + deco->y * scale, scale,
+            deco->anchorX, deco->anchorY);
     }
 }
 
 static void drawWorldSelectBottom(AppState* app) {
     C2D_Image mapImage = getImage(app, worldMapAssetId(app->worldSelectWorld));
+    C2D_Text title;
     float mapX;
     float mapY;
     float scale;
     worldMapLayout(app, app->worldSelectWorld, &mapX, &mapY, &scale);
     drawWorldSelectSkyBackdrop(app, BOTTOM_W, BOTTOM_H);
-    drawAnchoredImage(mapImage, mapX + imageWidth(mapImage, scale) * 0.5f, mapY + imageHeight(mapImage, scale) * 0.5f, scale, imageWidth(mapImage, 1.0f) * 0.5f, imageHeight(mapImage, 1.0f) * 0.5f);
-    drawWorldMapDecorations(app);
-    drawWorldMiniWalkers(app);
-    drawAnchoredImage(getImage(app, ASSET_PREV_WORLD_ARROW), 22.0f, 118.0f, 1.0f, 12.0f, 12.0f);
-    drawAnchoredImage(getImage(app, ASSET_NEXT_WORLD_ARROW), 298.0f, 118.0f, 1.0f, 12.0f, 12.0f);
+    /* Every world frame has the score's white rectangle across the top of the stage,
+       with the title on it; worlds 2-5 put their (opaque) map directly beneath it. */
+    C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, BOTTOM_W, mapY, C2D_Color32(0xFF, 0xFF, 0xFF, 0xFF));
+    drawAnchoredImage(mapImage, mapX, mapY, scale, 0.0f, 0.0f);
+    /* Score order: map (channel 4), mission icons (10-33), minis (41-82), decorations (80-138). */
     drawWorldMissionIcons(app);
-    drawTextLine(app->dynamicBuf, 122.0f, 2.0f, 0.42f, worldName(app->worldSelectWorld));
+    drawWorldMiniWalkers(app);
+    drawWorldMapDecorations(app);
+    drawAnchoredImage(getImage(app, ASSET_PREV_WORLD_ARROW), WB_WORLD_PREV_ARROW_X, WB_WORLD_ARROW_Y, 1.0f, 12.0f, 12.0f);
+    drawAnchoredImage(getImage(app, ASSET_NEXT_WORLD_ARROW), WB_WORLD_NEXT_ARROW_X, WB_WORLD_ARROW_Y, 1.0f, 12.0f, 12.0f);
+    C2D_TextParse(&title, app->dynamicBuf, worldName(app->worldSelectWorld));
+    C2D_TextOptimize(&title);
+    C2D_DrawText(&title, C2D_AlignCenter, BOTTOM_W * 0.5f, 4.0f, 0.5f, 0.42f, 0.42f);
+    drawWorldMissionRollover(app);
     if (app->showDiagnostics) {
         int _m;
         for (_m = 1; _m <= 12; ++_m) {
             float _mx, _my;
             if (worldMissionState(app, app->worldSelectWorld, _m) < 0) continue;
             missionPointToBottom(app, app->worldSelectWorld, _m, &_mx, &_my);
-            C2D_DrawRectSolid(_mx - 4.0f, _my - 4.0f, 0.5f, 8.0f, 8.0f,
+            C2D_DrawRectSolid(_mx - 2.0f, _my - 2.0f, 0.5f, 4.0f, 4.0f,
                 C2D_Color32(0xFF, 0x00, 0x00, 0xB0));
         }
     }
@@ -8344,6 +8810,68 @@ static void drawBottomStartMenu(AppState* app) {
     drawTextLine(app->dynamicBuf, boxX + 22.0f, boxY + 132.0f, 0.30f, "D-pad/A: select  B: close");
 }
 
+/* 'resource popup display behavior': the pile's bricks, biggest count first, in a
+   bubble just up and to the right of the tile (posToLoc + (20,-5) on the stage). */
+static void drawPileInspectPopup(AppState* app) {
+    const WBCell* cell;
+    int idx[7];
+    int count[7];
+    int n = 0;
+    int i;
+    int j;
+    float locX;
+    float locY;
+    float x;
+    float y;
+    float w;
+    const float h = 18.0f;
+    if (!app->pileInspectValid || !inBounds(app, app->pileInspectX, app->pileInspectY)) {
+        return;
+    }
+    cell = &app->map.cells[app->pileInspectY][app->pileInspectX];
+    if (!cell->hasResource || cell->resourceIsPlan || pileEmpty(&cell->pile)) {
+        app->pileInspectValid = false;
+        return;
+    }
+    if (cell->pile.red > 0)    { idx[n] = WB_EXTRA_CARRY_RED_IDX;    count[n++] = cell->pile.red; }
+    if (cell->pile.yellow > 0) { idx[n] = WB_EXTRA_CARRY_YELLOW_IDX; count[n++] = cell->pile.yellow; }
+    if (cell->pile.green > 0)  { idx[n] = WB_EXTRA_CARRY_GREEN_IDX;  count[n++] = cell->pile.green; }
+    if (cell->pile.blue > 0)   { idx[n] = WB_EXTRA_CARRY_BLUE_IDX;   count[n++] = cell->pile.blue; }
+    if (cell->pile.wheel > 0)  { idx[n] = WB_EXTRA_CARRY_WHEEL_IDX;  count[n++] = cell->pile.wheel; }
+    if (cell->pile.energy > 0) {
+        int e = energyStatusFromDeci(pileLastBattery(cell));
+        idx[n] = e >= 80 ? WB_EXTRA_CARRY_ENERGY_IDX : e > 1 ? WB_EXTRA_CARRY_ENERGY_LOW_IDX : WB_EXTRA_CARRY_ENERGY_DEAD_IDX;
+        count[n++] = cell->pile.energy;
+    }
+    if (cell->pile.white > 0)  { idx[n] = -1;                        count[n++] = cell->pile.white; }
+    for (i = 1; i < n; ++i) {
+        for (j = i; j > 0 && count[j] > count[j - 1]; --j) {
+            int ti = idx[j]; int tc = count[j];
+            idx[j] = idx[j - 1]; count[j] = count[j - 1];
+            idx[j - 1] = ti; count[j - 1] = tc;
+        }
+    }
+    posToLoc(app, app->pileInspectX + 1, app->pileInspectY + 1, &locX, &locY);
+    w = 4.0f + (float) n * 26.0f;
+    x = locX + 20.0f * DIRECTOR_SCALE;
+    y = locY - 5.0f * DIRECTOR_SCALE - h;
+    if (x + w > BOTTOM_W - 2.0f) x = BOTTOM_W - 2.0f - w;
+    if (x < 2.0f) x = 2.0f;
+    if (y < 2.0f) y = 2.0f;
+    C2D_DrawRectSolid(x, y, 0.0f, w, h, C2D_Color32(0x00, 0x00, 0x00, 0xFF));
+    C2D_DrawRectSolid(x + 1.0f, y + 1.0f, 0.0f, w - 2.0f, h - 2.0f, C2D_Color32(0xFF, 0xFF, 0xEE, 0xFF));
+    for (i = 0; i < n; ++i) {
+        char text[8];
+        float ex = x + 4.0f + (float) i * 26.0f;
+        C2D_Image img = idx[i] >= 0 ? getWorldbuilderExtraImage(app, idx[i]) : getImage(app, ASSET_CARRY_WHITE);
+        if (img.subtex) {
+            drawAnchoredImage(img, ex + 5.0f, y + h * 0.5f, 0.6f, img.subtex->width * 0.5f, img.subtex->height * 0.5f);
+        }
+        snprintf(text, sizeof(text), "%d", count[i]);
+        drawTextLineBlack(app->dynamicBuf, ex + 11.0f, y + 3.0f, 0.34f, text);
+    }
+}
+
 static void drawBottomGoalPopup(AppState* app) {
     float locX;
     float locY;
@@ -8466,51 +8994,100 @@ static void drawTopScreen(AppState* app) {
     }
 }
 
-static bool selectedUnitCanBuild(const AppState* app) {
-    const WBCell* cell = selectedCell(app);
-    return cell && cell->hasUnit;
+static bool pointInRect(float px, float py, float x, float y, float w, float h) {
+    return px >= x && px < (x + w) && py >= y && py < (y + h);
 }
 
-static bool checkResourcesAround(const AppState* app, int tx, int ty, const WBResourcePile* recipe) {
-    WBResourcePile need = *recipe;
-    int dy;
-    int dx;
-    const WBCell* target = &app->map.cells[ty][tx];
-    if (target->hasUnit || activeMonsterAt(NULL, ty, tx)) {
+/* Rolling over a goal shows what it needs; on the 3DS a tap does the rolling over. */
+static bool showGoalPopupForCell(AppState* app, int tx, int ty) {
+    char goalText[96];
+    const WBCell* goalCell;
+    if (!inBounds(app, tx, ty)) {
         return false;
     }
-    for (dy = -1; dy <= 1; ++dy) {
-        for (dx = -1; dx <= 1; ++dx) {
-            int nx = tx + dx;
-            int ny = ty + dy;
-            const WBCell* cell;
-            if (!inBounds(app, nx, ny)) {
+    goalCell = &app->map.cells[ty][tx];
+    if (!goalCell->hasGoal || goalCell->goalSatisfied || (goalCell->bonusGoal && !app->map.bonusAvailable)) {
+        return false;
+    }
+    if (goalCell->goalIsCollect) {
+        const char* mname = goalCell->goalCollectType != WB_MONSTER_NONE
+            ? wbMonsterName(goalCell->goalCollectType) : "creature";
+        snprintf(goalText, sizeof(goalText), "Collect: %d %s", goalCell->goalCollectCount, mname);
+    } else {
+        snprintf(goalText, sizeof(goalText), "Needs: %s", goalRequiredUnitName(goalCell->goalType));
+    }
+    showGoalPopup(app, goalText, goalCell->bonusGoal, false, tx, ty);
+    return true;
+}
+
+/* Rolling over a pile shows its bricks ('resource popup display behavior'); the port
+   had no way to see what a pile holds, so a tap on it now does the same. */
+static void updatePileInspect(AppState* app, int tx, int ty) {
+    const WBCell* cell = inBounds(app, tx, ty) ? &app->map.cells[ty][tx] : NULL;
+    if (cell && cell->hasResource && !cell->resourceIsPlan && !pileEmpty(&cell->pile)) {
+        app->pileInspectValid = true;
+        app->pileInspectX = tx;
+        app->pileInspectY = ty;
+    } else {
+        app->pileInspectValid = false;
+    }
+}
+
+/* map display manager getAll8Neighbors(pos), then pos itself: x-major, the tile last. */
+static int resourceTilesAround(const AppState* app, int tx, int ty, int* outX, int* outY) {
+    int n = 0;
+    int i;
+    int j;
+    for (i = -1; i <= 1; ++i) {
+        for (j = -1; j <= 1; ++j) {
+            if ((i == 0 && j == 0) || !inBounds(app, tx + i, ty + j)) {
                 continue;
             }
-            cell = &app->map.cells[ny][nx];
-            if (!cell->hasResource || cell->resourceIsPlan) {
-                continue;
-            }
-            need.red -= cell->pile.red;
-            need.blue -= cell->pile.blue;
-            need.green -= cell->pile.green;
-            need.yellow -= cell->pile.yellow;
-            need.wheel -= cell->pile.wheel;
-            need.energy -= cell->pile.energy;
-            need.white -= cell->pile.white;
-            if (need.red < 0) need.red = 0;
-            if (need.blue < 0) need.blue = 0;
-            if (need.green < 0) need.green = 0;
-            if (need.yellow < 0) need.yellow = 0;
-            if (need.wheel < 0) need.wheel = 0;
-            if (need.energy < 0) need.energy = 0;
-            if (need.white < 0) need.white = 0;
-            if (resourceTotal(&need) == 0) {
-                return true;
-            }
+            outX[n] = tx + i;
+            outY[n] = ty + j;
+            ++n;
         }
     }
-    return resourceTotal(&need) == 0;
+    outX[n] = tx;
+    outY[n] = ty;
+    return n + 1;
+}
+
+/* checkResourcesAround(): nothing on the tile, and the piles around it hold the recipe. */
+static bool checkResourcesAround(const AppState* app, int tx, int ty, const WBResourcePile* recipe) {
+    WBResourcePile need = *recipe;
+    int nx[9];
+    int ny[9];
+    int n;
+    int k;
+    if (tileHasOccupant(app, tx, ty)) {
+        return false;
+    }
+    n = resourceTilesAround(app, tx, ty, nx, ny);
+    for (k = 0; k < n; ++k) {
+        const WBCell* cell = &app->map.cells[ny[k]][nx[k]];
+        if (!cell->hasResource || cell->resourceIsPlan) {
+            continue;
+        }
+        need.red -= cell->pile.red;
+        need.blue -= cell->pile.blue;
+        need.green -= cell->pile.green;
+        need.yellow -= cell->pile.yellow;
+        need.wheel -= cell->pile.wheel;
+        need.energy -= cell->pile.energy;
+        need.white -= cell->pile.white;
+        if (need.red < 0) need.red = 0;
+        if (need.blue < 0) need.blue = 0;
+        if (need.green < 0) need.green = 0;
+        if (need.yellow < 0) need.yellow = 0;
+        if (need.wheel < 0) need.wheel = 0;
+        if (need.energy < 0) need.energy = 0;
+        if (need.white < 0) need.white = 0;
+        if (resourceTotal(&need) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static void consumeFromPile(WBResourcePile* pile, WBResourcePile* need) {
@@ -8548,395 +9125,51 @@ static void cleanupResourceCell(WBCell* cell) {
     }
 }
 
-static void useResourcesAround(AppState* app, int tx, int ty, const WBResourcePile* recipe) {
+/* useResourcesAround(): each battery is the best one on top of any pile around; then
+   the bricks come from the piles in order. (Its "exact pile first" pass compares the
+   whole contents list against the recipe, so it never matches, and is left out.)
+   Returns the batteries taken, for the new object. */
+static int useResourcesAround(AppState* app, int tx, int ty, const WBResourcePile* recipe, u16* outEnergy, int maxEnergy) {
     WBResourcePile need = *recipe;
-    WBCell* exact = NULL;
-    int dy;
-    int dx;
-
-    while (need.energy > 0) {
-        WBCell* bestCell = NULL;
-        int bestEnergyValue = -1;
-        int bestAmount = -1;
-        for (dy = -1; dy <= 1; ++dy) {
-            for (dx = -1; dx <= 1; ++dx) {
-                int nx = tx + dx;
-                int ny = ty + dy;
-                WBCell* cell;
-                if (!inBounds(app, nx, ny)) {
-                    continue;
-                }
-                cell = &app->map.cells[ny][nx];
-                if (!cell->hasResource || cell->resourceIsPlan || cell->pile.energy <= 0) {
-                    continue;
-                }
-                if (cell->pileEnergyValue > bestEnergyValue || (cell->pileEnergyValue == bestEnergyValue && cell->pile.energy > bestAmount)) {
-                    bestEnergyValue = cell->pileEnergyValue;
-                    bestAmount = cell->pile.energy;
-                    bestCell = cell;
-                }
-            }
-        }
-        if (!bestCell) {
-            break;
-        }
-        bestCell->pile.energy -= 1;
-        need.energy -= 1;
-        cleanupResourceCell(bestCell);
-    }
-
-    for (dy = -1; dy <= 1; ++dy) {
-        for (dx = -1; dx <= 1; ++dx) {
-            int nx = tx + dx;
-            int ny = ty + dy;
-            WBCell* cell;
-            if (!inBounds(app, nx, ny)) {
+    int nx[9];
+    int ny[9];
+    int n;
+    int k;
+    int e;
+    int count = 0;
+    n = resourceTilesAround(app, tx, ty, nx, ny);
+    for (e = 0; e < recipe->energy; ++e) {
+        int best = -1;
+        int bestCharge = -1;
+        for (k = 0; k < n; ++k) {
+            const WBCell* cell = &app->map.cells[ny[k]][nx[k]];
+            if (!cell->hasResource || cell->resourceIsPlan || cell->pile.energy <= 0) {
                 continue;
             }
-            cell = &app->map.cells[ny][nx];
-            if (!cell->hasResource || cell->resourceIsPlan) {
-                continue;
-            }
-            if (cell->pile.red == need.red && cell->pile.blue == need.blue && cell->pile.green == need.green && cell->pile.yellow == need.yellow && cell->pile.wheel == need.wheel && cell->pile.white == need.white && need.red + need.blue + need.green + need.yellow + need.wheel + need.white > 0) {
-                exact = cell;
-                break;
+            if (pileLastBattery(cell) > bestCharge) {
+                best = k;
+                bestCharge = pileLastBattery(cell);
             }
         }
-        if (exact) {
-            break;
-        }
-    }
-
-    if (exact) {
-        consumeFromPile(&exact->pile, &need);
-        cleanupResourceCell(exact);
-    } else {
-        for (dy = -1; dy <= 1; ++dy) {
-            for (dx = -1; dx <= 1; ++dx) {
-                int nx = tx + dx;
-                int ny = ty + dy;
-                WBCell* cell;
-                if (!inBounds(app, nx, ny)) {
-                    continue;
-                }
-                cell = &app->map.cells[ny][nx];
-                if (!cell->hasResource || cell->resourceIsPlan) {
-                    continue;
-                }
-                consumeFromPile(&cell->pile, &need);
-                cleanupResourceCell(cell);
-                if (need.red == 0 && need.blue == 0 && need.green == 0 && need.yellow == 0 && need.wheel == 0 && need.energy == 0 && need.white == 0) {
-                    return;
-                }
+        if (best >= 0) {
+            WBCell* cell = &app->map.cells[ny[best]][nx[best]];
+            int charge = pileTakeBattery(cell);
+            if (count < maxEnergy) {
+                outEnergy[count++] = (u16) charge;
             }
+            cleanupResourceCell(cell);
         }
     }
-}
-
-static bool tryPickUpAt(AppState* app, int tx, int ty) {
-    WBCell* unitCell = selectedCellMutable(app);
-    WBCell* target;
-    int capacity;
-    int carried = 0;
-    if (!unitCell || !unitCell->hasUnit || !unitSupportsPickDrop(unitCell->unitType)) {
-        return false;
-    }
-    if (!inBounds(app, tx, ty) || manhattanDistance(app->selectedX, app->selectedY, tx, ty) > 1) {
-        return false;
-    }
-    target = &app->map.cells[ty][tx];
-    if (!target->hasResource || target->resourceIsPlan || !pileEmpty(&unitCell->unitCargo)) {
-        return false;
-    }
-    capacity = unitCarryCapacity(unitCell->unitType);
-    while (carried < capacity && !pileEmpty(&target->pile)) {
-        int kind = chooseLeastBrickKind(&target->pile);
-        if (kind < 0) {
-            break;
+    need.energy = 0;
+    for (k = 0; k < n && resourceTotal(&need) > 0; ++k) {
+        WBCell* cell = &app->map.cells[ny[k]][nx[k]];
+        if (!cell->hasResource || cell->resourceIsPlan) {
+            continue;
         }
-        takeOneKind(&target->pile, kind);
-        addOneKind(&unitCell->unitCargo, kind);
-        ++carried;
+        consumeFromPile(&cell->pile, &need);
+        cleanupResourceCell(cell);
     }
-    cleanupResourceCell(target);
-    if (carried > 0) {
-        /* Preserve the cargo battery's charge level so it can be dropped at the same level */
-        if (unitCell->unitCargo.energy > 0) {
-            unitCell->unitCargoEnergyValue = target->pileEnergyValue;
-        } else {
-            unitCell->unitCargoEnergyValue = 0;
-        }
-        if (tx != app->selectedX || ty != app->selectedY) {
-            unitCell->unitDirection = directionFromStep(app->selectedX, app->selectedY, tx, ty);
-        }
-        app->actionMode = WB_ACTION_MOVE;
-        playSfxClip(app, app->sfxPickup.loaded ? &app->sfxPickup : &app->sfxMove);
-        return true;
-    }
-    return false;
-}
-
-static bool tryDropAt(AppState* app, int tx, int ty) {
-    WBCell* unitCell = selectedCellMutable(app);
-    WBCell* target;
-    if (!unitCell || !unitCell->hasUnit || !unitSupportsPickDrop(unitCell->unitType)) {
-        return false;
-    }
-    if (!inBounds(app, tx, ty) || manhattanDistance(app->selectedX, app->selectedY, tx, ty) > 1) {
-        return false;
-    }
-    if (pileEmpty(&unitCell->unitCargo)) {
-        return false;
-    }
-    target = &app->map.cells[ty][tx];
-    if ((target->hasUnit || activeMonsterAt(NULL, ty, tx)) && !(tx == app->selectedX && ty == app->selectedY)) {
-        return false;
-    }
-    if (!target->hasResource) {
-        if (!(target->terrain == WB_TERRAIN_NORMAL || target->terrain == WB_TERRAIN_WATER || target->terrain == WB_TERRAIN_SWAMP)) {
-            return false;
-        }
-        target->hasResource = true;
-        target->resourceIsPlan = false;
-        memset(&target->pile, 0, sizeof(target->pile));
-    } else if (target->resourceIsPlan) {
-        return false;
-    }
-    addPile(&target->pile, &unitCell->unitCargo);
-    if (unitCell->unitCargo.energy > 0) {
-        /* Drop the battery at its preserved charge level, not always 100 */
-        target->pileEnergyValue = (unitCell->unitCargoEnergyValue > 0 ? unitCell->unitCargoEnergyValue : 0);
-    }
-    if (tx != app->selectedX || ty != app->selectedY) {
-        unitCell->unitDirection = directionFromStep(app->selectedX, app->selectedY, tx, ty);
-    }
-    memset(&unitCell->unitCargo, 0, sizeof(unitCell->unitCargo));
-    app->actionMode = WB_ACTION_MOVE;
-    playSfxClip(app, app->sfxDrop.loaded ? &app->sfxDrop : &app->sfxMove);
-    return true;
-}
-
-static bool tryDigAt(AppState* app, int tx, int ty) {
-    WBCell* unitCell = selectedCellMutable(app);
-    WBCell* target;
-    if (!unitCell || !unitCell->hasUnit || !unitSupportsDigFill(unitCell->unitType)) {
-        return false;
-    }
-    if (!inBounds(app, tx, ty) || manhattanDistance(app->selectedX, app->selectedY, tx, ty) > 1) {
-        return false;
-    }
-    if (steamshovelHasFillCargo(unitCell)) {
-        return false;
-    }
-    target = &app->map.cells[ty][tx];
-    if (target->hasUnit || activeMonsterAt(NULL, ty, tx) || target->hasBuilding || target->hasResource) {
-        return false;
-    }
-    if (target->terrain == WB_TERRAIN_NORMAL) {
-        target->terrain = WB_TERRAIN_WATER;
-        unitCell->unitCargo.red = 1;
-    } else if (target->terrain == WB_TERRAIN_SWAMP) {
-        target->terrain = WB_TERRAIN_WATER;
-        unitCell->unitCargo.blue = 1;
-    } else {
-        return false;
-    }
-    if (tx != app->selectedX || ty != app->selectedY) {
-        unitCell->unitDirection = directionFromStep(app->selectedX, app->selectedY, tx, ty);
-    }
-    app->actionMode = WB_ACTION_MOVE;
-    setSelectedUnitActionAnim(app, WB_UNIT_ANIM_DIG, 220);
-    playSfxClip(app, app->sfxDigGround.loaded ? &app->sfxDigGround : &app->sfxMoveMisc);
-    return true;
-}
-
-static bool tryFillAt(AppState* app, int tx, int ty) {
-    WBCell* unitCell = selectedCellMutable(app);
-    WBCell* target;
-    bool hadDirt;
-    bool hadSwamp;
-    if (!unitCell || !unitCell->hasUnit || !unitSupportsDigFill(unitCell->unitType)) {
-        return false;
-    }
-    if (!inBounds(app, tx, ty) || manhattanDistance(app->selectedX, app->selectedY, tx, ty) > 1) {
-        return false;
-    }
-    target = &app->map.cells[ty][tx];
-    if (target->hasUnit || activeMonsterAt(NULL, ty, tx) || target->hasBuilding || target->hasResource) {
-        return false;
-    }
-    if (target->terrain != WB_TERRAIN_WATER) {
-        return false;
-    }
-    hadDirt = unitCell->unitCargo.red > 0;
-    hadSwamp = unitCell->unitCargo.blue > 0;
-    if (!hadDirt && !hadSwamp) {
-        return false;
-    }
-    if (hadDirt) {
-        target->terrain = WB_TERRAIN_NORMAL;
-        unitCell->unitCargo.red = 0;
-    } else {
-        target->terrain = WB_TERRAIN_SWAMP;
-        unitCell->unitCargo.blue = 0;
-    }
-    if (tx != app->selectedX || ty != app->selectedY) {
-        unitCell->unitDirection = directionFromStep(app->selectedX, app->selectedY, tx, ty);
-    }
-    app->actionMode = WB_ACTION_MOVE;
-    setSelectedUnitActionAnim(app, WB_UNIT_ANIM_FILL, 220);
-    playSfxClip(app, app->sfxFillGround.loaded ? &app->sfxFillGround : &app->sfxMoveMisc);
-    return true;
-}
-
-static bool tryUprootAt(AppState* app, int tx, int ty) {
-    WBCell* unitCell = selectedCellMutable(app);
-    WBCell* target;
-    if (!unitCell || !unitCell->hasUnit || !unitSupportsTransplant(unitCell->unitType)) {
-        return false;
-    }
-    if (!inBounds(app, tx, ty) || manhattanDistance(app->selectedX, app->selectedY, tx, ty) > 1) {
-        return false;
-    }
-    if (treebotHasSapling(unitCell)) {
-        return false;
-    }
-    target = &app->map.cells[ty][tx];
-    if ((target->terrain != WB_TERRAIN_TREE && target->terrain != WB_TERRAIN_TREE2 &&
-            target->terrain != WB_TERRAIN_TREE3 && target->terrain != WB_TERRAIN_TREE4) ||
-            target->hasUnit || activeMonsterAt(NULL, ty, tx) || target->hasBuilding) {
-        return false;
-    }
-    unitCell->unitCargoTreeType = target->terrain;
-    target->terrain = WB_TERRAIN_NORMAL;
-    unitCell->unitCargo.green = 1;
-    if (tx != app->selectedX || ty != app->selectedY) {
-        unitCell->unitDirection = directionFromStep(app->selectedX, app->selectedY, tx, ty);
-    }
-    app->actionMode = WB_ACTION_MOVE;
-    setSelectedUnitActionAnim(app, WB_UNIT_ANIM_UPROOT, 360);
-    playSfxClip(app, app->sfxDigTree.loaded ? &app->sfxDigTree : &app->sfxMoveMisc);
-    return true;
-}
-
-static bool tryPlantAt(AppState* app, int tx, int ty) {
-    WBCell* unitCell = selectedCellMutable(app);
-    WBCell* target;
-    if (!unitCell || !unitCell->hasUnit || !unitSupportsTransplant(unitCell->unitType)) {
-        return false;
-    }
-    if (!inBounds(app, tx, ty) || manhattanDistance(app->selectedX, app->selectedY, tx, ty) > 1) {
-        return false;
-    }
-    if (!treebotHasSapling(unitCell)) {
-        return false;
-    }
-    target = &app->map.cells[ty][tx];
-    if (target->terrain != WB_TERRAIN_NORMAL || target->hasUnit || activeMonsterAt(NULL, ty, tx) || target->hasBuilding || target->hasResource || target->hasGoal) {
-        return false;
-    }
-    target->terrain = (unitCell->unitCargoTreeType == WB_TERRAIN_TREE ||
-                        unitCell->unitCargoTreeType == WB_TERRAIN_TREE2 ||
-                        unitCell->unitCargoTreeType == WB_TERRAIN_TREE3 ||
-                        unitCell->unitCargoTreeType == WB_TERRAIN_TREE4)
-                       ? unitCell->unitCargoTreeType : WB_TERRAIN_TREE;
-    unitCell->unitCargo.green = 0;
-    unitCell->unitCargoTreeType = WB_TERRAIN_NORMAL;
-    if (tx != app->selectedX || ty != app->selectedY) {
-        unitCell->unitDirection = directionFromStep(app->selectedX, app->selectedY, tx, ty);
-    }
-    app->actionMode = WB_ACTION_MOVE;
-    setSelectedUnitActionAnim(app, WB_UNIT_ANIM_PLANT, 360);
-    playSfxClip(app, app->sfxPlantTree.loaded ? &app->sfxPlantTree : &app->sfxMoveMisc);
-    return true;
-}
-
-static bool tryPushAt(AppState* app, int tx, int ty) {
-    WBCell* unitCell = selectedCellMutable(app);
-    int bi;
-    int dx;
-    int dy;
-    int bx;
-    int by;
-    WBCell* beyond;
-    if (!unitCell || !unitCell->hasUnit || !unitSupportsPush(unitCell->unitType)) {
-        return false;
-    }
-    if (!inBounds(app, tx, ty) || manhattanDistance(app->selectedX, app->selectedY, tx, ty) != 1) {
-        return false;
-    }
-    /* Find an active, non-dying boulder at the target cell */
-    bi = -1;
-    {
-        int mi;
-        for (mi = 0; mi < g_monsterCount; ++mi) {
-            if (g_monsters[mi].active && !g_monsters[mi].dying
-                    && g_monsters[mi].type == WB_MONSTER_BOULDER
-                    && g_monsters[mi].row == ty && g_monsters[mi].col == tx) {
-                bi = mi;
-                break;
-            }
-        }
-    }
-    if (bi < 0) {
-        return false;
-    }
-    /* Compute the cell behind the boulder (in the push direction) */
-    dx = tx - app->selectedX;
-    dy = ty - app->selectedY;
-    bx = tx + dx;
-    by = ty + dy;
-    if (!inBounds(app, bx, by)) {
-        return false;
-    }
-    beyond = &app->map.cells[by][bx];
-    /* Beyond must be traversable by dozer and free of obstacles */
-    if (!wbUnitCanTraverse(WB_UNIT_DOZER, beyond->terrain)) {
-        return false;
-    }
-    if (beyond->hasUnit || activeMonsterAt(NULL, by, bx) || beyond->hasBuilding || beyond->hasResource) {
-        return false;
-    }
-    /* Move the boulder */
-    g_monsters[bi].row = by;
-    g_monsters[bi].col = bx;
-    app->map.cells[ty][tx].hasMonster = false;
-    beyond->hasMonster = true;
-    /* Face the dozer toward the push and trigger a brief action animation */
-    unitCell->unitDirection = directionFromStep(app->selectedX, app->selectedY, tx, ty);
-    app->actionMode = WB_ACTION_MOVE;
-    setSelectedUnitActionAnim(app, WB_UNIT_ANIM_DIG, 220);
-    playSfxClip(app, app->sfxFillGround.loaded ? &app->sfxFillGround : &app->sfxMove);
-    return true;
-}
-
-static void resolvePendingAction(AppState* app) {
-    if (!app->pendingActionValid || !app->hasSelection) {
-        return;
-    }
-    if ((app->pendingActionX != app->selectedX || app->pendingActionY != app->selectedY)
-        && manhattanDistance(app->selectedX, app->selectedY, app->pendingActionX, app->pendingActionY) == 1) {
-        WBCell* unitCell = selectedCellMutable(app);
-        if (unitCell && unitCell->hasUnit) {
-            unitCell->unitDirection = directionFromStep(app->selectedX, app->selectedY, app->pendingActionX, app->pendingActionY);
-        }
-    }
-    if (app->actionMode == WB_ACTION_PICK) {
-        tryPickUpAt(app, app->pendingActionX, app->pendingActionY);
-    } else if (app->actionMode == WB_ACTION_DROP) {
-        tryDropAt(app, app->pendingActionX, app->pendingActionY);
-    } else if (app->actionMode == WB_ACTION_DIG) {
-        tryDigAt(app, app->pendingActionX, app->pendingActionY);
-    } else if (app->actionMode == WB_ACTION_FILL) {
-        tryFillAt(app, app->pendingActionX, app->pendingActionY);
-    } else if (app->actionMode == WB_ACTION_UPROOT) {
-        tryUprootAt(app, app->pendingActionX, app->pendingActionY);
-    } else if (app->actionMode == WB_ACTION_PLANT) {
-        tryPlantAt(app, app->pendingActionX, app->pendingActionY);
-    } else if (app->actionMode == WB_ACTION_PUSH) {
-        tryPushAt(app, app->pendingActionX, app->pendingActionY);
-    }
-    app->pendingActionValid = false;
+    return count;
 }
 
 static WBUnitType planTypeToUnit(WBPlanType planType) {
@@ -8978,13 +9211,40 @@ static WBBuildingType planTypeToBuilding(WBPlanType planType) {
     }
 }
 
+/* build plan icon checkBuild(): the bricks are around and the tile's terrain is in
+   the plan's list. A plan lying on the tile doesn't stop it. */
+static bool canBuildPlanAt(const AppState* app, WBPlanType planType, int tx, int ty, WBUnitType* outUnit) {
+    WBUnitType buildUnit = planTypeToUnit(planType);
+    WBBuildingType buildBuilding = planTypeToBuilding(planType);
+    const WBResourcePile* recipe = buildBuilding != WB_BUILDING_NONE ? wbBuildingRecipe(buildBuilding) : wbUnitRecipe(buildUnit);
+    if (outUnit) {
+        *outUnit = buildUnit;
+    }
+    if (!recipe || !inBounds(app, tx, ty)) {
+        return false;
+    }
+    if (buildBuilding != WB_BUILDING_NONE) {
+        if (!wbBuildingCanBePlacedOn(buildBuilding, tileTerrain(app, tx, ty))) {
+            return false;
+        }
+    } else if (!wbUnitCanTraverse(buildUnit, tileTerrain(app, tx, ty))) {
+        return false;
+    }
+    return checkResourcesAround(app, tx, ty, recipe);
+}
+
+/* doBuild(): use the plan and the bricks, make the object, drop the highlight; the
+   build cloud clicks (selects) the new object when it clears 750 ms later. */
 static void tryBuildPlan(AppState* app, int tx, int ty) {
     WBUnitType buildUnit;
     WBBuildingType buildBuilding;
     WBCell* cell;
     const WBResourcePile* recipe;
+    u16 energy[8];
+    int energyCount;
+    WBObjRef made;
 
-    if (app->armedPlan == WB_PLAN_NONE) {
+    if (app->armedPlan == WB_PLAN_NONE || !inBounds(app, tx, ty)) {
         return;
     }
     buildUnit = planTypeToUnit(app->armedPlan);
@@ -8993,534 +9253,100 @@ static void tryBuildPlan(AppState* app, int tx, int ty) {
     if (!recipe || app->map.planInventory[app->armedPlan] <= 0) {
         return;
     }
+    if (!canBuildPlanAt(app, app->armedPlan, tx, ty, NULL)) {
+        return;
+    }
+    app->map.planInventory[app->armedPlan] -= 1;
+    playSfxClipWorld(app, &app->sfxAssembly);
+    energyCount = useResourcesAround(app, tx, ty, recipe, energy, 8);
+    cell = &app->map.cells[ty][tx];
+    memset(&made, 0, sizeof(made));
+    if (buildBuilding != WB_BUILDING_NONE) {
+        cell->hasBuilding = true;
+        cell->buildingType = buildBuilding;
+        cell->buildingDirection = WB_DIR_RIGHT;
+        attachBuilding(app, tx, ty, energyCount > 0 ? energy[0] : 0);
+        made = buildingRef(app, tx, ty);
+    } else {
+        int slot;
+        cell->hasUnit = true;
+        cell->unitType = buildUnit;
+        cell->unitDirection = WB_DIR_RIGHT;
+        cell->unitEnergyDeci = energyCount > 0 ? energy[0] : 0;
+        cell->unitEnergy = energyStatusFromDeci(cell->unitEnergyDeci);
+        memset(&cell->unitCargo, 0, sizeof(cell->unitCargo));
+        memset(cell->unitCargoBatteries, 0, sizeof(cell->unitCargoBatteries));
+        cell->unitCargoSpecial = WB_CARGO_NONE;
+        cell->unitCargoTreeType = WB_TERRAIN_NORMAL;
+        slot = attachUnitAgent(app, tx, ty);
+        if (slot >= 0) {
+            made = unitRefFromAgent(app, slot);
+        }
+    }
+    app->hasSelection = false;
+    app->infoOverlayOpen = false;
+    app->actionMode = WB_ACTION_MOVE;
+    app->pileInspectValid = false;
+    app->buildSelectPending = made.kind != WB_OBJ_NONE;
+    app->buildSelectMs = app->simMs;
+    app->buildSelectRef = made;
+    spawnBuildCloudEffect(app, tx, ty, recipe);
+    app->armedPlan = WB_PLAN_NONE;
+    app->planMenuOpen = false;
+}
+
+/* A tap on tile (tx,ty): map display manager tilePosclick() -> checkOverride(), then
+   forwardClick(): the pile and goal show their rollovers, a unit or building on the
+   tile is clicked (selected), and otherwise the highlighted object gets the mapclick. */
+static void handleWorldTap(AppState* app, int tx, int ty) {
+    WBCell* cell;
     if (!inBounds(app, tx, ty)) {
         return;
     }
-    cell = &app->map.cells[ty][tx];
-    if (cell->hasUnit || activeMonsterAt(NULL, ty, tx) || cell->hasBuilding || (cell->hasResource && cell->resourceIsPlan)) {
-        return;
-    }
-    if (buildBuilding != WB_BUILDING_NONE) {
-        if (!wbBuildingCanBePlacedOn(buildBuilding, cell->terrain)) {
+    if (app->pushOverrideActive) {
+        if (!refAlive(app, app->pushOverrideUnit, NULL, NULL)) {
+            app->pushOverrideActive = false;
+        } else if (manhattanDistance(tx, ty, app->pushOverrideX, app->pushOverrideY) <= 1) {
+            app->pushOverrideActive = false;
+            if (app->actionMode == WB_ACTION_PUSH) {
+                app->actionMode = WB_ACTION_MOVE;
+            }
+            pushTowardsPos(app, app->pushOverrideUnit, tx, ty);
             return;
         }
-    } else if (!wbUnitCanTraverse(buildUnit, cell->terrain)) {
-        return;
     }
-    if (!checkResourcesAround(app, tx, ty, recipe)) {
-        return;
-    }
-    /* Capture the highest nearby battery charge before consuming resources. */
-    {
-        int energyDeci = 1000;
-        if (recipe->energy > 0) {
-            int dy;
-            int dx;
-            energyDeci = 0;
-            for (dy = -1; dy <= 1; ++dy) {
-                for (dx = -1; dx <= 1; ++dx) {
-                    int nx = tx + dx;
-                    int ny = ty + dy;
-                    if (inBounds(app, nx, ny)) {
-                        const WBCell* nc = &app->map.cells[ny][nx];
-                        if (nc->hasResource && !nc->resourceIsPlan && nc->pile.energy > 0) {
-                            int candidateDeci = nc->pileEnergyValue * 10;
-                            if (candidateDeci > energyDeci) {
-                                energyDeci = candidateDeci;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        useResourcesAround(app, tx, ty, recipe);
-        spawnBuildCloudEffect(app, tx, ty, recipe);
-        app->map.planInventory[app->armedPlan] -= 1;
-        if (buildBuilding != WB_BUILDING_NONE) {
-            cell->hasBuilding = true;
-            cell->buildingType = buildBuilding;
-            cell->buildingDirection = WB_DIR_RIGHT;
-            cell->buildingHp = 1000;
-            cell->buildingEnergy = 1000;
-        } else {
-            cell->hasUnit = true;
-            cell->unitType = buildUnit;
-            cell->unitDirection = WB_DIR_RIGHT;
-            cell->unitEnergy = energyDeci / 10;
-            cell->unitEnergyDeci = energyDeci;
-        }
-    }
-    memset(&cell->unitCargo, 0, sizeof(cell->unitCargo));
-    app->selectedMover = -1;
-    if (buildBuilding != WB_BUILDING_NONE) {
-        app->hasSelection = false;
-    } else {
-        app->hasSelection = true;
-        app->selectedX = tx;
-        app->selectedY = ty;
-        app->actionMode = WB_ACTION_MOVE;
-    }
-    centerCameraOn(app, tx, ty);
-    if (buildBuilding != WB_BUILDING_NONE) {
-        if (cell->hasGoal && !cell->goalSatisfied && (!cell->bonusGoal || app->map.bonusAvailable) && goalMatchesBuilding(cell->goalType, buildBuilding)) {
-            satisfyGoalAt(app, cell, tx, ty);
-        }
-    } else {
-        handleUnitArrival(app, tx, ty, buildUnit);
-    }
-    app->armedPlan = WB_PLAN_NONE;
-    app->planMenuOpen = false;
-    playSfxClipWorld(app, &app->sfxAssembly);
-}
-
-static bool canBuildPlanAt(const AppState* app, WBPlanType planType, int tx, int ty, WBUnitType* outUnit) {
-    WBUnitType buildUnit = planTypeToUnit(planType);
-    WBBuildingType buildBuilding = planTypeToBuilding(planType);
-    const WBResourcePile* recipe = buildBuilding != WB_BUILDING_NONE ? wbBuildingRecipe(buildBuilding) : wbUnitRecipe(buildUnit);
-    const WBCell* cell;
-    if (outUnit) {
-        *outUnit = buildUnit;
-    }
-    if (!recipe || !inBounds(app, tx, ty)) {
-        return false;
-    }
-    cell = &app->map.cells[ty][tx];
-    if (cell->hasUnit || activeMonsterAt(NULL, ty, tx) || cell->hasBuilding || (cell->hasResource && cell->resourceIsPlan)) {
-        return false;
-    }
-    if (buildBuilding != WB_BUILDING_NONE) {
-        if (!wbBuildingCanBePlacedOn(buildBuilding, cell->terrain)) {
-            return false;
-        }
-    } else if (!wbUnitCanTraverse(buildUnit, cell->terrain)) {
-        return false;
-    }
-    return checkResourcesAround(app, tx, ty, recipe);
-}
-
-static void disassembleSelected(AppState* app) {
-    WBCell* cell = selectedCellMutable(app);
-    if (!cell || app->selectedMover >= 0 || app->armedPlan != WB_PLAN_NONE) {
-        return;
-    }
-    if (cell->hasUnit) {
-        disassembleUnitAtCell(app, app->selectedX, app->selectedY);
-    } else if (cell->hasBuilding) {
-        disassembleBuildingAtCell(app, app->selectedX, app->selectedY);
-    }
-}
-
-static bool pointInRect(float px, float py, float x, float y, float w, float h) {
-    return px >= x && px < (x + w) && py >= y && py < (y + h);
-}
-
-/* Identical to computeAdjacentActionDestination but only picks approach cells where
-   the push direction's beyond cell is traversable and unoccupied. This prevents
-   the dozer from silently walking to a position where the resulting push is impossible. */
-static bool computePushApproachDestination(const AppState* app, int targetX, int targetY, WBUnitType unitType, int* outX, int* outY) {
-    static const int offsets[4][2] = {{1,0},{0,1},{-1,0},{0,-1}};
-    int currentX = app->selectedX;
-    int currentY = app->selectedY;
-    int bestLen = 0x7FFFFFFF;
-    int i;
-    for (i = 0; i < 4; ++i) {
-        /* Approach cell: one of the 4 neighbours of the boulder */
-        int nx = targetX + offsets[i][0];
-        int ny = targetY + offsets[i][1];
-        /* Beyond cell: what the boulder would land on from this approach */
-        int bx = targetX - offsets[i][0];
-        int by = targetY - offsets[i][1];
-        const WBCell* beyond;
-        int pathLen = 0;
-        if (!inBounds(app, nx, ny)) {
-            continue;
-        }
-        /* Validate beyond cell before committing to this approach */
-        if (!inBounds(app, bx, by)) {
-            continue;
-        }
-        beyond = &app->map.cells[by][bx];
-        if (!wbUnitCanTraverse(WB_UNIT_DOZER, beyond->terrain)) {
-            continue;
-        }
-        if (beyond->hasUnit || activeMonsterAt(NULL, by, bx) || beyond->hasBuilding || beyond->hasResource) {
-            continue;
-        }
-        /* Now validate that the dozer can actually reach the approach cell */
-        if (nx == currentX && ny == currentY) {
-            *outX = nx;
-            *outY = ny;
-            return true;
-        }
-        if (app->map.cells[ny][nx].hasUnit) {
-            continue;
-        }
-        if (!wbUnitCanTraverse(unitType, app->map.cells[ny][nx].terrain)) {
-            continue;
-        }
-        if (!findPath(app, currentX, currentY, nx, ny, unitType, g_pathScratchX, g_pathScratchY, &pathLen)) {
-            continue;
-        }
-        if (pathLen < bestLen) {
-            bestLen = pathLen;
-            *outX = nx;
-            *outY = ny;
-        }
-    }
-    return bestLen != 0x7FFFFFFF;
-}
-
-static bool computeAdjacentActionDestination(const AppState* app, int targetX, int targetY, WBUnitType unitType, int* outX, int* outY) {
-    static const int offsets[4][2] = {{1,0},{0,1},{-1,0},{0,-1}};
-    int currentX = app->selectedX;
-    int currentY = app->selectedY;
-    int bestLen = 0x7FFFFFFF;
-    int i;
-    for (i = 0; i < 4; ++i) {
-        int nx = targetX + offsets[i][0];
-        int ny = targetY + offsets[i][1];
-        int pathLen = 0;
-        if (!inBounds(app, nx, ny)) {
-            continue;
-        }
-        if (nx == currentX && ny == currentY) {
-            *outX = nx;
-            *outY = ny;
-            return true;
-        }
-        if (app->map.cells[ny][nx].hasUnit) {
-            continue;
-        }
-        if (!wbUnitCanTraverse(unitType, app->map.cells[ny][nx].terrain)) {
-            continue;
-        }
-        if (!findPath(app, currentX, currentY, nx, ny, unitType, g_pathScratchX, g_pathScratchY, &pathLen)) {
-            continue;
-        }
-        if (pathLen < bestLen) {
-            bestLen = pathLen;
-            *outX = nx;
-            *outY = ny;
-        }
-    }
-    return bestLen != 0x7FFFFFFF;
-}
-
-static bool trySelectUnitAtTouch(AppState* app, const touchPosition* touch) {
-    int y;
-    int x;
-    int bestLocZ = -2147483647;
-    bool found = false;
-    for (y = 0; y < app->map.height; ++y) {
-        for (x = 0; x < app->map.width; ++x) {
-            const WBCell* cell = &app->map.cells[y][x];
-            float locX;
-            float locY;
-            C2D_Image image;
-            float left;
-            float top;
-            float w;
-            float h;
-            int assetId;
-            int locZ;
-            if (!cell->hasUnit) {
-                continue;
-            }
-            assetId = unitAnimAssetId(cell->unitType, cell->unitDirection, terrainUsesWaterSprite(cell->terrain), 0.0f, &cell->unitCargo, WB_UNIT_ANIM_NONE);
-            if (assetId < 0) {
-                continue;
-            }
-            posToLoc(app, x + 1, y + 1, &locX, &locY);
-            locX += 10.0f * DIRECTOR_SCALE;
-            locY += 18.0f * DIRECTOR_SCALE;
-            image = getImage(app, assetId);
-            left = locX - (g_objectAnchors[assetId].x * DIRECTOR_SCALE);
-            top = locY - (g_objectAnchors[assetId].y * DIRECTOR_SCALE);
-            w = imageWidth(image, DIRECTOR_SCALE);
-            h = imageHeight(image, DIRECTOR_SCALE);
-            if (!pointInRect((float) touch->px, (float) touch->py, left, top, w, h)) {
-                continue;
-            }
-            locZ = 5 * ((x + 1) + (app->map.width * (y + 1))) + 5;
-            if (locZ >= bestLocZ) {
-                bestLocZ = locZ;
-                app->selectedX = x;
-                app->selectedY = y;
-                app->hasSelection = true;
-                app->selectedMover = -1;
-                app->infoOverlayOpen = false;
-                if (unitSupportsPickDrop(cell->unitType)) {
-                    app->actionMode = pileEmpty(&cell->unitCargo) ? WB_ACTION_MOVE : WB_ACTION_DROP;
-                } else if (unitSupportsDigFill(cell->unitType)) {
-                    app->actionMode = steamshovelHasFillCargo(cell) ? WB_ACTION_FILL : WB_ACTION_DIG;
-                } else if (unitSupportsTransplant(cell->unitType)) {
-                    app->actionMode = treebotHasSapling(cell) ? WB_ACTION_PLANT : WB_ACTION_UPROOT;
-                } else if (unitSupportsPush(cell->unitType)) {
-                    app->actionMode = WB_ACTION_PUSH;
-                } else {
-                    app->actionMode = WB_ACTION_MOVE;
-                }
-                switch (cell->unitType) {
-                    case WB_UNIT_DUCK:
-                    case WB_UNIT_FROG:
-                    case WB_UNIT_FISH:
-                    case WB_UNIT_SNAIL:
-                        playSfxClip(app, &app->sfxUnitAnimal);
-                        break;
-                    case WB_UNIT_TREEBOT:
-                    case WB_UNIT_REPAIRBOT:
-                    case WB_UNIT_DEFENDER:
-                    case WB_UNIT_DEFENDER2:
-                    case WB_UNIT_FREEZEBOT:
-                        playSfxClip(app, app->sfxUnitRobot.loaded ? &app->sfxUnitRobot : &app->sfxUnitVehicle);
-                        break;
-                    case WB_UNIT_STEAMSHOVEL:
-                    case WB_UNIT_DUMPTRUCK:
-                    case WB_UNIT_FORKLIFT:
-                    case WB_UNIT_DOZER:
-                        playSfxClip(app, &app->sfxUnitVehicle);
-                        break;
-                    default:
-                        playSfxClip(app, &app->sfxUnitVehicle);
-                        break;
-                }
-                found = true;
-            }
-        }
-    }
-    /* Also check units currently in motion (not present in cells). */
-    {
-        int mi;
-        for (mi = 0; mi < (int)(sizeof(app->moves) / sizeof(app->moves[0])); ++mi) {
-            const WBMoveState* move = &app->moves[mi];
-            float fromX, fromY, toX, toY, baseX, baseY;
-            C2D_Image image;
-            float left, top, w, h;
-            int assetId;
-            int locZ;
-            if (!move->active) continue;
-            posToLoc(app, move->pathX[move->pathIndex] + 1, move->pathY[move->pathIndex] + 1, &fromX, &fromY);
-            if (move->blockedWaiting || move->pathIndex >= move->pathLen - 1) {
-                toX = fromX; toY = fromY;
-            } else {
-                posToLoc(app, move->pathX[move->pathIndex + 1] + 1, move->pathY[move->pathIndex + 1] + 1, &toX, &toY);
-            }
-            baseX = roundf(fromX + (toX - fromX) * move->progress + (10.0f * DIRECTOR_SCALE));
-            baseY = roundf(fromY + (toY - fromY) * move->progress + (18.0f * DIRECTOR_SCALE));
-            assetId = unitAnimAssetId(move->unitType, move->direction, false, 0.0f, &move->unitCargo, WB_UNIT_ANIM_NONE);
-            if (assetId < 0) continue;
-            image = getImage(app, assetId);
-            left = baseX - (g_objectAnchors[assetId].x * DIRECTOR_SCALE);
-            top  = baseY - (g_objectAnchors[assetId].y * DIRECTOR_SCALE);
-            w = imageWidth(image, DIRECTOR_SCALE);
-            h = imageHeight(image, DIRECTOR_SCALE);
-            if (!pointInRect((float)touch->px, (float)touch->py, left, top, w, h)) continue;
-            locZ = 5 * ((move->pathX[move->pathIndex] + 1) + (app->map.width * (move->pathY[move->pathIndex] + 1))) + 5;
-            if (locZ >= bestLocZ) {
-                bestLocZ = locZ;
-                app->selectedX = move->pathX[move->pathIndex];
-                app->selectedY = move->pathY[move->pathIndex];
-                app->hasSelection = true;
-                app->selectedMover = mi;
-                app->infoOverlayOpen = false;
-                if (unitSupportsPickDrop(move->unitType)) {
-                    app->actionMode = pileEmpty(&move->unitCargo) ? WB_ACTION_MOVE : WB_ACTION_DROP;
-                } else {
-                    app->actionMode = WB_ACTION_MOVE;
-                }
-                found = true;
-            }
-        }
-    }
-    if (found) {
-        centerCameraOn(app, app->selectedX, app->selectedY);
-    }
-    return found;
-}
-
-static void handleWorldTouch(AppState* app, const touchPosition* touch) {
-    int tx;
-    int ty;
-    if (anyMoveActive(app) && trySelectUnitAtTouch(app, touch)) {
-        app->buildPreviewValid = false;
-        app->planMenuOpen = false;
-        return;
-    }
-    if (!screenToTile(app, (float) touch->px, (float) touch->py, &tx, &ty)) {
-        if (trySelectUnitAtTouch(app, touch)) {
-            return;
-        }
-        return;
-    }
-    if (selectedMove(app)) {
-        WBMoveState* move = selectedMoveMutable(app);
-        if (inBounds(app, tx, ty) && app->map.cells[ty][tx].hasUnit) {
-            return;
-        }
-        move->queuedMoveValid = true;
-        move->queuedMoveX = tx;
-        move->queuedMoveY = ty;
-        return;
-    }
-    if (inBounds(app, tx, ty) && app->map.cells[ty][tx].hasGoal && !app->map.cells[ty][tx].goalSatisfied &&
-        (!app->map.cells[ty][tx].bonusGoal || app->map.bonusAvailable)) {
-        char goalText[96];
-        const WBCell* goalCell = &app->map.cells[ty][tx];
-        if (goalCell->goalIsCollect) {
-            const char* mname = goalCell->goalCollectType != WB_MONSTER_NONE
-                ? wbMonsterName(goalCell->goalCollectType) : "creature";
-            snprintf(goalText, sizeof(goalText), "Collect: %d %s", goalCell->goalCollectCount, mname);
-        } else {
-            snprintf(goalText, sizeof(goalText), "Needs: %s", goalRequiredUnitName(goalCell->goalType));
-        }
-        showGoalPopup(app, goalText, goalCell->bonusGoal, false, tx, ty);
-    } else if (!app->goalPopupComplete) {
+    updatePileInspect(app, tx, ty);
+    if (!showGoalPopupForCell(app, tx, ty) && !app->goalPopupComplete) {
         app->goalPopupVisible = false;
+    }
+    cell = &app->map.cells[ty][tx];
+    if (cell->hasUnit || cell->hasBuilding) {
+        app->armedPlan = WB_PLAN_NONE;
+        app->planMenuOpen = false;
+        app->buildPreviewValid = false;
+        selectObjectAt(app, tx, ty, true);
+        return;
     }
     if (app->armedPlan != WB_PLAN_NONE) {
         tryBuildPlan(app, tx, ty);
         return;
     }
-    if (app->hasSelection && app->actionMode == WB_ACTION_PICK) {
-        const WBCell* target = inBounds(app, tx, ty) ? &app->map.cells[ty][tx] : NULL;
-        int moveX;
-        int moveY;
-        if (tryPickUpAt(app, tx, ty)) {
-            return;
+    {
+        WBObjRef self = selectedUnitRef(app);
+        if (self.kind == WB_OBJ_UNIT) {
+            mapclickUnit(app, self, tx, ty);
         }
-        if (!target || !target->hasResource || target->resourceIsPlan) {
-            app->actionMode = WB_ACTION_MOVE;
-            app->pendingActionValid = false;
-            return;
-        }
-        if (!computeAdjacentActionDestination(app, tx, ty, selectedCell(app)->unitType, &moveX, &moveY)) {
-            app->actionMode = WB_ACTION_MOVE;
-            app->pendingActionValid = false;
-            return;
-        }
-        app->pendingActionValid = true;
-        app->pendingActionX = tx;
-        app->pendingActionY = ty;
-        beginMove(app, moveX, moveY);
+    }
+}
+
+static void handleWorldTouch(AppState* app, const touchPosition* touch) {
+    int tx;
+    int ty;
+    if (!objectSpriteAtTouch(app, touch, &tx, &ty) &&
+            !screenToTile(app, (float) touch->px, (float) touch->py, &tx, &ty)) {
         return;
     }
-    if (app->hasSelection && app->actionMode == WB_ACTION_DROP) {
-        const WBCell* target = inBounds(app, tx, ty) ? &app->map.cells[ty][tx] : NULL;
-        int moveX;
-        int moveY;
-        if (tryDropAt(app, tx, ty)) {
-            return;
-        }
-        if (!target || target->hasUnit || activeMonsterAt(NULL, ty, tx) || (target->hasResource && target->resourceIsPlan)) {
-            app->actionMode = WB_ACTION_MOVE;
-            app->pendingActionValid = false;
-            return;
-        }
-        if (!computeAdjacentActionDestination(app, tx, ty, selectedCell(app)->unitType, &moveX, &moveY)) {
-            app->actionMode = WB_ACTION_MOVE;
-            app->pendingActionValid = false;
-            return;
-        }
-        app->pendingActionValid = true;
-        app->pendingActionX = tx;
-        app->pendingActionY = ty;
-        beginMove(app, moveX, moveY);
-        return;
-    }
-    if (app->hasSelection && (app->actionMode == WB_ACTION_DIG || app->actionMode == WB_ACTION_FILL ||
-        app->actionMode == WB_ACTION_UPROOT || app->actionMode == WB_ACTION_PLANT ||
-        app->actionMode == WB_ACTION_PUSH)) {
-        /* If tapping a different unit or building, cancel action mode and fall through to selection */
-        bool tryAction = true;
-        if (inBounds(app, tx, ty) && !(tx == app->selectedX && ty == app->selectedY)) {
-            const WBCell* tapCell = &app->map.cells[ty][tx];
-            if (tapCell->hasUnit || tapCell->hasBuilding) {
-                tryAction = false;
-                app->actionMode = WB_ACTION_MOVE;
-                app->pendingActionValid = false;
-            }
-        }
-        if (tryAction) {
-            int moveX;
-            int moveY;
-            bool didAction = false;
-            if (app->actionMode == WB_ACTION_DIG) {
-                didAction = tryDigAt(app, tx, ty);
-            } else if (app->actionMode == WB_ACTION_FILL) {
-                didAction = tryFillAt(app, tx, ty);
-            } else if (app->actionMode == WB_ACTION_UPROOT) {
-                didAction = tryUprootAt(app, tx, ty);
-            } else if (app->actionMode == WB_ACTION_PLANT) {
-                didAction = tryPlantAt(app, tx, ty);
-            } else if (app->actionMode == WB_ACTION_PUSH) {
-                didAction = tryPushAt(app, tx, ty);
-            }
-            if (didAction) {
-                return;
-            }
-            if (app->actionMode == WB_ACTION_PUSH) {
-                if (!computePushApproachDestination(app, tx, ty, selectedCell(app)->unitType, &moveX, &moveY)) {
-                    app->actionMode = WB_ACTION_MOVE;
-                    app->pendingActionValid = false;
-                    return;
-                }
-            } else if (!computeAdjacentActionDestination(app, tx, ty, selectedCell(app)->unitType, &moveX, &moveY)) {
-                app->actionMode = WB_ACTION_MOVE;
-                app->pendingActionValid = false;
-                return;
-            }
-            app->pendingActionValid = true;
-            app->pendingActionX = tx;
-            app->pendingActionY = ty;
-            beginMove(app, moveX, moveY);
-            return;
-        }
-    }
-    if (trySelectUnitAtTouch(app, touch)) {
-        return;
-    }
-    /* Select immobile building (replaces any current selection). */
-    if (inBounds(app, tx, ty) && app->map.cells[ty][tx].hasBuilding) {
-        WBBuildingType bType = app->map.cells[ty][tx].buildingType;
-        app->hasSelection = true;
-        app->selectedX = tx;
-        app->selectedY = ty;
-        app->selectedMover = -1;
-        app->infoOverlayOpen = false;
-        app->actionMode = WB_ACTION_MOVE;
-        centerCameraOn(app, tx, ty);
-        switch (bType) {
-            case WB_BUILDING_FACTORY:
-                playSfxClip(app, app->sfxBldgFactory.loaded  ? &app->sfxBldgFactory  :
-                                 app->sfxBldgGeneric.loaded   ? &app->sfxBldgGeneric   : &app->sfxUnitVehicle);
-                break;
-            case WB_BUILDING_GAS_STATION:
-            case WB_BUILDING_MARINA:
-                playSfxClip(app, app->sfxBldgGasStationMarina.loaded ? &app->sfxBldgGasStationMarina :
-                                 app->sfxBldgGeneric.loaded            ? &app->sfxBldgGeneric          : &app->sfxUnitVehicle);
-                break;
-            case WB_BUILDING_GUARD_TOWER:
-                playSfxClip(app, app->sfxBldgGuardTower.loaded   ? &app->sfxBldgGuardTower   :
-                                 app->sfxBldgGeneric.loaded       ? &app->sfxBldgGeneric       : &app->sfxUnitVehicle);
-                break;
-            case WB_BUILDING_ROBOT_LAB:
-                playSfxClip(app, app->sfxBldgRobotLab.loaded     ? &app->sfxBldgRobotLab     :
-                                 app->sfxBldgGeneric.loaded       ? &app->sfxBldgGeneric       : &app->sfxUnitVehicle);
-                break;
-            default:
-                playSfxClip(app, app->sfxBldgGeneric.loaded ? &app->sfxBldgGeneric : &app->sfxUnitVehicle);
-                break;
-        }
-        return;
-    }
-    if (selectedUnitCanBuild(app)) {
-        if (inBounds(app, tx, ty) && app->map.cells[ty][tx].hasUnit) {
-            return;
-        }
-        if (beginMove(app, tx, ty) < 0) {
-            app->selectedShudderUntilMs = osGetTime() + 350;
-        }
-    }
+    handleWorldTap(app, tx, ty);
 }
 
 static void appendDebugLog(const char* msg) {
@@ -9546,9 +9372,15 @@ static int nextWorldInDirection(const AppState* app, int current, int dir) {
     return current; /* fallback: all other worlds locked */
 }
 
+/* The icon under the stylus, as the original's sprite hit test; where padded rects of
+   neighbouring icons overlap, the nearest icon wins rather than the lowest number. */
 static int missionAtWorldTouch(const AppState* app, const touchPosition* touch) {
+    const float pad = 4.0f;
+    float bestDist = 1.0e9f;
+    int best = 0;
     int mission;
     for (mission = 1; mission <= 12; ++mission) {
+        float l, t, r, b;
         float x;
         float y;
         float dx;
@@ -9556,14 +9388,20 @@ static int missionAtWorldTouch(const AppState* app, const touchPosition* touch) 
         if (worldMissionState(app, app->worldSelectWorld, mission) < 0) {
             continue;
         }
+        worldMissionIconRect(app, app->worldSelectWorld, mission, &l, &t, &r, &b);
+        if ((float) touch->px < l - pad || (float) touch->px > r + pad ||
+            (float) touch->py < t - pad || (float) touch->py > b + pad) {
+            continue;
+        }
         missionPointToBottom(app, app->worldSelectWorld, mission, &x, &y);
         dx = (float) touch->px - x;
         dy = (float) touch->py - y;
-        if ((dx * dx) + (dy * dy) <= 900.0f) {
-            return mission;
+        if ((dx * dx) + (dy * dy) < bestDist) {
+            bestDist = (dx * dx) + (dy * dy);
+            best = mission;
         }
     }
-    return 0;
+    return best;
 }
 
 static void handleTitleScreenTouch(AppState* app, const touchPosition* touch) {
@@ -9590,17 +9428,19 @@ static void handleWorldSelectTouch(AppState* app, const touchPosition* touch) {
             worldMissionState(app, app->worldSelectWorld, 1));
         appendDebugLog(_dbg);
     }
-    if (pointInRect((float) touch->px, (float) touch->py, 4.0f, 102.0f, 36.0f, 32.0f)) {
+    if (pointInRect((float) touch->px, (float) touch->py, WB_WORLD_PREV_ARROW_X - 16.0f, 0.0f, 34.0f, 32.0f)) {
         app->worldSelectWorld = nextWorldInDirection(app, app->worldSelectWorld, -1);
         switchWorldSelectSheets(app, app->worldSelectWorld);
         initWorldMiniWalkers(app, app->worldSelectWorld);
+        app->hoverMissionLevel = 0;
         playSfxClip(app, &app->sfxMove);
         return;
     }
-    if (pointInRect((float) touch->px, (float) touch->py, 280.0f, 102.0f, 36.0f, 32.0f)) {
+    if (pointInRect((float) touch->px, (float) touch->py, WB_WORLD_NEXT_ARROW_X - 18.0f, 0.0f, 34.0f, 32.0f)) {
         app->worldSelectWorld = nextWorldInDirection(app, app->worldSelectWorld, 1);
         switchWorldSelectSheets(app, app->worldSelectWorld);
         initWorldMiniWalkers(app, app->worldSelectWorld);
+        app->hoverMissionLevel = 0;
         playSfxClip(app, &app->sfxMove);
         return;
     }
@@ -9620,39 +9460,6 @@ static void handleWorldSelectTouch(AppState* app, const touchPosition* touch) {
             playSfxClip(app, app->sfxWorldComingSoon.loaded ? &app->sfxWorldComingSoon : &app->sfxMove);
         }
         return;
-    }
-}
-
-static void handleActionButton(AppState* app) {
-    const WBCell* cell = selectedCell(app);
-    WBActionMode prevMode;
-    if (!cell || !cell->hasUnit) {
-        return;
-    }
-    if (app->selectedMover >= 0) {
-        return;
-    }
-    prevMode = app->actionMode;
-    app->pendingActionValid = false;
-    if (unitSupportsPickDrop(cell->unitType)) {
-        if (pileEmpty(&cell->unitCargo)) {
-            app->actionMode = (app->actionMode == WB_ACTION_PICK) ? WB_ACTION_MOVE : WB_ACTION_PICK;
-        } else {
-            app->actionMode = (app->actionMode == WB_ACTION_DROP) ? WB_ACTION_MOVE : WB_ACTION_DROP;
-        }
-    } else if (unitSupportsDigFill(cell->unitType)) {
-        WBActionMode defaultMode = steamshovelHasFillCargo(cell) ? WB_ACTION_FILL : WB_ACTION_DIG;
-        app->actionMode = (app->actionMode == defaultMode) ? WB_ACTION_MOVE : defaultMode;
-    } else if (unitSupportsTransplant(cell->unitType)) {
-        WBActionMode defaultMode = treebotHasSapling(cell) ? WB_ACTION_PLANT : WB_ACTION_UPROOT;
-        app->actionMode = (app->actionMode == defaultMode) ? WB_ACTION_MOVE : defaultMode;
-    } else if (unitSupportsPush(cell->unitType)) {
-        app->actionMode = (app->actionMode == WB_ACTION_PUSH) ? WB_ACTION_MOVE : WB_ACTION_PUSH;
-    } else {
-        app->actionMode = WB_ACTION_MOVE;
-    }
-    if (app->actionMode != prevMode) {
-        playSfxClip(app, &app->sfxMove);
     }
 }
 
@@ -9718,23 +9525,16 @@ static void handleStartMenuTouch(AppState* app, const touchPosition* touch) {
     if (touch->px >= 96 && touch->px < 224 && touch->py >= 104 && touch->py < 122) {
         snprintf(path, sizeof(path), "romfs:/maps/map%d_%d.txt", app->activeWorld, app->activeMission);
         wbMapLoad(path, &app->map);
-        app->cameraX = 1;
-        app->cameraY = 1;
+        resetCameraForMap(app);
+        app->pileInspectValid = false;
         app->hasSelection = false;
-        app->selectedMover = -1;
         app->infoOverlayOpen = false;
         app->planMenuOpen = false;
         app->armedPlan = WB_PLAN_NONE;
-        memset(app->moves, 0, sizeof(app->moves));
+        app->actionMode = WB_ACTION_MOVE;
         memset(app->worldEffects, 0, sizeof(app->worldEffects));
-        memset(app->pendingUnitBreaks, 0, sizeof(app->pendingUnitBreaks));
-        memset(app->cellAttackCooldownMs, 0, sizeof(app->cellAttackCooldownMs));
-        memset(app->unitSwampDamageTickMs, 0, sizeof(app->unitSwampDamageTickMs));
-        memset(app->unitRechargeTickMs, 0, sizeof(app->unitRechargeTickMs));
-        memset(app->buildingTickMs, 0, sizeof(app->buildingTickMs));
-        memset(app->unitActionUntilMs, 0, sizeof(app->unitActionUntilMs));
-        memset(app->unitActionAnim, 0, sizeof(app->unitActionAnim));
-        populateMonstersFromMap(&app->map);
+        app->map.isWB2Level = (app->activeWorld >= 6);
+        initWorldObjects(app);
         app->planSwoop.active = false;
         app->startMenuOpen = false;
         clampCamera(app);
@@ -9767,6 +9567,627 @@ static void handleStartMenuTouch(AppState* app, const touchPosition* touch) {
         app->muteSfx = !app->muteSfx;
         playSfxClip(app, &app->sfxMove);
         return;
+    }
+}
+
+/* ───────────────────────── World 1 Mission 1 tutorial ─────────────────────────
+   'tutorial manager' (tutorial cast) driven by the 'tutorial_sequence' text member.
+   Picking W1M1 on the world map calls setTutorialMode(1): a mouse mask then blocks
+   every click except the current step's click hole; the step advances when the
+   hole's trigger event arrives (default mouseDown), after the step's #delay, or
+   from the dialog's buttons. Steps without dialog text hide the bubble.
+
+   On the 3DS the click holes become the matching control: the scroll buttons are
+   the +Control Pad, rolling over a goal or a pile is a tap, the plan slot is R/SELECT
+   then the plan, and the sidebar's TAKE APART / info / PICK UP buttons are X / Y / A.
+   Only the sentences that name a mouse action are reworded to name the 3DS one. */
+
+typedef enum WBTutTarget {
+    WB_TUT_NONE = 0,         /* no click hole: only the dialog buttons */
+    WB_TUT_SCROLL_RIGHT,     /* #generic_button #arrow_right */
+    WB_TUT_SCROLL_DOWN,      /* #generic_button #arrow_down */
+    WB_TUT_GOAL_LOOK,        /* #goal, rolled over: shows what the goal says */
+    WB_TUT_GOAL_CLICK,       /* #goal, clicked: the selected model heads there */
+    WB_TUT_OCCUPANT,         /* #occupant: select the model on the tile */
+    WB_TUT_RESOURCE_CLICK,   /* #resource, clicked: the selected model heads there */
+    WB_TUT_RESOURCE_LOOK,    /* #resource, rolled over: shows the pile's bricks */
+    WB_TUT_TILE,             /* #tile: build / move / pick up / drop off there */
+    WB_TUT_PLAN,             /* #plan 10: pick the plan from the collection */
+    WB_TUT_TAKE_APART,       /* #menu #disassemblebutton */
+    WB_TUT_INFO_OPEN,        /* #menu #infobutton */
+    WB_TUT_INFO_CLOSE,       /* #info #closebutton */
+    WB_TUT_ACTION            /* #menu #actionbutton2: PICK UP / DROP OFF */
+} WBTutTarget;
+
+typedef enum WBTutAction { WB_TUT_ACT_NONE = 0, WB_TUT_ACT_NEXT, WB_TUT_ACT_QUIT, WB_TUT_ACT_FINISH } WBTutAction;
+
+/* Same order as the tutorial_arrow_* sprites appended to worldbuilder.t3s. */
+typedef enum WBTutArrow {
+    WB_TUT_ARROW_NONE = -1,
+    WB_TUT_ARROW_LEFT_DOWN = 0,
+    WB_TUT_ARROW_LEFT_UP,
+    WB_TUT_ARROW_RIGHT,
+    WB_TUT_ARROW_RIGHT_DOWN,
+    WB_TUT_ARROW_RIGHT_UP
+} WBTutArrow;
+#define WB_EXTRA_TUT_ARROW_IDX        112
+#define WB_EXTRA_TUT_ARROW_ORANGE_IDX 117
+static const WBAnchor g_tutArrowReg[5] = { {19.0f, 19.0f}, {19.0f, 20.0f}, {26.0f, 18.0f}, {19.0f, 19.0f}, {19.0f, 20.0f} };
+
+typedef enum WBTutArrowPlace {
+    WB_TUT_AT_TARGET = 0,    /* arrow_offsets[shape][clicktarget] from the click rect */
+    WB_TUT_AT_BOTTOM,        /* a fixed point on the bottom screen */
+    WB_TUT_AT_TOP            /* a fixed point on the top screen */
+} WBTutArrowPlace;
+
+typedef struct WBTutStep {
+    const char* name;
+    const char* text;        /* NULL: no #dialogtext, the bubble is hidden */
+    bool center;             /* #justify = #center */
+    const char* button2;     /* the bubble's buttons */
+    WBTutAction button2Action;
+    const char* button1;
+    WBTutAction button1Action;
+    WBTutTarget target;
+    int tileX;               /* #activeTile, 1-based as in the original */
+    int tileY;
+    bool onDelay;            /* #trigger = #delay */
+    bool neverTrigger;       /* #trigger = #null */
+    int delayMs;             /* #delay */
+    WBTutArrow arrow;
+    WBTutArrowPlace arrowPlace;
+    float arrowX;
+    float arrowY;
+} WBTutStep;
+
+#define TUT_NOARROW WB_TUT_ARROW_NONE, WB_TUT_AT_TARGET, 0.0f, 0.0f
+#define TUT_DELAY(nm, ms) { nm, NULL, false, NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_NONE, 0, 0, true, false, ms, TUT_NOARROW }
+
+static const WBTutStep g_tutSteps[] = {
+    { "step1", "\nWelcome to Worldbuilder.\n\nAre you ready to learn the basics?", false,
+      "I'm ready", WB_TUT_ACT_NEXT, "Skip tutorial", WB_TUT_ACT_QUIT, WB_TUT_NONE, 0, 0, false, false, 0, TUT_NOARROW },
+    TUT_DELAY("step1_delay", 500),
+    { "step2", "\nEvery mission has a goal. Let's find the goal for this mission.\n\nPress Right on the +Control Pad to look around.", false,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_SCROLL_RIGHT, 0, 0, false, false, 0,
+      WB_TUT_ARROW_RIGHT, WB_TUT_AT_BOTTOM, 296.0f, 124.0f },
+    TUT_DELAY("step2_delay", 300),
+    { "step3", "\n\n\nKeep pressing.", true,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_SCROLL_RIGHT, 0, 0, false, false, 0,
+      WB_TUT_ARROW_RIGHT, WB_TUT_AT_BOTTOM, 295.0f, 123.0f },
+    TUT_DELAY("step3_delay", 300),
+    { "stepC", "\n\n\nKeep pressing - now Down.", true,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_SCROLL_DOWN, 0, 0, false, false, 0,
+      WB_TUT_ARROW_LEFT_DOWN, WB_TUT_AT_BOTTOM, 150.0f, 196.0f },
+    TUT_DELAY("stepC_delay", 500),
+    { "step4", "\n\nGood, now tap that goal to see what it says.", false,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_GOAL_LOOK, 18, 7, false, false, 0,
+      WB_TUT_ARROW_RIGHT_UP, WB_TUT_AT_TARGET, 0.0f, 0.0f },
+    { "step4_delay", NULL, false, NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_GOAL_LOOK, 18, 7, true, false, 500,
+      WB_TUT_ARROW_RIGHT_UP, WB_TUT_AT_TARGET, 0.0f, 0.0f },
+    { "step5", "\nTo win this mission you need to get a buggy to that spot.\n\nYou don't have any buggies, so let's make one.", false,
+      "next", WB_TUT_ACT_NEXT, NULL, WB_TUT_ACT_NONE, WB_TUT_GOAL_LOOK, 18, 7, false, true, 0, TUT_NOARROW },
+    TUT_DELAY("step5_delay", 500),
+    { "step6", "\nTo make a model, you need a plan. You can pick up plans that are scattered around the map by moving over them with a model.\n\nTap this duck model.", false,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_OCCUPANT, 13, 5, false, false, 0,
+      WB_TUT_ARROW_RIGHT_DOWN, WB_TUT_AT_TARGET, 0.0f, 0.0f },
+    TUT_DELAY("step6_delay", 500),
+    { "step7", "\n\nNow, tap this plan to tell the duck to move there.", false,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_RESOURCE_CLICK, 16, 4, false, false, 0,
+      WB_TUT_ARROW_RIGHT_UP, WB_TUT_AT_TARGET, 0.0f, 0.0f },
+    TUT_DELAY("step7_delay", 2000),
+    { "step8", "\n\nGreat, you got the plan!  When you get a plan it goes into your collection.\n\nPress R to open your collection, then pick the plan to check it out.", false,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_PLAN, 0, 0, false, false, 0,
+      WB_TUT_ARROW_RIGHT_DOWN, WB_TUT_AT_TARGET, 0.0f, 0.0f },
+    TUT_DELAY("step8_delay", 500),
+    { "step9", "\nThese numbers tell you what bricks you need to build a buggy.\n\nTo build a model you need to tap an empty space next to the required bricks.", false,
+      "next", WB_TUT_ACT_NEXT, NULL, WB_TUT_ACT_NONE, WB_TUT_NONE, 0, 0, false, false, 0,
+      WB_TUT_ARROW_LEFT_UP, WB_TUT_AT_TOP, 57.0f, 194.0f },
+    TUT_DELAY("step9_delay", 500),
+    { "step10", "\n\nTap this pile to see what bricks are in it.", false,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_RESOURCE_LOOK, 12, 4, false, false, 300,
+      WB_TUT_ARROW_LEFT_UP, WB_TUT_AT_TARGET, 0.0f, 0.0f },
+    { "step10_delay", NULL, false, NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_RESOURCE_LOOK, 12, 4, true, false, 250,
+      WB_TUT_ARROW_LEFT_UP, WB_TUT_AT_TARGET, 0.0f, 0.0f },
+    { "step10b", "\n\nThat's just what we need to build a buggy.", false,
+      "next", WB_TUT_ACT_NEXT, NULL, WB_TUT_ACT_NONE, WB_TUT_RESOURCE_LOOK, 12, 4, false, true, 0, TUT_NOARROW },
+    TUT_DELAY("step10b_delay", 250),
+    { "step_twelve", "\n\n\nTap next to this pile to build the buggy.", true,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_TILE, 13, 4, false, false, 0,
+      WB_TUT_ARROW_LEFT_DOWN, WB_TUT_AT_TARGET, 0.0f, 0.0f },
+    TUT_DELAY("step12_delay", 500),
+    { "step_thirteen", "\nGood job. You built a buggy!\n\nYou can also take models apart with their TAKE APART button, X.  Press X to take this model apart.", false,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_NONE, 0, 0, true, false, 500, TUT_NOARROW },
+    { "step_fourteen", "\nGood job. You built a buggy!\n\nYou can also take models apart with their TAKE APART button, X.  Press X to take this model apart.", false,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_TAKE_APART, 0, 0, false, false, 0, TUT_NOARROW },
+    TUT_DELAY("step14_delay", 500),
+    { "step_fifteen", "\nGood, now let's build another buggy - first pick the plan (R).", false,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_PLAN, 0, 0, false, false, 500,
+      WB_TUT_ARROW_RIGHT_DOWN, WB_TUT_AT_TARGET, 0.0f, 0.0f },
+    TUT_DELAY("step15_delay", 500),
+    { "step_sixteen", "\n\n\nNow tap here.", true,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_TILE, 14, 4, false, false, 0,
+      WB_TUT_ARROW_LEFT_DOWN, WB_TUT_AT_TARGET, 0.0f, 0.0f },
+    TUT_DELAY("step_sixteenA", 500),
+    { "step_seventeen", "\nGood.\n\nNow, press Y, the info button, to see what the buggy can do.", false,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_INFO_OPEN, 0, 0, false, false, 0, TUT_NOARROW },
+    { "step_eighteen", NULL, false, NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_INFO_CLOSE, 0, 0, false, false, 0,
+      WB_TUT_ARROW_LEFT_DOWN, WB_TUT_AT_TOP, 47.0f, 193.0f },
+    TUT_DELAY("step_18_delay", 500),
+    { "step_18b", "\nYou can use the buggy to carry bricks around the map.\n\nTap here to move the buggy next to the blue bricks.", false,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_TILE, 12, 4, false, false, 0,
+      WB_TUT_ARROW_RIGHT_DOWN, WB_TUT_AT_TARGET, 0.0f, 0.0f },
+    TUT_DELAY("step_18b_delay", 500),
+    { "step_nineteen", "\n\n\nPress A, the PICK UP button.", true,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_ACTION, 0, 0, false, false, 0, TUT_NOARROW },
+    TUT_DELAY("step_19_delay", 500),
+    { "step_twenty", "\n\n\nTap these bricks.", true,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_TILE, 12, 3, false, false, 800,
+      WB_TUT_ARROW_RIGHT_DOWN, WB_TUT_AT_TARGET, 0.0f, 0.0f },
+    TUT_DELAY("step_20_delay", 500),
+    { "step_20b", "\nGood! You picked up some blue bricks.\n\nNow let's move them somewhere else.\n\nTap here to move the buggy.", false,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_TILE, 15, 4, false, false, 0,
+      WB_TUT_ARROW_RIGHT_DOWN, WB_TUT_AT_TARGET, 0.0f, 0.0f },
+    { "step_tone", "\n\nNow press A to DROP OFF.", true,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_ACTION, 0, 0, false, false, 0, TUT_NOARROW },
+    TUT_DELAY("step_21_delay", 500),
+    { "step_ttwo", "\n\nAnd drop the bricks off here.", true,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_TILE, 15, 3, false, false, 0,
+      WB_TUT_ARROW_LEFT_DOWN, WB_TUT_AT_TARGET, 0.0f, 0.0f },
+    { "step_tthree", "\n\nNow that you know the basics, head for the goal and finish the mission.", true,
+      NULL, WB_TUT_ACT_NONE, NULL, WB_TUT_ACT_NONE, WB_TUT_GOAL_CLICK, 18, 7, false, false, 0,
+      WB_TUT_ARROW_LEFT_UP, WB_TUT_AT_TARGET, 0.0f, 0.0f },
+    TUT_DELAY("step23_delay", 2500),
+    { "step_end", "\nGood work.  You solved the mission!\n\nPress A to FINISH, then B to END MISSION and return to the world map, or A to keep searching for this level's bonus goal.", false,
+      "finish", WB_TUT_ACT_FINISH, NULL, WB_TUT_ACT_NONE, WB_TUT_NONE, 0, 0, false, false, 0, TUT_NOARROW }
+};
+#define WB_TUT_STEP_COUNT ((int) (sizeof(g_tutSteps) / sizeof(g_tutSteps[0])))
+
+/* arrow_offsets[shape][clicktarget] from 'tutorial manager', in stage px, measured
+   from the click rect's top-left: tile, occupant, goal, resource, plan. */
+static const WBAnchor g_tutArrowOffsets[5][5] = {
+    { {80.0f, -21.0f}, {-10.0f, -25.0f}, {-14.0f, -17.0f}, {-10.0f, -25.0f}, {-10.0f, -25.0f} },  /* left_down */
+    { {-10.0f, -25.0f}, {-10.0f, -25.0f}, {37.0f, 68.0f}, {55.0f, 45.0f}, {-10.0f, -25.0f} },     /* left_up */
+    { {-10.0f, -21.0f}, {-10.0f, -25.0f}, {-14.0f, -17.0f}, {-10.0f, -25.0f}, {-10.0f, -25.0f} }, /* right */
+    { {7.0f, -25.0f}, {-10.0f, -25.0f}, {-14.0f, -17.0f}, {-10.0f, -25.0f}, {-10.0f, -25.0f} },   /* right_down */
+    { {-20.0f, 60.0f}, {-20.0f, 60.0f}, {-20.0f, 60.0f}, {-15.0f, 60.0f}, {0.0f, 0.0f} }          /* right_up */
+};
+
+static void tutorialQuit(AppState* app);
+
+static void tutorialShowStep(AppState* app, int index) {
+    const WBTutStep* step;
+    u64 now = osGetTime();
+    bool hadText = app->tutorialStep >= 0 && app->tutorialStep < WB_TUT_STEP_COUNT && g_tutSteps[app->tutorialStep].text != NULL;
+    app->tutorialStep = index;
+    step = &g_tutSteps[index];
+    app->tutorialAdvanceAtMs = 0;
+    app->tutorialCatcherLive = step->target != WB_TUT_NONE;
+    /* Leaving a goal or pile step is the mouseLeave that closes its rollover. */
+    if (step->target != WB_TUT_GOAL_LOOK && app->goalPopupVisible && !app->goalPopupComplete) {
+        app->goalPopupVisible = false;
+    }
+    if (step->target != WB_TUT_RESOURCE_LOOK) {
+        app->pileInspectValid = false;
+    }
+    if (step->text && !hadText) {
+        app->tutorialDialogShownMs = now;
+    } else if (!step->text && hadText) {
+        app->tutorialDialogHiddenMs = now;
+    }
+    if (step->onDelay) {
+        app->tutorialAdvanceAtMs = now + (u64) (step->delayMs > 0 ? step->delayMs : 1);
+    }
+}
+
+static void tutorialGoNext(AppState* app, int delayMs) {
+    if (delayMs > 0) {
+        app->tutorialAdvanceAtMs = osGetTime() + (u64) delayMs;
+        return;
+    }
+    if (app->tutorialStep + 1 < WB_TUT_STEP_COUNT) {
+        tutorialShowStep(app, app->tutorialStep + 1);
+    } else {
+        tutorialQuit(app);
+    }
+}
+
+/* The click hole saw its trigger: disable it and move on after the step's delay. */
+static void tutorialFire(AppState* app) {
+    const WBTutStep* step = &g_tutSteps[app->tutorialStep];
+    if (!app->tutorialCatcherLive || step->neverTrigger || step->onDelay) {
+        return;
+    }
+    app->tutorialCatcherLive = false;
+    tutorialGoNext(app, step->delayMs);
+}
+
+static void tutorialStart(AppState* app) {
+    app->tutorialActive = true;
+    app->tutorialStep = -1;
+    app->tutorialDialogShownMs = 0;
+    app->tutorialDialogHiddenMs = 0;
+    tutorialShowStep(app, 0);
+}
+
+static void returnToWorldSelect(AppState* app) {
+    freeGameplaySheets(app);
+    ensureMenuSheetsLoaded(app);
+    switchWorldSelectSheets(app, app->activeWorld);
+    app->screenMode = WB_SCREEN_WORLD_SELECT;
+    app->worldSelectWorld = app->activeWorld;
+    app->hasSelection = false;
+    app->infoOverlayOpen = false;
+    app->armedPlan = WB_PLAN_NONE;
+    app->planMenuOpen = false;
+    app->startMenuOpen = false;
+    app->goalPopupVisible = false;
+    app->goalPopupComplete = false;
+    app->goalPopupBonus = false;
+    app->pileInspectValid = false;
+    initWorldMiniWalkers(app, app->worldSelectWorld);
+    startMenuMusic(app);
+}
+
+/* quit(): setTutorialMode(0), then quitlevel() back to the world map. */
+static void tutorialQuit(AppState* app) {
+    app->tutorialActive = false;
+    returnToWorldSelect(app);
+    playSfxClip(app, &app->sfxMove);
+}
+
+static void tutorialRunAction(AppState* app, WBTutAction action) {
+    playSfxClip(app, &app->sfxMove);
+    switch (action) {
+        case WB_TUT_ACT_NEXT: tutorialGoNext(app, 0); break;
+        case WB_TUT_ACT_QUIT: tutorialQuit(app); break;
+        case WB_TUT_ACT_FINISH: app->tutorialActive = false; break;
+        default: break;
+    }
+}
+
+static bool tutorialTouchOnTile(const AppState* app, const touchPosition* touch, int tileX, int tileY) {
+    int tx;
+    int ty;
+    return screenToTile(app, (float) touch->px, (float) touch->py, &tx, &ty) && tx == tileX - 1 && ty == tileY - 1;
+}
+
+/* The tutorial's mouse mask: only the current click hole reaches the game. Returns
+   false while the plan collection is open, which pauses the game as it does normally. */
+static bool tutorialHandleInput(AppState* app, u32 kDown, u32 kHeld, const touchPosition* touch) {
+    const WBTutStep* step = &g_tutSteps[app->tutorialStep];
+    bool touchDown = (kHeld & KEY_TOUCH) && !app->touchActiveLast;
+    app->touchActiveLast = (kHeld & KEY_TOUCH) != 0;
+
+    if (kDown & KEY_START) {               /* the 'quit tutorial' button */
+        tutorialQuit(app);
+        return false;
+    }
+    if (step->text) {
+        if ((kDown & KEY_A) && step->button2) {
+            tutorialRunAction(app, step->button2Action);
+            return true;
+        }
+        if ((kDown & KEY_B) && step->button1) {
+            tutorialRunAction(app, step->button1Action);
+            return true;
+        }
+    }
+    if (app->planMenuOpen) {
+        int pmCount = planMenuEntryCount(app);
+        if ((kDown & KEY_DOWN) && pmCount > 0) {
+            app->planMenuCursor = (app->planMenuCursor + 1) % pmCount;
+            if (app->planMenuCursor >= app->planMenuScrollOffset + 3) app->planMenuScrollOffset = app->planMenuCursor - 2;
+            playSfxClip(app, &app->sfxMove);
+        }
+        if ((kDown & KEY_UP) && pmCount > 0) {
+            app->planMenuCursor = (app->planMenuCursor + pmCount - 1) % pmCount;
+            if (app->planMenuCursor < app->planMenuScrollOffset) app->planMenuScrollOffset = app->planMenuCursor;
+            playSfxClip(app, &app->sfxMove);
+        }
+        if (kDown & KEY_A) {
+            WBPlanType pmPlan = planMenuEntryAt(app, app->planMenuCursor);
+            if (pmPlan != WB_PLAN_NONE && app->map.planInventory[pmPlan] > 0) app->armedPlan = pmPlan;
+            app->planMenuOpen = false;
+            playSfxClip(app, &app->sfxPlan);
+        }
+        if (kDown & (KEY_B | KEY_R | KEY_SELECT)) {
+            app->planMenuOpen = false;
+            playSfxClip(app, &app->sfxMove);
+        }
+        if (touchDown) {
+            handlePlanMenuTouch(app, touch);
+        }
+        if (step->target == WB_TUT_PLAN && app->armedPlan != WB_PLAN_NONE) {
+            tutorialFire(app);
+        }
+        return false;
+    }
+    if (!app->tutorialCatcherLive && !step->neverTrigger) {
+        return true;
+    }
+    switch (step->target) {
+        case WB_TUT_SCROLL_RIGHT:
+        case WB_TUT_SCROLL_DOWN: {
+            bool right = step->target == WB_TUT_SCROLL_RIGHT;
+            if (kDown & (right ? KEY_RIGHT : KEY_DOWN)) {
+                app->lastScrollMs = 0;
+                scrollCameraStep(app, right ? 1 : 0, right ? 0 : 1);
+                tutorialFire(app);
+            }
+            break;
+        }
+        case WB_TUT_GOAL_LOOK:
+            if (touchDown && tutorialTouchOnTile(app, touch, step->tileX, step->tileY)) {
+                showGoalPopupForCell(app, step->tileX - 1, step->tileY - 1);
+                tutorialFire(app);
+            }
+            break;
+        case WB_TUT_RESOURCE_LOOK:
+            if (touchDown && tutorialTouchOnTile(app, touch, step->tileX, step->tileY)) {
+                updatePileInspect(app, step->tileX - 1, step->tileY - 1);
+                tutorialFire(app);
+            }
+            break;
+        case WB_TUT_OCCUPANT:
+            if (touchDown && trySelectUnitAtTouch(app, touch)) {
+                if (app->selectedX == step->tileX - 1 && app->selectedY == step->tileY - 1) {
+                    tutorialFire(app);
+                } else {
+                    app->hasSelection = false;
+                }
+            }
+            break;
+        case WB_TUT_GOAL_CLICK:
+        case WB_TUT_RESOURCE_CLICK:
+        case WB_TUT_TILE:
+            if (touchDown && tutorialTouchOnTile(app, touch, step->tileX, step->tileY)) {
+                handleWorldTap(app, step->tileX - 1, step->tileY - 1);
+                tutorialFire(app);
+            }
+            break;
+        case WB_TUT_PLAN:
+            if (kDown & (KEY_R | KEY_SELECT)) {
+                app->planMenuOpen = true;
+                app->planMenuScrollOffset = 0;
+                app->planMenuCursor = 0;
+                app->infoOverlayOpen = false;
+                playSfxClip(app, &app->sfxPlan);
+            }
+            break;
+        case WB_TUT_TAKE_APART:
+            if ((kDown & KEY_X) && app->hasSelection) {
+                disassembleSelected(app);
+                tutorialFire(app);
+            }
+            break;
+        case WB_TUT_INFO_OPEN:
+            if ((kDown & KEY_Y) && app->hasSelection) {
+                app->infoOverlayOpen = true;
+                playSfxClip(app, &app->sfxMove);
+                tutorialFire(app);
+            }
+            break;
+        case WB_TUT_INFO_CLOSE:
+            if ((kDown & KEY_Y) && app->infoOverlayOpen) {
+                app->infoOverlayOpen = false;
+                playSfxClip(app, &app->sfxMove);
+                tutorialFire(app);
+            }
+            break;
+        case WB_TUT_ACTION:
+            if (kDown & (KEY_A | KEY_L)) {
+                handleActionButton(app);
+                if (app->actionMode == WB_ACTION_PICK || app->actionMode == WB_ACTION_DROP) {
+                    tutorialFire(app);
+                }
+            }
+            break;
+        default:
+            break;
+    }
+    return true;
+}
+
+static void tutorialUpdate(AppState* app) {
+    if (!app->tutorialActive) {
+        return;
+    }
+    if (app->tutorialAdvanceAtMs != 0 && osGetTime() >= app->tutorialAdvanceAtMs) {
+        app->tutorialAdvanceAtMs = 0;
+        tutorialGoNext(app, 0);
+    }
+}
+
+/* 'tutorial colorflip': the outline swaps black / orange every 4 frames at 15 fps. */
+static void tutorialDrawArrow(AppState* app, WBTutArrow shape, float x, float y, float scale) {
+    bool orange = ((osGetTime() * 15ULL / 1000ULL) / 4ULL) % 2ULL == 0;
+    C2D_Image img = getWorldbuilderExtraImage(app, (orange ? WB_EXTRA_TUT_ARROW_ORANGE_IDX : WB_EXTRA_TUT_ARROW_IDX) + (int) shape);
+    if (!img.subtex) {
+        return;
+    }
+    drawAnchoredImage(img, x, y, scale, g_tutArrowReg[shape].x, g_tutArrowReg[shape].y);
+}
+
+/* The click rect's top-left on the bottom screen (tileRect / goalRect / objRect /
+   the occupant's sprite rect, as 'tutorial manager' builds them). */
+static bool tutorialTargetRect(AppState* app, const WBTutStep* step, float* outX, float* outY, int* outKind) {
+    float locX;
+    float locY;
+    switch (step->target) {
+        case WB_TUT_TILE:
+            posToLoc(app, step->tileX, step->tileY, &locX, &locY);
+            *outX = locX - 25.0f * DIRECTOR_SCALE; *outY = locY; *outKind = 0;
+            return true;
+        case WB_TUT_OCCUPANT: {
+            const WBCell* cell;
+            int assetId;
+            if (!inBounds(app, step->tileX - 1, step->tileY - 1)) return false;
+            cell = &app->map.cells[step->tileY - 1][step->tileX - 1];
+            if (!cell->hasUnit) return false;
+            assetId = unitStandAssetId(cell->unitType, cell->unitDirection, terrainUsesWaterSprite(cell->terrain));
+            if (assetId < 0) return false;
+            posToLoc(app, step->tileX, step->tileY, &locX, &locY);
+            *outX = locX + 10.0f * DIRECTOR_SCALE - g_objectAnchors[assetId].x * DIRECTOR_SCALE - 1.0f;
+            *outY = locY + 18.0f * DIRECTOR_SCALE - g_objectAnchors[assetId].y * DIRECTOR_SCALE - 1.0f;
+            *outKind = 1;
+            return true;
+        }
+        case WB_TUT_GOAL_LOOK:
+        case WB_TUT_GOAL_CLICK:
+            posToLoc(app, step->tileX, step->tileY, &locX, &locY);
+            *outX = locX; *outY = locY - 30.0f * DIRECTOR_SCALE; *outKind = 2;
+            return true;
+        case WB_TUT_RESOURCE_CLICK:
+        case WB_TUT_RESOURCE_LOOK:
+            posToLoc(app, step->tileX, step->tileY, &locX, &locY);
+            *outX = locX; *outY = locY; *outKind = 3;
+            return true;
+        case WB_TUT_PLAN: {
+            /* No plan bar on the 3DS: point at the plan's row once the collection is open. */
+            int i;
+            int count = planMenuEntryCount(app);
+            if (!app->planMenuOpen) return false;
+            for (i = app->planMenuScrollOffset; i < count && i < app->planMenuScrollOffset + 3; ++i) {
+                if (app->map.planInventory[planMenuEntryAt(app, i)] > 0) {
+                    *outX = 26.0f + 16.0f + 20.0f;
+                    *outY = 34.0f + 56.0f + (float) (i - app->planMenuScrollOffset) * 34.0f + 2.0f;
+                    *outKind = 4;
+                    return true;
+                }
+            }
+            return false;
+        }
+        default:
+            return false;
+    }
+}
+
+static void tutorialDrawBottom(AppState* app) {
+    const WBTutStep* step;
+    float x;
+    float y;
+    int kind;
+    if (!app->tutorialActive) {
+        return;
+    }
+    step = &g_tutSteps[app->tutorialStep];
+    if (step->arrow == WB_TUT_ARROW_NONE || step->arrowPlace == WB_TUT_AT_TOP) {
+        return;
+    }
+    if (step->arrowPlace == WB_TUT_AT_BOTTOM) {
+        tutorialDrawArrow(app, step->arrow, step->arrowX, step->arrowY, DIRECTOR_SCALE);
+        return;
+    }
+    if (tutorialTargetRect(app, step, &x, &y, &kind)) {
+        x += g_tutArrowOffsets[step->arrow][kind].x * DIRECTOR_SCALE;
+        y += g_tutArrowOffsets[step->arrow][kind].y * DIRECTOR_SCALE;
+        tutorialDrawArrow(app, step->arrow, x, y, kind == 4 ? 0.75f : DIRECTOR_SCALE);
+    }
+}
+
+/* The dialog bubble ('tutorial_bubble': white, black rounded border, grey title),
+   kept to the right of the sidebar so the plan recipe and info stay visible. It fades
+   in and out over 200 ms, as 'tutorial fade behavior' does. */
+static void tutorialDrawTop(AppState* app) {
+    const WBTutStep* step;
+    const float bx = 206.0f;
+    const float by = 4.0f;
+    const float bw = 190.0f;
+    const float bh = 232.0f;
+    const float textScale = 0.38f;
+    const float lineStep = 13.0f;
+    const int maxChars = 31;
+    u64 now = osGetTime();
+    float alpha;
+    u8 a;
+    char line[128];
+    const char* p;
+    float ty;
+    if (!app->tutorialActive) {
+        return;
+    }
+    step = &g_tutSteps[app->tutorialStep];
+    if (step->arrow != WB_TUT_ARROW_NONE && step->arrowPlace == WB_TUT_AT_TOP) {
+        tutorialDrawArrow(app, step->arrow, step->arrowX, step->arrowY, 1.0f);
+    }
+    if (!step->text) {
+        return;
+    }
+    alpha = (float) (now - app->tutorialDialogShownMs) / 200.0f;
+    if (alpha > 1.0f) alpha = 1.0f;
+    if (alpha < 0.0f) alpha = 0.0f;
+    a = (u8) (alpha * 255.0f);
+    C2D_DrawRectSolid(bx, by, 0.6f, bw, bh, C2D_Color32(0x00, 0x00, 0x00, a));
+    C2D_DrawRectSolid(bx + 2.0f, by + 2.0f, 0.6f, bw - 4.0f, bh - 4.0f, C2D_Color32(0xFF, 0xFF, 0xFF, a));
+    {
+        C2D_Text t;
+        C2D_TextParse(&t, app->dynamicBuf, "Mission 1: Tutorial");
+        C2D_TextOptimize(&t);
+        C2D_DrawText(&t, C2D_WithColor, bx + 8.0f, by + 5.0f, 0.6f, 0.44f, 0.44f, C2D_Color32(0xA8, 0xA8, 0xA8, a));
+    }
+    /* body: the #dialogtext lines, word-wrapped, left or centred */
+    ty = by + 20.0f;
+    p = step->text;
+    while (*p && ty < by + bh - 50.0f) {
+        const char* eol = strchr(p, '\n');
+        int len = eol ? (int) (eol - p) : (int) strlen(p);
+        if (len == 0) {
+            ty += lineStep;
+        } else {
+            int start = 0;
+            while (start < len) {
+                int take = len - start;
+                C2D_Text t;
+                if (take > maxChars) {
+                    int cut = start + maxChars;
+                    while (cut > start && p[cut] != ' ') --cut;
+                    take = (cut > start) ? cut - start : maxChars;
+                }
+                if (take > (int) sizeof(line) - 1) take = (int) sizeof(line) - 1;
+                memcpy(line, p + start, (size_t) take);
+                line[take] = '\0';
+                C2D_TextParse(&t, app->dynamicBuf, line);
+                C2D_TextOptimize(&t);
+                if (step->center) {
+                    C2D_DrawText(&t, C2D_WithColor | C2D_AlignCenter, bx + bw * 0.5f, ty, 0.6f, textScale, textScale, C2D_Color32(0x00, 0x00, 0x00, a));
+                } else {
+                    C2D_DrawText(&t, C2D_WithColor, bx + 9.0f, ty, 0.6f, textScale, textScale, C2D_Color32(0x00, 0x00, 0x00, a));
+                }
+                ty += lineStep;
+                start += take;
+                while (start < len && p[start] == ' ') ++start;
+            }
+        }
+        if (!eol) break;
+        p = eol + 1;
+    }
+    /* buttons: the green 'large_green_button's, labelled with the 3DS button */
+    {
+        float btnY = by + bh - 44.0f;
+        int nButtons = (step->button1 ? 1 : 0) + (step->button2 ? 1 : 0);
+        int i;
+        for (i = 0; i < 2; ++i) {
+            const char* label = i == 0 ? step->button1 : step->button2;
+            const char* key = i == 0 ? "B" : "A";
+            float w = nButtons == 2 ? (bw - 24.0f) * 0.5f : bw - 60.0f;
+            float x;
+            char text[48];
+            C2D_Text t;
+            if (!label) continue;
+            x = nButtons == 2 ? (i == 0 ? bx + 8.0f : bx + 16.0f + w) : bx + 30.0f;
+            C2D_DrawRectSolid(x, btnY, 0.6f, w, 20.0f, C2D_Color32(0x1E, 0x6B, 0x16, a));
+            C2D_DrawRectSolid(x + 1.0f, btnY + 1.0f, 0.6f, w - 2.0f, 18.0f, C2D_Color32(0x3C, 0xB4, 0x28, a));
+            snprintf(text, sizeof(text), "%s: %s", key, label);
+            C2D_TextParse(&t, app->dynamicBuf, text);
+            C2D_TextOptimize(&t);
+            C2D_DrawText(&t, C2D_WithColor | C2D_AlignCenter, x + w * 0.5f, btnY + 4.0f, 0.6f, 0.36f, 0.36f, C2D_Color32(0xFF, 0xFF, 0xFF, a));
+        }
+    }
+    {
+        C2D_Text t;
+        C2D_TextParse(&t, app->dynamicBuf, "START: quit tutorial");
+        C2D_TextOptimize(&t);
+        C2D_DrawText(&t, C2D_WithColor | C2D_AlignCenter, bx + bw * 0.5f, by + bh - 17.0f, 0.6f, 0.32f, 0.32f, C2D_Color32(0x80, 0x80, 0x80, a));
     }
 }
 
@@ -10108,6 +10529,19 @@ int main(int argc, char* argv[]) {
             updateAudioRuntime(app);
             }
         } else {
+            if (app->tutorialActive) {
+                bool simulate;
+                tutorialUpdate(app);
+                simulate = app->tutorialActive ? tutorialHandleInput(app, kDown, kHeld, &touch) : true;
+                if (app->screenMode != WB_SCREEN_GAME) {
+                    continue;
+                }
+                if (!simulate) {
+                    updateAudioRuntime(app);
+                    goto doneGameInput;
+                }
+                goto runGameSimulation;
+            }
             if (kDown & KEY_START) {
                 if (app->goalPopupVisible && app->goalPopupComplete) {
                     app->goalPopupVisible = false;
@@ -10144,20 +10578,15 @@ int main(int argc, char* argv[]) {
                         case 1: /* Restart Mission */
                             snprintf(smPath, sizeof(smPath), "romfs:/maps/map%d_%d.txt", app->activeWorld, app->activeMission);
                             wbMapLoad(smPath, &app->map);
-                            app->cameraX = 1; app->cameraY = 1;
-                            app->hasSelection = false; app->selectedMover = -1;
+                            resetCameraForMap(app);
+                            app->pileInspectValid = false;
+                            app->hasSelection = false;
                             app->infoOverlayOpen = false; app->planMenuOpen = false;
                             app->armedPlan = WB_PLAN_NONE;
-                            memset(app->moves, 0, sizeof(app->moves));
+                            app->actionMode = WB_ACTION_MOVE;
                             memset(app->worldEffects, 0, sizeof(app->worldEffects));
-                            memset(app->pendingUnitBreaks, 0, sizeof(app->pendingUnitBreaks));
-                            memset(app->cellAttackCooldownMs, 0, sizeof(app->cellAttackCooldownMs));
-                            memset(app->unitSwampDamageTickMs, 0, sizeof(app->unitSwampDamageTickMs));
-                            memset(app->unitRechargeTickMs, 0, sizeof(app->unitRechargeTickMs));
-                            memset(app->buildingTickMs, 0, sizeof(app->buildingTickMs));
-                            memset(app->unitActionUntilMs, 0, sizeof(app->unitActionUntilMs));
-                            memset(app->unitActionAnim, 0, sizeof(app->unitActionAnim));
-                            populateMonstersFromMap(&app->map);
+                            app->map.isWB2Level = (app->activeWorld >= 6);
+                            initWorldObjects(app);
                             app->planSwoop.active = false;
                             app->startMenuOpen = false;
                             clampCamera(app);
@@ -10303,7 +10732,6 @@ int main(int argc, char* argv[]) {
                     app->screenMode = WB_SCREEN_WORLD_SELECT;
                     app->worldSelectWorld = app->activeWorld;
                     app->hasSelection = false;
-                    app->selectedMover = -1;
                     app->infoOverlayOpen = false;
                     app->armedPlan = WB_PLAN_NONE;
                     app->planMenuOpen = false;
@@ -10314,12 +10742,11 @@ int main(int argc, char* argv[]) {
                     continue;
                 }
                 app->hasSelection = false;
-                app->selectedMover = -1;
                 app->infoOverlayOpen = false;
                 app->armedPlan = WB_PLAN_NONE;
                 app->planMenuOpen = false;
                 app->goalPopupVisible = false;
-                app->pendingActionValid = false;
+                app->pileInspectValid = false;
                 app->actionMode = WB_ACTION_MOVE;
                 app->startMenuOpen = false;
                 playSfxClip(app, &app->sfxMove);
@@ -10334,15 +10761,21 @@ int main(int argc, char* argv[]) {
                 playSfxClip(app, &app->sfxMove);
             }
 
-            if (kHeld & KEY_LEFT) app->cameraX--;
-            if (kHeld & KEY_RIGHT) app->cameraX++;
-            if (kHeld & KEY_UP) app->cameraY--;
-            if (kHeld & KEY_DOWN) app->cameraY++;
-
-            if (circle.dx < -20) app->cameraX--;
-            if (circle.dx > 20) app->cameraX++;
-            if (circle.dy < -20) app->cameraY++;
-            if (circle.dy > 20) app->cameraY--;
+            {
+                int scrollX = 0;
+                int scrollY = 0;
+                if (kHeld & KEY_LEFT) scrollX = -1;
+                if (kHeld & KEY_RIGHT) scrollX = 1;
+                if (kHeld & KEY_UP) scrollY = -1;
+                if (kHeld & KEY_DOWN) scrollY = 1;
+                if (circle.dx < -20) scrollX = -1;
+                if (circle.dx > 20) scrollX = 1;
+                if (circle.dy < -20) scrollY = 1;
+                if (circle.dy > 20) scrollY = -1;
+                if (scrollCameraStep(app, scrollX, scrollY)) {
+                    app->centerGoalActive = false;     /* scrollmapManual(): pCenterGoal = VOID */
+                }
+            }
 
             if (kHeld & KEY_TOUCH) {
                 int previewX;
@@ -10367,12 +10800,9 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            updateMovement(app);
-            tickBuildings(app);
-            tickUnitRecharging(app);
-            tickMonsters(app);
+            runGameSimulation:
+            runWorldFrames(app);
             tickCollectGoals(app);
-            resolvePendingUnitBreaks(app);
             updateAudioRuntime(app);
             clampCamera(app);
             doneGameInput:;
@@ -10400,6 +10830,7 @@ int main(int argc, char* argv[]) {
         C2D_SceneBegin(top);
         if (app->screenMode == WB_SCREEN_GAME) {
             drawTopScreen(app);
+            tutorialDrawTop(app);
         } else if (app->screenMode == WB_SCREEN_WORLD_SELECT) {
             drawWorldSelectTop(app);
         }
@@ -10419,12 +10850,14 @@ int main(int argc, char* argv[]) {
             drawObjectsBottom(app);
             drawPlanSwoop(app);
             drawBuildPreview(app);
+            drawPileInspectPopup(app);
             drawBottomGoalPopup(app);
             if (app->startMenuOpen) {
                 drawBottomStartMenu(app);
             } else if (app->planMenuOpen) {
                 drawBottomPlanMenu(app);
             }
+            tutorialDrawBottom(app);
         }
 
         C3D_FrameEnd(0);

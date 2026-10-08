@@ -26,11 +26,12 @@ static const WBResourcePile g_marinaRecipe     = {  0,40,  5,  0,  0, 0 };
 static const WBResourcePile g_robotLabRecipe   = {  0,25, 10, 25,  0, 0 };
 static const WBResourcePile g_guardTowerRecipe = { 25, 0,  0, 25,  0, 1 };
 static const WBResourcePile g_freezebotRecipe  = {  5, 5,  0, 25,  0, 1,  10 };
-static const WBResourcePile g_houseRecipe      = {  0, 0, 10, 10,  0, 0,  15 };
-static const WBResourcePile g_factoryRecipe    = {  0,20, 10, 20,  0, 0,  20 };
-static const WBResourcePile g_windmillRecipe   = {  0,15,  5, 10,  0, 0,  10 };
-static const WBResourcePile g_garageRecipe     = {  0,15, 10, 15,  0, 0,   5 };
-static const WBResourcePile g_nurseryRecipe    = {  0, 0, 20, 10,  0, 0,  10 };
+/* WB2 config: the production buildings each need a battery. */
+static const WBResourcePile g_houseRecipe      = {  0,20, 20, 20,  0, 0,  25 };
+static const WBResourcePile g_factoryRecipe    = { 15,10,  0,  0,  0, 1,  25 };
+static const WBResourcePile g_windmillRecipe   = { 15, 0,  0,  0,  5, 1,  25 };
+static const WBResourcePile g_garageRecipe     = { 15, 0,  0, 10,  0, 1,  25 };
+static const WBResourcePile g_nurseryRecipe    = { 15, 0, 10,  0,  0, 1,  25 };
 
 static void trimLine(char* line) {
     char* start = line;
@@ -73,7 +74,6 @@ static void initCell(WBCell* cell) {
     cell->unitDirection = WB_DIR_RIGHT;
     cell->unitEnergy = 100;
     cell->unitEnergyDeci = 1000;
-    cell->pileEnergyValue = 100;
 }
 
 static void parsePileContents(WBResourcePile* pile, const char* desc) {
@@ -287,35 +287,30 @@ const char* wbBuildingName(WBBuildingType b) {
     }
 }
 
+/* Each monster's #terrain list (WB1 config, plus WB2's #street, which covers every
+   street variant and cement). Swamp is in the lists but monster.generic only lets a
+   monster use it while chasing or when stuck on swamp (main.c). No monster lists
+   #water_whirlpool, #water_reefs or #street_undiggable. */
 bool wbMonsterCanTraverse(WBMonsterType m, WBTerrainType terrain) {
-    if (terrain == WB_TERRAIN_WATER_REEFS) {
-        return false;
-    }
+    bool street = terrain == WB_TERRAIN_STREET || terrain == WB_TERRAIN_CEMENT;
     switch (m) {
         case WB_MONSTER_CRAB:
-            return terrain == WB_TERRAIN_NORMAL || terrain == WB_TERRAIN_SWAMP;
+            return terrain == WB_TERRAIN_NORMAL || street || terrain == WB_TERRAIN_SWAMP;
         case WB_MONSTER_WATER_CRAB:
             return terrain == WB_TERRAIN_WATER || terrain == WB_TERRAIN_WATER_UNFILLABLE ||
-                   terrain == WB_TERRAIN_SWAMP || terrain == WB_TERRAIN_WATER_WHIRLPOOL;
+                   terrain == WB_TERRAIN_SWAMP;
         case WB_MONSTER_GATOR:
-            return terrain == WB_TERRAIN_NORMAL || terrain == WB_TERRAIN_WATER ||
-                   terrain == WB_TERRAIN_WATER_UNFILLABLE || terrain == WB_TERRAIN_SWAMP ||
-                   terrain == WB_TERRAIN_WATER_WHIRLPOOL;
+            return terrain == WB_TERRAIN_NORMAL || street || terrain == WB_TERRAIN_WATER ||
+                   terrain == WB_TERRAIN_WATER_UNFILLABLE || terrain == WB_TERRAIN_SWAMP;
         case WB_MONSTER_SCORPION:
-            return terrain == WB_TERRAIN_NORMAL || terrain == WB_TERRAIN_NORMAL_UNDIGGABLE ||
+        case WB_MONSTER_TREX:
+        case WB_MONSTER_LION:
+            return terrain == WB_TERRAIN_NORMAL || street || terrain == WB_TERRAIN_NORMAL_UNDIGGABLE ||
                    terrain == WB_TERRAIN_SWAMP;
         case WB_MONSTER_SHARK:
-            return terrain == WB_TERRAIN_WATER || terrain == WB_TERRAIN_WATER_UNFILLABLE ||
-                   terrain == WB_TERRAIN_WATER_WHIRLPOOL;
+            return terrain == WB_TERRAIN_WATER || terrain == WB_TERRAIN_WATER_UNFILLABLE;
         case WB_MONSTER_BOULDER:
-            return false; /* static obstacle */
-        case WB_MONSTER_TREX:
-            return terrain == WB_TERRAIN_NORMAL || terrain == WB_TERRAIN_NORMAL_UNDIGGABLE ||
-                   terrain == WB_TERRAIN_SWAMP;
-        case WB_MONSTER_LION:
-            return terrain == WB_TERRAIN_NORMAL || terrain == WB_TERRAIN_NORMAL_UNDIGGABLE ||
-                   terrain == WB_TERRAIN_SWAMP || terrain == WB_TERRAIN_CEMENT ||
-                   terrain == WB_TERRAIN_STREET || terrain == WB_TERRAIN_STREET_UNDIGGABLE;
+            return false; /* never moves itself; pushing has its own rule */
         default:
             return false;
     }
@@ -376,7 +371,7 @@ int wbMonsterRestForMs(WBMonsterType m) {
         case WB_MONSTER_SCORPION:   return 2000;
         case WB_MONSTER_SHARK:      return 1000;
         case WB_MONSTER_TREX:       return 2000;
-        case WB_MONSTER_LION:       return 1500;
+        case WB_MONSTER_LION:       return 1000;
         default: return 1000;
     }
 }
@@ -568,10 +563,11 @@ const WBResourcePile* wbBuildingRecipe(WBBuildingType buildingType) {
     }
 }
 
+/* Building #terrain lists: marina [#water]; the rest [#normal] (+#street in WB2). */
 bool wbBuildingCanBePlacedOn(WBBuildingType buildingType, WBTerrainType terrain) {
     switch (buildingType) {
         case WB_BUILDING_MARINA:
-            return terrain == WB_TERRAIN_WATER || terrain == WB_TERRAIN_WATER_WHIRLPOOL;
+            return terrain == WB_TERRAIN_WATER;
         case WB_BUILDING_GAS_STATION:
         case WB_BUILDING_ROBOT_LAB:
         case WB_BUILDING_GUARD_TOWER:
@@ -580,38 +576,34 @@ bool wbBuildingCanBePlacedOn(WBBuildingType buildingType, WBTerrainType terrain)
         case WB_BUILDING_WINDMILL:
         case WB_BUILDING_GARAGE:
         case WB_BUILDING_NURSERY:
-            return terrain == WB_TERRAIN_NORMAL || terrain == WB_TERRAIN_SWAMP ||
-                   terrain == WB_TERRAIN_CEMENT || terrain == WB_TERRAIN_STREET;
+            return terrain == WB_TERRAIN_NORMAL || terrain == WB_TERRAIN_CEMENT || terrain == WB_TERRAIN_STREET;
         default:
             return false;
     }
 }
 
+/* Each unit's #terrain list (WB1 config, plus WB2's #street). */
 bool wbUnitCanTraverse(WBUnitType unitType, WBTerrainType terrain) {
-    if (terrain == WB_TERRAIN_WATER_REEFS) {
-        return false;
-    }
+    bool street = terrain == WB_TERRAIN_STREET || terrain == WB_TERRAIN_CEMENT;
     switch (unitType) {
         case WB_UNIT_BUGGY:
-            return terrain == WB_TERRAIN_NORMAL || terrain == WB_TERRAIN_NORMAL_UNDIGGABLE ||
-                   terrain == WB_TERRAIN_SWAMP ||
-                   terrain == WB_TERRAIN_STREET || terrain == WB_TERRAIN_CEMENT;
-        case WB_UNIT_DUCK:
-        case WB_UNIT_FROG:
-            return terrain == WB_TERRAIN_NORMAL || terrain == WB_TERRAIN_WATER ||
-                   terrain == WB_TERRAIN_SWAMP || terrain == WB_TERRAIN_WATER_WHIRLPOOL;
-        case WB_UNIT_DIRTBUGGY:
-        case WB_UNIT_DUMPTRUCK:
-            return terrain == WB_TERRAIN_NORMAL || terrain == WB_TERRAIN_NORMAL_UNDIGGABLE ||
-                   terrain == WB_TERRAIN_SWAMP ||
-                   terrain == WB_TERRAIN_STREET || terrain == WB_TERRAIN_CEMENT;
         case WB_UNIT_STEAMSHOVEL:
         case WB_UNIT_DOZER:
-            return terrain == WB_TERRAIN_NORMAL || terrain == WB_TERRAIN_SWAMP ||
-                   terrain == WB_TERRAIN_STREET || terrain == WB_TERRAIN_CEMENT;
         case WB_UNIT_FORKLIFT:
-            return terrain == WB_TERRAIN_NORMAL || terrain == WB_TERRAIN_SWAMP ||
-                   terrain == WB_TERRAIN_STREET || terrain == WB_TERRAIN_CEMENT;
+        case WB_UNIT_TREEBOT:
+        case WB_UNIT_DEFENDER:
+        case WB_UNIT_FREEZEBOT:
+            return terrain == WB_TERRAIN_NORMAL || street || terrain == WB_TERRAIN_SWAMP;
+        case WB_UNIT_DIRTBUGGY:
+        case WB_UNIT_DUMPTRUCK:
+        case WB_UNIT_REPAIRBOT:
+        case WB_UNIT_DEFENDER2:
+            return terrain == WB_TERRAIN_NORMAL || street || terrain == WB_TERRAIN_NORMAL_UNDIGGABLE ||
+                   terrain == WB_TERRAIN_SWAMP;
+        case WB_UNIT_DUCK:
+        case WB_UNIT_FROG:
+            return terrain == WB_TERRAIN_NORMAL || street || terrain == WB_TERRAIN_WATER ||
+                   terrain == WB_TERRAIN_SWAMP || terrain == WB_TERRAIN_WATER_WHIRLPOOL;
         case WB_UNIT_SPEEDBOAT:
         case WB_UNIT_TUGBOAT:
         case WB_UNIT_FREIGHTER:
@@ -619,23 +611,7 @@ bool wbUnitCanTraverse(WBUnitType unitType, WBTerrainType terrain) {
             return terrain == WB_TERRAIN_WATER || terrain == WB_TERRAIN_WATER_UNFILLABLE ||
                    terrain == WB_TERRAIN_WATER_WHIRLPOOL;
         case WB_UNIT_SNAIL:
-            return terrain == WB_TERRAIN_NORMAL ||
-                   terrain == WB_TERRAIN_STREET || terrain == WB_TERRAIN_CEMENT;
-        case WB_UNIT_TREEBOT:
-        case WB_UNIT_REPAIRBOT:
-            return terrain == WB_TERRAIN_NORMAL || terrain == WB_TERRAIN_SWAMP ||
-                   terrain == WB_TERRAIN_STREET || terrain == WB_TERRAIN_CEMENT;
-        case WB_UNIT_DEFENDER:
-            return terrain == WB_TERRAIN_NORMAL ||
-                   terrain == WB_TERRAIN_SWAMP ||
-                   terrain == WB_TERRAIN_STREET || terrain == WB_TERRAIN_CEMENT;
-        case WB_UNIT_DEFENDER2:
-            return terrain == WB_TERRAIN_NORMAL || terrain == WB_TERRAIN_NORMAL_UNDIGGABLE ||
-                   terrain == WB_TERRAIN_SWAMP ||
-                   terrain == WB_TERRAIN_STREET || terrain == WB_TERRAIN_CEMENT;
-        case WB_UNIT_FREEZEBOT:
-            return terrain == WB_TERRAIN_NORMAL || terrain == WB_TERRAIN_SWAMP ||
-                   terrain == WB_TERRAIN_STREET || terrain == WB_TERRAIN_CEMENT;
+            return terrain == WB_TERRAIN_NORMAL || street;
         default:
             return false;
     }
@@ -680,7 +656,6 @@ static void applyItemDef(WBMap* map, int row, int col, char symbol) {
             cell->terrain = WB_TERRAIN_WATER;
         }
         parsePileContents(&cell->pile, def->desc);
-        cell->pileEnergyValue = 100;
         return;
     }
 
@@ -719,8 +694,6 @@ static void applyItemDef(WBMap* map, int row, int col, char symbol) {
             cell->buildingType = wbBuildingTypeFromName(unitName);
             cell->buildingDirection = WB_DIR_RIGHT;
             cell->buildingHp = 1000;
-            cell->buildingHp = 1000;
-            cell->buildingEnergy = 1000;
         } else {
             cell->hasUnit = true;
             cell->unitType = wbUnitTypeFromName(unitName);
@@ -826,6 +799,17 @@ bool wbMapLoad(const char* path, WBMap* outMap) {
         if (section == SEC_MAP) {
             if (strcmp(line, "name") == 0) {
                 strncpy(outMap->name, eq, sizeof(outMap->name) - 1);
+                continue;
+            }
+
+            if (strcmp(line, " center") == 0 || strcmp(line, "center") == 0) {
+                int cx;
+                int cy;
+                if (sscanf(eq, "%d,%d", &cx, &cy) == 2) {
+                    outMap->hasCenter = true;
+                    outMap->centerX = cx;
+                    outMap->centerY = cy;
+                }
                 continue;
             }
 

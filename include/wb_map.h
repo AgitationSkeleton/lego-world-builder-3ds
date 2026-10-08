@@ -9,6 +9,8 @@
 #define WB_MAX_ITEM_DEFS 128
 #define WB_MAX_ITEM_DESC 96
 #define WB_MAX_NAME 64
+#define WB_MAX_PILE_BATTERIES 64   /* charges kept per pile (the original's energy list) */
+#define WB_MAX_CARGO_BATTERIES 32
 
 typedef enum WBTerrainType {
     WB_TERRAIN_NORMAL = 0,
@@ -182,10 +184,13 @@ typedef struct WBCell {
     int unitEnergy;
     int unitEnergyDeci;
     WBResourcePile unitCargo;
-    int unitCargoEnergyValue;  /* charge level (0-100) of carried energy brick; 0 = depleted */
+    uint16_t unitCargoBatteries[WB_MAX_CARGO_BATTERIES]; /* carried batteries' charge, 0-1000 */
+    uint8_t unitCargoSpecial;        /* steamshovel load: 0 none, 1 dirt, 2 swamp, 3 street */
+    uint8_t unitCargoStreetVariant;  /* street variant dug up (255 = cement) */
+    uint8_t unitAgent;               /* 1-based slot of the unit's object state (main.c), 0 = none */
     bool hasResource;
     WBResourcePile pile;
-    int pileEnergyValue;
+    uint16_t pileBatteries[WB_MAX_PILE_BATTERIES]; /* each battery's charge 0-1000, sorted when made; last on top */
     bool resourceIsPlan;
     WBPlanType resourcePlanType;
     int resourcePlanCount;
@@ -193,6 +198,7 @@ typedef struct WBCell {
     bool bonusGoal;
     WBGoalType goalType;
     bool goalSatisfied;
+    double goalRiseStartMs;   /* when it was satisfied: the flag then floats up 10 px a frame */
     bool hasGoalTerrain;      /* true for ':' tiles — part of a collect-goal zone */
     bool goalIsCollect;       /* true if goal = collect N monsters in zone */
     int  goalCollectCount;    /* number of monsters needed in zone */
@@ -200,13 +206,10 @@ typedef struct WBCell {
     bool hasMonster;
     WBMonsterType monsterType;
     WBDirection monsterDirection;
-    bool monsterFrozen;
-    uint64_t monsterFrozenUntilMs;
     bool hasBuilding;
     WBBuildingType buildingType;
     WBDirection buildingDirection;
-    int buildingHp;              /* 1000 = full health; 0 = no building */
-    int buildingEnergy;          /* factory fuel level (0-1000); depletes 75/cycle (7.5%); 0 = dormant */
+    int buildingHp;              /* the building's battery charge 0-1000 (buildings whose recipe has one) */
     bool isWhirlpool;
     int whirlpoolId;
     int factoryColor;
@@ -227,6 +230,9 @@ typedef struct WBMap {
     int goalScore;
     int bonusScore;
     bool isWB2Level;
+    bool hasCenter;             /* [map] center=x,y: where readmap() first scrolls to */
+    int centerX;
+    int centerY;
 } WBMap;
 
 bool wbMapLoad(const char* path, WBMap* outMap);
